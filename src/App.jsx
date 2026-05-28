@@ -272,7 +272,7 @@ export default function App() {
       {/* 🟢 頂部導覽列 */}
       <nav className="navbar">
         <div className="logo" onClick={() => { setCurrentView('home'); setActiveCategory('全部'); }}>
-          <span className="logo-badge">▶</span> VHub
+          <span className="logo-badge">▶</span> Leaf Hub
         </div>
         
         <div className="search-bar">
