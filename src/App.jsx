@@ -177,7 +177,7 @@ const MOCK_VIDEOS = [
   }
 ];
 
-const CATEGORIES = ['全部', '熱門音樂', '遊戲直播', '程式設計', '旅遊 Vlog', '美食烹飪'];
+const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
 
 function shuffleArray(array) {
   const arr = [...array];
