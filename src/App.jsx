@@ -201,8 +201,37 @@ export default function App() {
   const profileMenuRef = useRef(null);
 
   const [commentsData, setCommentsData] = useState({
-    '1': [{ author: '忠實觀眾', text: '太棒了！終於等到新片！', time: '2 小時前' }]
-  });
+  '1': [
+    { author: 'Jerry1024_tw', text: '太棒了！下次可以從肛門嗎?', time: '2 小時前' },
+    { author: 'star_ocean', text: '留言區第一發就這麼重口味的嗎 😂😂😂', time: '1 小時前' },
+    { author: '喵星人守護者', text: '高技術流推推，跪求下一期做詳細教學！', time: '30 分鐘前' }
+  ],
+  '2': [
+    { author: 'cyber_punk2026', text: '這剪輯節奏太神了吧！背景音樂一下雞皮疙瘩都起來了。', time: '5 小時前' },
+    { author: '阿明大師', text: '只有我重複看了五次嗎？這細節處理得真好。', time: '3 小時前' },
+    { author: 'Louise_L', text: '2026 還能看到這種品質的創作，真的必須一鍵三連支持！', time: '1 小時前' }
+  ],
+  '3': [
+    { author: 'Kobe_fans_no1', text: '這絕對是今年看過最扯的企劃，經費在燃燒的聲音 💸', time: '1 天前' },
+    { author: '吃貨小可', text: '看到一半肚子突然好餓，等等去買宵夜...。', time: '18 小時前' },
+    { author: '夜貓子00', text: '封面騙進來的，但內容超燃，收藏了！', time: '12 小時前' }
+  ],
+  '4': [
+    { author: 'Tech_Geek_99', text: '這次的評測很客觀，剛好在猶豫要不要入手，感謝課長排雷！', time: '2 天前' },
+    { author: '不爭氣地笑了', text: '笑死，12:45 那個翻車現場到底是怎樣啦哈哈哈！', time: '1 天前' },
+    { author: '路過的水母', text: '聽說這部影片有隱藏彩蛋，有人找到了嗎？', time: '4 小時前' }
+  ],
+  '5': [
+    { author: 'Gamer_Life', text: '大推！這關卡我卡了三天，看完你的走位直接一把過！', time: '3 天前' },
+    { author: '敲碗大隊長', text: '更新速度太慢了啦～生產線的驢都不敢這樣歇，快點更新！', time: '2 天前' },
+    { author: '潛水密探', text: '默默關注很久了，這集真的封神，期待突破百萬訂閱。', time: '6 小時前' }
+  ],
+  '6': [
+    { author: 'Vibe_Master', text: '戴上耳機聽直接原地升天，這音質跟調音太舒服了 🎧', time: '4 天前' },
+    { author: 'Chill_Guy_Taiwan', text: '適合深夜工作或開車的時候聽，整個人都放鬆下來了。', time: '2 天前' },
+    { author: '莎莎醬', text: '雖然看得似懂非懂，但反正先點讚就對了！👍', time: '10 小時前' }
+  ]
+});
   const [newCommentInput, setNewCommentInput] = useState('');
 
   useEffect(() => {
