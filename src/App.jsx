@@ -27,8 +27,8 @@ const MOCK_VIDEOS = [
     time: '1 年前', 
     duration: '02:56', 
     avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=mK25i1yx0-M', // 👈 這裡可以直接貼網址了！
-    get youtubeId() { return extractYoutubeId(this.videoUrl); }, // 自動保留原本的 youtubeId 屬性，避免前端其他地方壞掉
+    videoUrl: 'https://www.youtube.com/watch?v=mK25i1yx0-M', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); }, 
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
@@ -39,7 +39,7 @@ const MOCK_VIDEOS = [
     time: '1 個月前', 
     duration: '03:00', 
     avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=_25Lw6RxrLE', // 👈 範例：https://youtu.be/xxxxxx
+    videoUrl: 'https://www.youtube.com/watch?v=_25Lw6RxrLE', 
     get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
@@ -100,6 +100,79 @@ const MOCK_VIDEOS = [
     duration: '08:10', 
     avatar: CHANNEL_AVATAR,
     videoUrl: 'https://www.youtube.com/watch?v=1WsVANRj6bk', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  /* 💡 以下已成功更改為小頁頻道的真實影片（不重複） */
+  { 
+    id: '8', 
+    title: '這些IG短片的留言快笑死我了 PT.3', 
+    channel: CHANNEL_NAME, 
+    views: '4.5萬次', 
+    time: '7 個月前', 
+    duration: '03:19', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=HPaOabWw5xw', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  { 
+    id: '9', 
+    title: '你就是這樣被他釣怒的 (Rage-bait是怎麼運作的)', 
+    channel: CHANNEL_NAME, 
+    views: '3.6萬次', 
+    time: '8 個月前', 
+    duration: '03:10', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=fHTCwxn8-4Y', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  { 
+    id: '10', 
+    title: '這些IG短片的留言快笑死我了', 
+    channel: CHANNEL_NAME, 
+    views: '15.5萬次', 
+    time: '9 個月前', 
+    duration: '03:31', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=a-q-sp1kZIc', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  { 
+    id: '11', 
+    title: '為什麼我的IG都是這個小丑😭😭😭', 
+    channel: CHANNEL_NAME, 
+    views: '1.2萬次', 
+    time: '10 個月前', 
+    duration: '04:19', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=AwfSJ4EU-_E', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  { 
+    id: '12', 
+    title: '這人被釣怒到直接開炸我伺服器🤦‍♂️（YT頻道還差點沒了）', 
+    channel: CHANNEL_NAME, 
+    views: '6.5萬次', 
+    time: '10 個月前', 
+    duration: '03:01', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=CLRFLIO1IJs', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
+    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
+  },
+  { 
+    id: '13', 
+    title: '這些AI迷因已經超出了我的認知', 
+    channel: CHANNEL_NAME, 
+    views: '1.6萬次', 
+    time: '11 個月前', 
+    duration: '02:02', 
+    avatar: CHANNEL_AVATAR,
+    videoUrl: 'https://www.youtube.com/watch?v=kOb_IOxmhQE', 
     get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   }
