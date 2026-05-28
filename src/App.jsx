@@ -1,6 +1,6 @@
 import { useState } from 'react' // 或者是你原本有的 import 項目...
 import './App.css'
-import myAvatar from './assets/163braces.jpg'
+import myAvatar from './src/assets/163braces.jpg'
 
 const CHANNEL_NAME = "小葉"; 
 const CHANNEL_AVATAR = myAvatar; 
