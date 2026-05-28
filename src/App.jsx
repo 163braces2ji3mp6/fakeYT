@@ -199,39 +199,42 @@ export default function App() {
   const [watchHistory, setWatchHistory] = useState([]);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
+  
+  // 💡 用於控制個人頻道頁面內部的標籤切換 ('videos' | 'about')
+  const [channelTab, setChannelTab] = useState('videos');
 
   const [commentsData, setCommentsData] = useState({
-  '1': [
-    { author: 'Jerry1024_tw', text: '太棒了！下次可以從肛門嗎?', time: '2 小時前' },
-    { author: 'star_ocean', text: '留言區第一發就這麼重口味的嗎 😂😂😂', time: '1 小時前' },
-    { author: '喵星人守護者', text: '高技術流推推，跪求下一期做詳細教學！', time: '30 分鐘前' }
-  ],
-  '2': [
-    { author: 'cyber_punk2026', text: '這剪輯節奏太神了吧！背景音樂一下雞皮疙瘩都起來了。', time: '5 小時前' },
-    { author: '阿明大師', text: '只有我重複看了五次嗎？這細節處理得真好。', time: '3 小時前' },
-    { author: 'Louise_L', text: '2026 還能看到這種品質的創作，真的必須一鍵三連支持！', time: '1 小時前' }
-  ],
-  '3': [
-    { author: 'Kobe_fans_no1', text: '這絕對是今年看過最扯的企劃，經費在燃燒的聲音 💸', time: '1 天前' },
-    { author: '吃貨小可', text: '看到一半肚子突然好餓，等等去買宵夜...。', time: '18 小時前' },
-    { author: '夜貓子00', text: '封面騙進來的，但內容超燃，收藏了！', time: '12 小時前' }
-  ],
-  '4': [
-    { author: 'Tech_Geek_99', text: '這次的評測很客觀，剛好在猶豫要不要入手，感謝課長排雷！', time: '2 天前' },
-    { author: '不爭氣地笑了', text: '笑死，12:45 那個翻車現場到底是怎樣啦哈哈哈！', time: '1 天前' },
-    { author: '路過的水母', text: '聽說這部影片有隱藏彩蛋，有人找到了嗎？', time: '4 小時前' }
-  ],
-  '5': [
-    { author: 'Gamer_Life', text: '大推！這關卡我卡了三天，看完你的走位直接一把過！', time: '3 天前' },
-    { author: '敲碗大隊長', text: '更新速度太慢了啦～生產線的驢都不敢這樣歇，快點更新！', time: '2 天前' },
-    { author: '潛水密探', text: '默默關注很久了，這集真的封神，期待突破百萬訂閱。', time: '6 小時前' }
-  ],
-  '6': [
-    { author: 'Vibe_Master', text: '戴上耳機聽直接原地升天，這音質跟調音太舒服了 🎧', time: '4 天前' },
-    { author: 'Chill_Guy_Taiwan', text: '適合深夜工作或開車的時候聽，整個人都放鬆下來了。', time: '2 天前' },
-    { author: '莎莎醬', text: '雖然看得似懂非懂，但反正先點讚就對了！👍', time: '10 小時前' }
-  ]
-});
+    '1': [
+      { author: 'Jerry1024_tw', text: '太棒了！下次可以從肛門嗎?', time: '2 小時前' },
+      { author: 'star_ocean', text: '留言區第一發就這麼重口味的嗎 😂😂😂', time: '1 小時前' },
+      { author: '喵星人守護者', text: '高技術流推推，跪求下一期做詳細教學！', time: '30 分鐘前' }
+    ],
+    '2': [
+      { author: 'cyber_punk2026', text: '這剪輯節奏太神了吧！背景音樂一下雞皮疙瘩都起來了。', time: '5 小時前' },
+      { author: '阿明大師', text: '只有我重複看了五次嗎？這細節處理得真好。', time: '3 三小時前' },
+      { author: 'Louise_L', text: '2026 還能看到這種品質的創作，真的必須一鍵三連支持！', time: '1 小時前' }
+    ],
+    '3': [
+      { author: 'Kobe_fans_no1', text: '這絕對是今年看過最扯的企劃，經費在燃燒的聲音 💸', time: '1 天前' },
+      { author: '吃貨小可', text: '看到一半肚子突然好餓，等等去買宵夜...。', time: '18 小時前' },
+      { author: '夜貓子00', text: '封面騙進來的，但內容超燃，收藏了！', time: '12 小時前' }
+    ],
+    '4': [
+      { author: 'Tech_Geek_99', text: '這次的評測很客觀，剛好在猶豫要不要入手，感謝課長排雷！', time: '2 天前' },
+      { author: '不爭氣地笑了', text: '笑死，12:45 那個翻車現場到底是怎樣啦哈哈哈！', time: '1 天前' },
+      { author: '路過的水母', text: '聽說這部影片有隱藏彩蛋，有人找到了嗎？', time: '4 小時前' }
+    ],
+    '5': [
+      { author: 'Gamer_Life', text: '大推！這關卡我卡了三天，看完你的走位直接一把過！', time: '3 天前' },
+      { author: '敲碗大隊長', text: '更新速度太慢了啦～生產線的驢都不敢這樣歇，快點更新！', time: '2 天前' },
+      { author: '潛水密探', text: '默默關注很久了，這集真的封神，期待突破百萬訂閱。', time: '6 小時前' }
+    ],
+    '6': [
+      { author: 'Vibe_Master', text: '戴上耳機聽直接原地升天，這音質跟調音太舒服了 🎧', time: '4 天前' },
+      { author: 'Chill_Guy_Taiwan', text: '適合深夜工作或開車的時候聽，整個人都放鬆下來了。', time: '2 天前' },
+      { author: '莎莎醬', text: '雖然看得似懂非懂，但反正先點讚就對了！👍', time: '10 小時前' }
+    ]
+  });
   const [newCommentInput, setNewCommentInput] = useState('');
 
   useEffect(() => {
@@ -277,7 +280,7 @@ export default function App() {
     ];
 
     setCommentsData({ ...commentsData, [selectedVideo.id]: updatedComments });
-    setNewCommentInput(''); // 💡 修正原本會報錯的 bug
+    setNewCommentInput(''); 
   };
 
   const getFilteredVideos = () => {
@@ -330,9 +333,10 @@ export default function App() {
               </div>
               <hr className="dropdown-divider" />
               <div className="dropdown-links">
-                <button className="dropdown-item-btn" onClick={() => { setCurrentView('home'); setIsProfileOpen(false); }}>👤 我的頻道</button>
-                <button className="dropdown-item-btn" onClick={() => alert('此功能為擬真介面，目前僅有一組預設帳號喔！')}>🔄 切換帳戶</button>
-                <button className="dropdown-item-btn" onClick={() => alert('登出成功！（這是模擬功能）')}>🚪 登出</button>
+                {/* 💡 修正：點擊「我的頻道」時切換至專屬的 'channel' 視圖 */}
+                <button className="dropdown-item-btn" onClick={() => { setCurrentView('channel'); setChannelTab('videos'); setIsProfileOpen(false); }}>👤 我的頻道</button>
+                <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767！')}>🔄 切換帳戶</button>
+                <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767676767676767')}>🚪 登出</button>
               </div>
             </div>
           )}
@@ -478,7 +482,90 @@ export default function App() {
             </div>
           )}
 
-          {/* 5️⃣ 影片內頁播放視圖 */}
+          {/* ⚙️ 5️⃣ 新增：「我的頻道」專屬頁面視圖 */}
+          {currentView === 'channel' && (
+            <div className="channel-page-wrapper">
+              {/* 頻道橫幅 Banner */}
+              <div className="channel-banner" style={{
+                width: '100%',
+                height: '180px',
+                background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)',
+                borderRadius: '16px',
+                marginBottom: '24px',
+                border: '1px solid #222'
+              }}></div>
+
+              {/* 頻道頭像與基本資訊 */}
+              <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
+                <img src={CHANNEL_AVATAR} alt="My Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                <div>
+                  <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{CHANNEL_NAME}</h1>
+                  <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>@yehh_0000 • 1.2萬位訂閱者 • {MOCK_VIDEOS.length} 部影片</p>
+                  <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到小葉的個人技術與娛樂分享空間。這裡紀錄了各種有趣的生活觀察與網路迷因分析！</p>
+                </div>
+              </div>
+
+              {/* 頻道分頁標籤按鈕 */}
+              <div className="channel-tabs-bar" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
+                <button 
+                  onClick={() => setChannelTab('videos')} 
+                  style={{
+                    background: 'transparent', border: 'none', color: channelTab === 'videos' ? '#ff6a00' : '#888',
+                    padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
+                    borderBottom: channelTab === 'videos' ? '3px solid #ff6a00' : '3px solid transparent', transition: 'all 0.2s'
+                  }}
+                >
+                  影片
+                </button>
+                <button 
+                  onClick={() => setChannelTab('about')} 
+                  style={{
+                    background: 'transparent', border: 'none', color: channelTab === 'about' ? '#ff6a00' : '#888',
+                    padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
+                    borderBottom: channelTab === 'about' ? '3px solid #ff6a00' : '3px solid transparent', transition: 'all 0.2s'
+                  }}
+                >
+                  關於
+                </button>
+              </div>
+
+              {/* 分頁內容切換 */}
+              {channelTab === 'videos' ? (
+                <div className="video-grid">
+                  {/* 精準撈出所有屬於這個頻道的創作影片 */}
+                  {videos.filter(v => v.channel === CHANNEL_NAME).map((video) => (
+                    <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+                      <div className="thumbnail-wrapper">
+                        <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                        <span className="video-duration">{video.duration}</span>
+                      </div>
+                      <div className="video-info-section">
+                        <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                        <div>
+                          <h3 className="video-title">{video.title}</h3>
+                          <p className="channel-name">{video.channel}</p>
+                          <p className="video-meta">{video.views} • {video.time}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
+                  <h3 style={{ color: '#fff', marginBottom: '12px' }}>簡介</h3>
+                  <p>嗨！我是小葉。主要分享科技觀察、時事釣魚解析以及網路各種奇奇怪怪的迷因研究。</p>
+                  <p>本頻道致力於提供高畫質且充滿思辨（以及垃圾笑話）的精緻內容，喜歡的話記得訂閱並開啟小鈴鐺！</p>
+                  <hr style={{ border: 'none', borderTop: '1px solid #222', margin: '24px 0' }} />
+                  <h3 style={{ color: '#fff', marginBottom: '12px' }}>頻道詳細資料</h3>
+                  <p style={{ color: '#888' }}>加入時間：2021年10月15日</p>
+                  <p style={{ color: '#888' }}>總觀看次數：5,432,109 次</p>
+                  <p style={{ color: '#888' }}>居住地：台灣</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 6️⃣ 影片內頁播放視圖 */}
           {currentView === 'watch' && selectedVideo && (
             <div className="watch-layout">
               <div className="watch-main-content">
