@@ -103,7 +103,6 @@ const MOCK_VIDEOS = [
     get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
-  /* 💡 以下已成功更改為小頁頻道的真實影片（不重複） */
   { 
     id: '8', 
     title: '這些IG短片的留言快笑死我了 PT.3', 
@@ -180,17 +179,29 @@ const MOCK_VIDEOS = [
 
 const CATEGORIES = ['全部', '熱門音樂', '遊戲直播', '程式設計', '旅遊 Vlog', '美食烹飪'];
 
+// 💡 核心洗牌函式：將傳入的陣列順序隨機打亂 (Fisher-Yates Shuffle)
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 export default function App() {
   const [currentView, setCurrentView] = useState('home');
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
   
+  // 💡 核心改動：將 MOCK_VIDEOS 存成 React State，並在初次載入時自動洗牌
+  const [videos, setVideos] = useState([]);
+
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [likedVideoIds, setLikedVideoIds] = useState([]);
   const [subscribedChannels, setSubscribedChannels] = useState(['我的 YouTube 頻道']);
   const [watchHistory, setWatchHistory] = useState([]);
   
-  // 💡 新增：控制頭貼選單開關的 State 與點擊外部偵測 Ref
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
 
@@ -199,7 +210,11 @@ export default function App() {
   });
   const [newCommentInput, setNewCommentInput] = useState('');
 
-  // 💡 新增：點擊網頁其他地方時，自動把頭貼選單縮回去
+  // 💡 核心改動：當網頁首次載入（或重新整理）時，只觸發一次洗牌
+  useEffect(() => {
+    setVideos(shuffleArray(MOCK_VIDEOS));
+  }, []);
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
@@ -239,11 +254,12 @@ export default function App() {
     ];
 
     setCommentsData({ ...commentsData, [selectedVideo.id]: updatedComments });
-    setNewCommentInput('');
+    newCommentInput('');
   };
 
+  // 💡 核心改動：改為篩選「已經被打亂過順序」的 videos 變數
   const getFilteredVideos = () => {
-    return MOCK_VIDEOS.filter(video => {
+    return videos.filter(video => {
       const matchesSearch = video.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             video.channel.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = activeCategory === '全部' || video.title.includes(activeCategory) || video.channel.includes(activeCategory);
@@ -272,7 +288,6 @@ export default function App() {
           />
         </div>
         
-        {/* 💡 修改：將頭貼區塊加上專屬外層，以便做絕對定位選單 */}
         <div className="avatar-container" ref={profileMenuRef}>
           <img 
             src={CHANNEL_AVATAR} 
@@ -282,7 +297,6 @@ export default function App() {
             style={{ cursor: 'pointer' }}
           />
 
-          {/* 💡 新增：仿 YouTube 點開頭貼的功能彈出選單 */}
           {isProfileOpen && (
             <div className="profile-dropdown-menu">
               <div className="dropdown-user-info">
@@ -355,8 +369,8 @@ export default function App() {
             <div>
               <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
               <div className="video-grid">
-                {MOCK_VIDEOS.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
-                  MOCK_VIDEOS.filter(v => subscribedChannels.includes(v.channel)).map((video) => (
+                {videos.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
+                  videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => (
                     <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
                       <div className="thumbnail-wrapper">
                         <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
@@ -416,8 +430,8 @@ export default function App() {
             <div>
               <h2 className="view-page-title">🔥 我按讚的影片</h2>
               <div className="video-grid">
-                {MOCK_VIDEOS.filter(v => likedVideoIds.includes(v.id)).length > 0 ? (
-                  MOCK_VIDEOS.filter(v => likedVideoIds.includes(v.id)).map((video) => (
+                {videos.filter(v => likedVideoIds.includes(v.id)).length > 0 ? (
+                  videos.filter(v => likedVideoIds.includes(v.id)).map((video) => (
                     <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
                       <div className="thumbnail-wrapper">
                         <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
@@ -444,7 +458,6 @@ export default function App() {
           {currentView === 'watch' && selectedVideo && (
             <div className="watch-layout">
               <div className="watch-main-content">
-                
                 <iframe
                   key={selectedVideo.id}
                   className="video-player-simulation"
@@ -515,10 +528,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 右側推薦欄 */}
+              {/* 右側推薦欄：排除目前播放影片，並保留打亂後的其餘影片推薦 */}
               <div className="watch-sidebar-recommendations">
                 <h4 style={{ margin: '0 0 16px 0', color: '#ff6a00' }}>▶ 接下來播放</h4>
-                {MOCK_VIDEOS.filter(v => v.id !== selectedVideo.id).map(video => (
+                {videos.filter(v => v.id !== selectedVideo.id).map(video => (
                   <div key={video.id} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
                     <img src={video.thumbnail} alt="mini-card" className="mini-card-thumb" />
                     <div className="mini-card-info">
