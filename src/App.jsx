@@ -179,7 +179,6 @@ const MOCK_VIDEOS = [
 
 const CATEGORIES = ['全部', '熱門音樂', '遊戲直播', '程式設計', '旅遊 Vlog', '美食烹飪'];
 
-// 💡 核心洗牌函式：將傳入的陣列順序隨機打亂 (Fisher-Yates Shuffle)
 function shuffleArray(array) {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -193,15 +192,11 @@ export default function App() {
   const [currentView, setCurrentView] = useState('home');
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // 💡 核心改動：將 MOCK_VIDEOS 存成 React State，並在初次載入時自動洗牌
   const [videos, setVideos] = useState([]);
-
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [likedVideoIds, setLikedVideoIds] = useState([]);
   const [subscribedChannels, setSubscribedChannels] = useState(['我的 YouTube 頻道']);
   const [watchHistory, setWatchHistory] = useState([]);
-  
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
 
@@ -210,7 +205,6 @@ export default function App() {
   });
   const [newCommentInput, setNewCommentInput] = useState('');
 
-  // 💡 核心改動：當網頁首次載入（或重新整理）時，只觸發一次洗牌
   useEffect(() => {
     setVideos(shuffleArray(MOCK_VIDEOS));
   }, []);
@@ -254,10 +248,9 @@ export default function App() {
     ];
 
     setCommentsData({ ...commentsData, [selectedVideo.id]: updatedComments });
-    newCommentInput('');
+    setNewCommentInput(''); // 💡 修正原本會報錯的 bug
   };
 
-  // 💡 核心改動：改為篩選「已經被打亂過順序」的 videos 變數
   const getFilteredVideos = () => {
     return videos.filter(video => {
       const matchesSearch = video.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -320,17 +313,19 @@ export default function App() {
       {/* 主要內容包裝架構 */}
       <div className="main-wrapper">
         
-        {/* 🔵 左側導覽欄 */}
-        <aside className="sidebar">
-          <div className="sidebar-menu">
-            <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={() => setCurrentView('home')}>🏠 首頁</button>
-            <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => setCurrentView('subscriptions')}>📺 訂閱頻道</button>
-            <hr style={{ border: 'none', borderTop: '1px solid #1f1f1f', margin: '12px 0' }} />
-            <div className="sidebar-section-title">我的專區</div>
-            <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>🕒 觀看紀錄</button>
-            <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => setCurrentView('liked')}>🔥 喜歡的影片</button>
-          </div>
-        </aside>
+        {/* 🔵 左側導覽欄：💡 當進入觀看影片頁面時，將左側欄隱藏 */}
+        {currentView !== 'watch' && (
+          <aside className="sidebar">
+            <div className="sidebar-menu">
+              <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={() => setCurrentView('home')}>🏠 首頁</button>
+              <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => setCurrentView('subscriptions')}>📺 訂閱頻道</button>
+              <hr style={{ border: 'none', borderTop: '1px solid #1f1f1f', margin: '12px 0' }} />
+              <div className="sidebar-section-title">我的專區</div>
+              <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>🕒 觀看紀錄</button>
+              <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => setCurrentView('liked')}>🔥 喜歡的影片</button>
+            </div>
+          </aside>
+        )}
 
         {/* 🟡 主要內容區 */}
         <main className="content-area">
@@ -528,7 +523,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 右側推薦欄：排除目前播放影片，並保留打亂後的其餘影片推薦 */}
+              {/* 右側推薦欄 */}
               <div className="watch-sidebar-recommendations">
                 <h4 style={{ margin: '0 0 16px 0', color: '#ff6a00' }}>▶ 接下來播放</h4>
                 {videos.filter(v => v.id !== selectedVideo.id).map(video => (
