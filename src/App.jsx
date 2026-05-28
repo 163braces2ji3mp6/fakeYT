@@ -1,8 +1,9 @@
 import { useState } from 'react' // 或者是你原本有的 import 項目...
 import './App.css'
+import myAvatar from './assets/163braces.jpg'
 
 const CHANNEL_NAME = "小葉"; 
-const CHANNEL_AVATAR = "./src/assets/163braces.jpg"; 
+const CHANNEL_AVATAR = myAvatar; 
 
 // 💡 輔助函式：自動從 YouTube 網址中解析出 11 碼的 Video ID
 function extractYoutubeId(url) {
