@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
-import './App.css';
+import { useState } from 'react' // 或者是你原本有的 import 項目...
+import './App.css'
 
-// 💡 這裡換成你自己的 YouTube 頻道影片資料！
-// 只要修改 youtubeId，縮圖 (thumbnail) 會自動去抓 YouTube 官方的高畫質封面！
-// 🟢 頻道主基本資料（依據真實頻道完全同步）
-const CHANNEL_NAME = "小葉"; //
-const CHANNEL_AVATAR = "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?q=80&w=150&auto=format&fit=crop"; 
+const CHANNEL_NAME = "小葉"; 
+const CHANNEL_AVATAR = "./src/assets/163braces.jpg"; 
 
+// 💡 輔助函式：自動從 YouTube 網址中解析出 11 碼的 Video ID
+function extractYoutubeId(url) {
+  if (!url) return '';
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : '';
+}
 
 const MOCK_VIDEOS = [
   { 
@@ -17,7 +21,8 @@ const MOCK_VIDEOS = [
     time: '1 年前', 
     duration: '02:56', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: 'A5WECiZul9o', // 這是真實 ID
+    videoUrl: 'https://www.youtube.com/watch?v=mK25i1yx0-M', // 👈 這裡可以直接貼網址了！
+    get youtubeId() { return extractYoutubeId(this.videoUrl); }, // 自動保留原本的 youtubeId 屬性，避免前端其他地方壞掉
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
@@ -28,7 +33,8 @@ const MOCK_VIDEOS = [
     time: '1 個月前', 
     duration: '03:00', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第2部影片的真實ID', // 👈 例如：aBcDeFgHiJk
+    videoUrl: 'https://www.youtube.com/watch?v=_25Lw6RxrLE', // 👈 範例：https://youtu.be/xxxxxx
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
@@ -39,7 +45,8 @@ const MOCK_VIDEOS = [
     time: '1 個月前', 
     duration: '01:38', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第3部影片的真實ID', 
+    videoUrl: 'https://www.youtube.com/watch?v=7y1oQWOjCF0', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
@@ -50,73 +57,44 @@ const MOCK_VIDEOS = [
     time: '3 個月前', 
     duration: '02:12', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第4部影片的真實ID', 
+    videoUrl: 'https://www.youtube.com/watch?v=5R9l6qutBbk', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
     id: '5', 
-    title: '請填入第 5 部影片標題', 
+    title: '我把今年的迷因排名...(這世代完蛋了🤦‍♂️)', 
     channel: CHANNEL_NAME, 
     views: '1.2萬次', 
     time: '4 個月前', 
     duration: '05:20', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第5部影片的真實ID', 
+    videoUrl: 'https://www.youtube.com/watch?v=2cITOYrfq-4', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
     id: '6', 
-    title: '請填入第 6 部影片標題', 
+    title: '我的Spotify年度回顧是NPC😭😭😭', 
     channel: CHANNEL_NAME, 
     views: '8500次', 
     time: '5 個月前', 
     duration: '04:15', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第6部影片的真實ID', 
+    videoUrl: 'https://www.youtube.com/watch?v=knMguT5wWBQ', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   },
   { 
     id: '7', 
-    title: '請填入第 7 部影片標題', 
+    title: '臭屁超人到底是誰？？(Incredible Gassy)', 
     channel: CHANNEL_NAME, 
     views: '2.3萬次', 
     time: '半年 前', 
     duration: '08:10', 
     avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第7部影片的真實ID', 
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '8', 
-    title: '請填入第 8 部影片標題', 
-    channel: CHANNEL_NAME, 
-    views: '4.5萬次', 
-    time: '8 個月前', 
-    duration: '03:45', 
-    avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第8部影片的真實ID', 
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '9', 
-    title: '請填入第 9 部影片標題', 
-    channel: CHANNEL_NAME, 
-    views: '5.6萬次', 
-    time: '9 個月前', 
-    duration: '06:30', 
-    avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第9部影片的真實ID', 
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '10', 
-    title: '請填入第 10 部影片標題', 
-    channel: CHANNEL_NAME, 
-    views: '10.1萬次', 
-    time: '1 年前', 
-    duration: '10:05', 
-    avatar: CHANNEL_AVATAR,
-    youtubeId: '請填入第10部影片的真實ID', 
+    videoUrl: 'https://www.youtube.com/watch?v=1WsVANRj6bk', 
+    get youtubeId() { return extractYoutubeId(this.videoUrl); },
     get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
   }
 ];
