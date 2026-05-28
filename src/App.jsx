@@ -1,9 +1,13 @@
-import { useState } from 'react' // 或者是你原本有的 import 項目...
+import { useState } from 'react' 
 import './App.css'
-import myAvatar from '/src/assets/163braces.jpg'
+
+// 💡 1. 關鍵：用 import 叫 Vite 去 src/assets 幫你把圖片抓進來
+import myAvatarImage from './assets/163braces.jpg' 
 
 const CHANNEL_NAME = "小葉"; 
-const CHANNEL_AVATAR = myAvatar; 
+
+// 💡 2. 關鍵：把剛剛 import 進來的變數名稱直接給它
+const CHANNEL_AVATAR = myAvatarImage;
 
 // 💡 輔助函式：自動從 YouTube 網址中解析出 11 碼的 Video ID
 function extractYoutubeId(url) {
