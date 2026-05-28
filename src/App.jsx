@@ -1,13 +1,14 @@
-import { useState } from 'react' 
+import { useState } from 'react'
 import './App.css'
 
-// 💡 1. 關鍵：用 import 叫 Vite 去 src/assets 幫你把圖片抓進來
-import myAvatarImage from './assets/163braces.jpg' 
+// 💡 1. 這是最保險的標準寫法：用 import 把資產引進來
+// 請確認 163braces.jpg 檔案真的在 src/assets/ 資料夾裡面喔！
+import avatarImage from './assets/163braces.jpg' 
 
 const CHANNEL_NAME = "小葉"; 
 
-// 💡 2. 關鍵：把剛剛 import 進來的變數名稱直接給它
-const CHANNEL_AVATAR = myAvatarImage;
+// 💡 2. 直接把剛剛引入的變數 assign 給頭像常量
+const CHANNEL_AVATAR = avatarImage;
 
 // 💡 輔助函式：自動從 YouTube 網址中解析出 11 碼的 Video ID
 function extractYoutubeId(url) {
