@@ -243,7 +243,7 @@ export default function App() {
 
     const currentComments = commentsData[selectedVideo.id] || [];
     const updatedComments = [
-      { author: '隨機訪客(你)', text: newCommentInput, time: '剛剛' },
+      { author: '傻逼(你)', text: newCommentInput, time: '剛剛' },
       ...currentComments
     ];
 
@@ -476,7 +476,7 @@ export default function App() {
                       className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`}
                       onClick={() => toggleSubscribe(selectedVideo.channel)}
                     >
-                      {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '🔔 訂閱頻道'}
+                      {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
                     </button>
                   </div>
 

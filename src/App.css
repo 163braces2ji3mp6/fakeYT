@@ -139,10 +139,10 @@
   transition: margin-left 0.2s ease, padding 0.2s ease;
 }
 
-/* 💡 新增：當看影片左邊欄隱藏時，主內容區塊貼左、縮排歸零，讓播放器靠左 */
+/* 💡 當看影片、左邊欄隱藏時，主內容區塊貼左、縮排歸零，讓播放器靠左 */
 .content-area:has(.watch-layout) {
   margin-left: 0;
-  padding: 24px 24px;
+  padding: 24px 20px; /* 💡 稍微縮減左右 padding，騰出更多空間給超大推薦欄 */
 }
 
 .view-page-title {
@@ -297,7 +297,7 @@
    ========================================================================== */
 .watch-layout {
   display: flex;
-  gap: 32px; /* 💡 加大主區域與推薦欄的間距 */
+  gap: 36px; /* 💡 稍微再加大主區域與大推薦欄的間距 */
   width: 100%;
   align-items: flex-start;
 }
@@ -594,17 +594,17 @@
    👉 右側推薦欄元件樣式 (Watch Right Sidebar Recommendations)
    ========================================================================== */
 .watch-sidebar-recommendations {
-  width: 420px; /* 💡 核心修改：寬度從 360px 放大到 420px，讓推薦欄更大 */
+  width: 540px; /* 💡 再次放大：總寬度升級到 460px，讓右邊呈現大氣的推薦欄 */
   flex-shrink: 0;
 }
 
 .recommend-mini-card {
   display: flex;
-  gap: 12px; /* 💡 稍微拉開圖片與文字間距 */
-  margin-bottom: 12px;
+  gap: 14px; /* 💡 配合大縮圖，間距加大 */
+  margin-bottom: 14px;
   cursor: pointer;
-  border-radius: 8px;
-  padding: 6px; /* 💡 加大內襯讓點擊範圍更寬敞 */
+  border-radius: 10px;
+  padding: 8px; /* 💡 內襯加大，更像一個精緻的獨立卡片 */
   transition: background-color 0.2s ease;
 }
 
@@ -613,7 +613,7 @@
 }
 
 .mini-card-thumb {
-  width: 180px; /* 💡 核心修改：寬度從 140px 放大到 180px，配合大推薦欄 */
+  width: 210px; /* 💡 再次放大：卡片縮圖從 180px 拓寬到 210px，畫面更震撼 */
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border-radius: 8px;
@@ -627,16 +627,16 @@
 }
 
 .mini-card-title {
-  font-size: 14px; /* 💡 推薦欄卡片標題微調放大到 14px */
+  font-size: 15px; /* 💡 標題微調放大到 15px，更清晰好讀 */
   font-weight: 600;
   color: #eee;
-  line-height: 1.3;
+  line-height: 1.4;
   display: -webkit-box;
   line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .recommend-mini-card:hover .mini-card-title {
@@ -644,14 +644,14 @@
 }
 
 .mini-card-channel {
-  font-size: 12px; /* 💡 推薦欄卡片頻道放大到 12px */
+  font-size: 13px; /* 💡 頻道字體放大到 13px */
   color: #777;
 }
 
 .mini-card-views {
-  font-size: 12px; /* 💡 推薦欄卡片觀看數放大到 12px */
+  font-size: 12px;
   color: #555;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 /* ==========================================================================
@@ -683,19 +683,20 @@
 }
 
 /* ==========================================================================
-   📱 RWD 斷點微調 (防震防擠壓優化)
+   📱 RWD 斷點微調 (針對巨大化後的寬度防擠壓優化)
    ========================================================================== */
-@media (max-width: 1100px) {
-  /* 💡 當視窗稍微變小時，適度縮小右側欄避免擠壓播放器 */
+@media (max-width: 1200px) {
+  /* 💡 視窗稍微變小時，將右側欄漸進式縮小，優先保護左邊播放器的寬度 */
   .watch-sidebar-recommendations {
-    width: 340px;
+    width: 380px;
   }
   .mini-card-thumb {
-    width: 140px;
+    width: 160px;
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 950px) {
+  /* 💡 低於 950px 時，右側欄直接換行到下方變成單欄排列 */
   .watch-layout {
     flex-direction: column;
   }
@@ -704,7 +705,7 @@
     margin-top: 24px;
   }
   .mini-card-thumb {
-    width: 180px;
+    width: 210px;
   }
 }
 
