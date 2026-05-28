@@ -1,0 +1,33 @@
+/* 清除所有瀏覽器預設邊距，並強制滿版 */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #050505;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+/* 確保所有元素的寬度計算都包含內邊距與邊框 */
+*, *::before, *::after {
+  box-sizing: inherit;
+}
+
+/* 平滑滾動條（選填，讓首頁更有質感） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff6a00;
+}
