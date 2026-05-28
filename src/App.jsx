@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
 // 💡 1. 這是最保險的標準寫法：用 import 把資產引進來
@@ -117,10 +117,25 @@ export default function App() {
   const [subscribedChannels, setSubscribedChannels] = useState(['我的 YouTube 頻道']);
   const [watchHistory, setWatchHistory] = useState([]);
   
+  // 💡 新增：控制頭貼選單開關的 State 與點擊外部偵測 Ref
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profileMenuRef = useRef(null);
+
   const [commentsData, setCommentsData] = useState({
     '1': [{ author: '忠實觀眾', text: '太棒了！終於等到新片！', time: '2 小時前' }]
   });
   const [newCommentInput, setNewCommentInput] = useState('');
+
+  // 💡 新增：點擊網頁其他地方時，自動把頭貼選單縮回去
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setIsProfileOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleVideoClick = (video) => {
     setSelectedVideo(video);
@@ -184,8 +199,34 @@ export default function App() {
           />
         </div>
         
-        <div>
-          <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=100&auto=format&fit=crop" alt="Avatar" className="avatar" />
+        {/* 💡 修改：將頭貼區塊加上專屬外層，以便做絕對定位選單 */}
+        <div className="avatar-container" ref={profileMenuRef}>
+          <img 
+            src={CHANNEL_AVATAR} 
+            alt="Avatar" 
+            className="avatar" 
+            onClick={() => setIsProfileOpen(!isProfileOpen)} 
+            style={{ cursor: 'pointer' }}
+          />
+
+          {/* 💡 新增：仿 YouTube 點開頭貼的功能彈出選單 */}
+          {isProfileOpen && (
+            <div className="profile-dropdown-menu">
+              <div className="dropdown-user-info">
+                <img src={CHANNEL_AVATAR} alt="Avatar Large" className="dropdown-avatar-large" />
+                <div>
+                  <div className="dropdown-username">{CHANNEL_NAME}</div>
+                  <div className="dropdown-email">@yehh_0000</div>
+                </div>
+              </div>
+              <hr className="dropdown-divider" />
+              <div className="dropdown-links">
+                <button className="dropdown-item-btn" onClick={() => { setCurrentView('home'); setIsProfileOpen(false); }}>👤 我的頻道</button>
+                <button className="dropdown-item-btn" onClick={() => alert('此功能為擬真介面，目前僅有一組預設帳號喔！')}>🔄 切換帳戶</button>
+                <button className="dropdown-item-btn" onClick={() => alert('登出成功！（這是模擬功能）')}>🚪 登出</button>
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -326,12 +367,11 @@ export default function App() {
             </div>
           )}
 
-          {/* 5️⃣ 影片內頁播放視圖（💡 這裡進化成 YouTube 嵌入播放器 💡） */}
+          {/* 5️⃣ 影片內頁播放視圖 */}
           {currentView === 'watch' && selectedVideo && (
             <div className="watch-layout">
               <div className="watch-main-content">
                 
-                {/* 📺 呼叫 YouTube 官方播放器（不佔流量與空間，且具備流暢快轉與畫質調整） */}
                 <iframe
                   key={selectedVideo.id}
                   className="video-player-simulation"

@@ -1,13 +1,13 @@
 /* ==========================================================================
-   🟢 頂部導覽列 (Navbar)
+   🟢 頂部導覽列 (Navbar) - 💡 全面放大調整
    ========================================================================== */
 .navbar {
-  height: 56px;
+  height: 64px; /* 💡 從 56px 放大到 64px */
   background-color: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 28px; /* 💡 稍微加寬內縮襯距 */
   position: fixed;
   top: 0;
   left: 0;
@@ -18,32 +18,32 @@
 
 .logo {
   color: #ff6a00;
-  font-size: 20px;
+  font-size: 24px; /* 💡 LOGO 字體放大 */
   font-weight: 900;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   user-select: none;
 }
 
 .logo-badge {
   background-color: #ff6a00;
   color: #050505;
-  padding: 2px 6px;
+  padding: 3px 8px; /* 💡 標籤放大 */
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px; /* 💡 標籤字體放大 */
 }
 
 .search-bar {
   display: flex;
   align-items: center;
-  width: 40%;
-  max-width: 500px;
+  width: 45%; /* 💡 寬度佔比微調放大 */
+  max-width: 600px; /* 💡 最大寬度從 500px 放大到 600px */
   background-color: #121212;
   border: 1px solid #222;
-  border-radius: 20px;
-  padding: 6px 16px;
+  border-radius: 24px; /* 💡 配合高度加大弧度 */
+  padding: 8px 20px; /* 💡 內襯加大，搜尋欄變大 */
 }
 
 .search-input {
@@ -52,12 +52,12 @@
   border: none;
   outline: none;
   color: #fff;
-  font-size: 14px;
+  font-size: 15px; /* 💡 輸入框字體放大 */
 }
 
 .avatar {
-  width: 32px;
-  height: 32px;
+  width: 38px; /* 💡 頭像從 32px 放大到 38px */
+  height: 38px;
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid #ff6a00;
@@ -68,20 +68,20 @@
    ========================================================================== */
 .main-wrapper {
   display: flex;
-  padding-top: 56px; /* 避開固定在頂部的導覽列 */
+  padding-top: 64px; /* 💡 配合頂部 Navbar 高度改為 64px */
   background-color: #050505;
   width: 100%;
 }
 
-/* 🔵 左側固定導覽欄 */
+/* 🔵 左側固定導覽欄 - 💡 全面放大調整 */
 .sidebar {
-  width: 240px;
+  width: 260px; /* 💡 寬度從 240px 拓寬到 260px */
   background-color: #0a0a0a;
   border-right: 1px solid #1f1f1f;
-  padding: 12px;
-  height: calc(100vh - 56px);
+  padding: 16px 12px; /* 💡 上下間距加大 */
+  height: calc(100vh - 64px); /* 💡 配合 Navbar 高度 */
   position: fixed;
-  top: 56px;
+  top: 64px; /* 💡 配合 Navbar 高度 */
   left: 0;
   z-index: 90;
 }
@@ -89,20 +89,20 @@
 .sidebar-menu {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px; /* 💡 按鈕之間的間距稍微加大 */
 }
 
 .sidebar-btn {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
+  gap: 18px; /* 💡 圖標與文字的間距加大 */
+  padding: 14px 18px; /* 💡 按鈕上下左右內襯放大，更好點擊 */
   background-color: transparent;
   color: #aaa;
   border: none;
-  border-radius: 10px;
-  font-size: 14px;
+  border-radius: 12px;
+  font-size: 15px; /* 💡 側邊欄按鈕字體從 14px 放大到 15px */
   text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -116,27 +116,26 @@
 .sidebar-btn.active {
   background-color: #1a1a1a;
   color: #ff6a00;
-  /* 💡 修正：移除 font-weight: bold 防止按鈕變粗晃動 */
   border-left: 4px solid #ff6a00;
 }
 
 .sidebar-section-title {
-  font-size: 11px;
+  font-size: 12px; /* 💡 小標題字體微調放大 */
   color: #555;
   font-weight: bold;
-  padding-left: 16px;
-  margin-bottom: 6px;
-  margin-top: 12px;
+  padding-left: 18px;
+  margin-bottom: 8px;
+  margin-top: 16px;
   text-transform: uppercase;
 }
 
 /* 🟡 右側工作內容區 */
 .content-area {
   flex: 1;
-  margin-left: 240px; /* 留出左側側邊欄的固定寬度 */
+  margin-left: 260px; /* 💡 配合左側 sidebar 的 260px 固定寬度 */
   padding: 24px 40px;
   background-color: #050505;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - 64px); /* 💡 配合 Navbar 高度 */
 }
 
 .view-page-title {
@@ -181,15 +180,13 @@
   border: none;
   background-color: #ff6a00;
   color: #000;
-  /* 💡 修正：移除 font-weight: bold 防止按鈕變粗晃動 */
   box-shadow: 0 0 10px rgba(255, 106, 0, 0.4);
 }
 
 /* 影片響應式網格 */
 .video-grid {
   display: grid;
-  /* 💡 修正：強制固定一行三個影片，讓主頁推薦影片變大 */
-  grid-template-columns: repeat(3, 1fr); 
+  grid-template-columns: repeat(3, 1fr); /* 💡 強制固定一行三個影片 */
   gap: 32px 24px;
   width: 100%;
 }
@@ -197,7 +194,7 @@
 .video-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px; /* 💡 稍微拉開圖片與文字間距 */
   cursor: pointer;
 }
 
@@ -234,7 +231,7 @@
   right: 8px;
   background-color: rgba(0, 0, 0, 0.85);
   color: #ff6a00;
-  font-size: 11px;
+  font-size: 12px; /* 💡 微調加大 */
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: bold;
@@ -247,20 +244,20 @@
 }
 
 .channel-avatar {
-  width: 36px;
-  height: 36px;
+  width: 38px; /* 💡 從 36px 稍微放大到 38px 配合文字平衡 */
+  height: 38px;
   border-radius: 50%;
   object-fit: cover;
 }
 
 .video-title {
-  font-size: 14px;
+  font-size: 16px; /* 💡 關鍵放大：從 14px 放大到 16px，更具大氣感 */
   font-weight: 600;
   color: #eee;
   margin: 0;
   line-height: 1.4;
   display: -webkit-box;
-  line-clamp: 2; /* 💡 已補上標準屬性 */
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
@@ -272,19 +269,19 @@
 }
 
 .channel-name {
-  font-size: 12px;
-  color: #777;
-  margin: 5px 0 0 0;
+  font-size: 14px; /* 💡 關鍵放大：從 12px 放大到 14px */
+  color: #888; /* 💡 稍微調亮一點 */
+  margin: 6px 0 2px 0;
   transition: color 0.2s ease;
 }
 
 .video-card:hover .channel-name {
-  color: #aaa;
+  color: #ccc;
 }
 
 .video-meta {
-  font-size: 12px;
-  color: #555;
+  font-size: 13px; /* 💡 關鍵放大：從 12px 放大到 13px */
+  color: #666; /* 💡 增加高階質感灰色 */
   margin: 2px 0 0 0;
 }
 
@@ -301,7 +298,7 @@
 /* 左邊主內容 */
 .watch-main-content {
   flex: 1;
-  min-width: 0; /* 防止 Flex 擠壓爆開 */
+  min-width: 0;
 }
 
 /* 擬真播放器區塊 */
@@ -361,9 +358,9 @@
 }
 
 .watch-video-title {
-  font-size: 20px;
+  font-size: 22px; /* 💡 影片內頁大標題也稍微增厚放大 */
   font-weight: bold;
-  margin: 16px 0;
+  margin: 18px 0;
   color: #fff;
   line-height: 1.4;
 }
@@ -394,14 +391,14 @@
 }
 
 .channel-name-large {
-  font-size: 16px;
+  font-size: 17px; /* 💡 內頁頻道名微調大 */
   font-weight: bold;
   color: #fff;
 }
 
 .channel-subs-count {
-  font-size: 12px;
-  color: #555;
+  font-size: 13px;
+  color: #666;
   margin-top: 2px;
 }
 
@@ -470,8 +467,8 @@
 }
 
 .views-date-text {
-  font-size: 13px;
-  color: #666;
+  font-size: 14px; /* 💡 放大到 14px */
+  color: #777;
 }
 
 /* ==========================================================================
@@ -591,7 +588,7 @@
    ========================================================================== */
 .watch-sidebar-recommendations {
   width: 360px;
-  flex-shrink: 0; /* 鎖定推薦欄寬度 */
+  flex-shrink: 0;
 }
 
 .recommend-mini-card {
@@ -623,12 +620,12 @@
 }
 
 .mini-card-title {
-  font-size: 13px;
+  font-size: 14px; /* 💡 推薦欄卡片標題微調放大到 14px */
   font-weight: 600;
   color: #eee;
   line-height: 1.3;
   display: -webkit-box;
-  line-clamp: 2; /* 💡 已補上標準屬性 */
+  line-clamp: 2;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
@@ -640,13 +637,13 @@
 }
 
 .mini-card-channel {
-  font-size: 11px;
-  color: #666;
+  font-size: 12px; /* 💡 推薦欄卡片頻道放大到 12px */
+  color: #777;
 }
 
 .mini-card-views {
-  font-size: 11px;
-  color: #444;
+  font-size: 12px; /* 💡 推薦欄卡片觀看數放大到 12px */
+  color: #555;
   margin-top: 2px;
 }
 
@@ -691,9 +688,90 @@
   }
 }
 
-/* 💡 新增：手機版與平板專用 RWD 斷點，寬度低於 768px 時改為一列一個影片，防止畫面擠扁 */
 @media (max-width: 768px) {
   .video-grid {
     grid-template-columns: repeat(1, 1fr); 
   }
+}
+
+/* ==========================================================================
+   🔔 新增：頭貼選單專屬樣式 (Profile Dropdown Menu)
+   ========================================================================== */
+.avatar-container {
+  position: relative;
+  display: inline-block;
+}
+
+.profile-dropdown-menu {
+  position: absolute;
+  top: 54px; /* 💡 配合 Navbar 變高稍微往下移一點 */
+  right: 0;
+  width: 260px;
+  background-color: #1c1c1c;
+  border: 1px solid #2d2d2d;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  padding: 12px 0;
+  z-index: 200;
+  animation: fadeInDropdown 0.15s ease-out;
+}
+
+@keyframes fadeInDropdown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 12px 16px;
+}
+
+.dropdown-avatar-large {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid #ff6a00;
+}
+
+.dropdown-username {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.dropdown-email {
+  color: #aaa;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.dropdown-divider {
+  border: none;
+  border-top: 1px solid #2d2d2d;
+  margin: 6px 0;
+}
+
+.dropdown-links {
+  display: flex;
+  flex-direction: column;
+}
+
+.dropdown-item-btn {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #eeeeee;
+  padding: 10px 20px;
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.dropdown-item-btn:hover {
+  background-color: #2b2b2b;
+  color: #ff6a00;
 }
