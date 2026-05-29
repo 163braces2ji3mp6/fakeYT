@@ -296,10 +296,12 @@ export default function App() {
     <div>
       {/* 🟢 頂部導覽列 */}
       <nav className="navbar">
-        <div className="logo" onClick={() => { setCurrentView('home'); setActiveCategory('全部'); }}>
-          <span className="logo-badge">▶</span> Leaf Hub
+        {/* 這裡修改了 Logo 的 HTML 結構，使其符合黑橘潮流風格 */}
+        <div className="logo-hub-style" onClick={() => { setCurrentView('home'); setActiveCategory('全部'); }}>
+          <span className="logo-text-white">Leaf</span>
+          <span className="logo-badge-orange">hub</span>
         </div>
-        
+
         <div className="search-bar">
           <input 
             type="text" 
@@ -312,7 +314,7 @@ export default function App() {
             }}
           />
         </div>
-        
+          
         <div className="avatar-container" ref={profileMenuRef}>
           <img 
             src={CHANNEL_AVATAR} 
@@ -333,7 +335,6 @@ export default function App() {
               </div>
               <hr className="dropdown-divider" />
               <div className="dropdown-links">
-                {/* 💡 修正：點擊「我的頻道」時切換至專屬的 'channel' 視圖 */}
                 <button className="dropdown-item-btn" onClick={() => { setCurrentView('channel'); setChannelTab('videos'); setIsProfileOpen(false); }}>👤 我的頻道</button>
                 <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767！')}>🔄 切換帳戶</button>
                 <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767676767676767')}>🚪 登出</button>

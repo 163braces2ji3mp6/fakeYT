@@ -909,3 +909,40 @@
     padding-left: 0 !important;
   }
 }
+
+/* ==========================================================================
+   🔥 經典黑橘風格 LOGO 樣式 (Hub Style Logo)
+   ========================================================================== */
+.logo-hub-style {
+  display: flex;
+  align-items: center;
+  gap: 4px;                  /* 左右字體的間距 */
+  cursor: pointer;
+  user-select: none;
+  font-family: Arial, Helvetica, sans-serif; /* 採用經典無襯線粗體 */
+  font-weight: 700;          /* 確保是極粗體 */
+  font-size: 27px;           /* 調整為適合導覽列的視覺大小 */
+  letter-spacing: -0.5px;    /* 微調字距使其更緊湊 */
+}
+
+/* 左側白色文字 */
+.logo-text-white {
+  color: #ffffff;
+  padding: 4px 0 4px 4px;
+  margin-right: 4px;
+}
+
+/* 右側黑字與橘色圓角背景 */
+.logo-badge-orange {
+  color: #000000;            /* 背景內的文字為純黑 */
+  background-color: #ff9900; /* 經典的 Hub 亮橘色 */
+  padding: 4px 8px;          /* 讓橘色方塊有完美的上下左右呼吸空間 */
+  border-radius: 6px;        /* 恰到好處的圓角弧度 */
+  display: inline-block;
+  transition: background-color 0.2s ease;
+}
+
+/* 滑鼠懸停時的微調動效 (可選，增加互動感) */
+.logo-hub-style:hover .logo-badge-orange {
+  background-color: #ffa51f; /* 懸停時稍微調亮 */
+}
