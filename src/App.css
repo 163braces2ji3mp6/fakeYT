@@ -44,6 +44,7 @@
   border: 1px solid #222;
   border-radius: 24px; /* 💡 配合高度加大弧度 */
   padding: 8px 20px; /* 💡 內襯加大，搜尋欄變大 */
+  margin:0 0 0 -50px; ;
 }
 
 .search-input {
@@ -921,8 +922,9 @@
   user-select: none;
   font-family: Arial, Helvetica, sans-serif; /* 採用經典無襯線粗體 */
   font-weight: 700;          /* 確保是極粗體 */
-  font-size: 27px;           /* 調整為適合導覽列的視覺大小 */
+  font-size: 35px;           /* 調整為適合導覽列的視覺大小 */
   letter-spacing: -0.5px;    /* 微調字距使其更緊湊 */
+  margin: 0 0px 0 15px;
 }
 
 /* 左側白色文字 */
@@ -945,4 +947,72 @@
 /* 滑鼠懸停時的微調動效 (可選，增加互動感) */
 .logo-hub-style:hover .logo-badge-orange {
   background-color: #ffa51f; /* 懸停時稍微調亮 */
+}
+
+/* ==========================================================================
+   🔍 擬真 YouTube 膠囊型搜尋欄 (YouTube Style Search Bar)
+   ========================================================================== */
+.search-bar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 600px;         /* 限制搜尋欄最大寬度 */
+  height: 40px;             /* 標準高 */
+  background-color: #121212; /* 輸入框內襯深暗色 */
+  border: 1px solid #303030; /* 微弱的深灰框線 */
+  border-radius: 40px;       /* 兩端完全呈現圓弧（膠囊狀） */
+  padding: 0;
+  overflow: hidden;          /* 確保子元件不會超出圓角邊框 */
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+  margin-left: -150px;
+}
+
+/* 當使用者點擊搜尋欄準備打字時 (Focus 狀態) */
+.search-bar:focus-within {
+  border-color: #ff6a00;     /* 邊框轉為 YouTube 經典藍色（或改為 #ff9900 配合你的網站主題） */
+}
+
+/* 左側文字輸入框 */
+.search-input {
+  flex: 1;
+  height: 100%;
+  background: transparent;   /* 繼承父層的暗黑色 */
+  border: none;              /* 拔除原生的框線 */
+  outline: none;             /* 拔除點擊時的外框 */
+  color: #ffffff;
+  font-size: 16px;
+  padding: 0 4px 0 16px;     /* 左邊留多一點空間給「搜尋」字樣呼吸 */
+}
+
+/* 搜尋字樣提示顏色 (Placeholder) */
+.search-input::placeholder {
+  color: #888888;
+  opacity: 1;
+}
+
+/* 右側獨立的灰色放大鏡按鈕 */
+.search-btn {
+  width: 64px;
+  height: 100%;
+  background-color: #222222; /* 比輸入框稍亮的灰色背景 */
+  border: none;
+  border-left: 1px solid #303030; /* 輸入框與按鈕之間的分隔線 */
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+/* 滑鼠懸停在放大鏡按鈕上的調亮效果 */
+.search-btn:hover {
+  background-color: #272727;
+}
+
+/* 放大鏡 SVG 圖標顏色與大小控制 */
+.search-icon-svg {
+  width: 20px;
+  height: 20px;
+  fill: #ff6a00;             /* 白色放大鏡 */
 }

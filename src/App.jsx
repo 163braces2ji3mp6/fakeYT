@@ -303,9 +303,10 @@ export default function App() {
         </div>
 
         <div className="search-bar">
+          {/* 輸入框主體 */}
           <input 
             type="text" 
-            placeholder="搜尋影片標題..." 
+            placeholder="搜尋" 
             className="search-input" 
             value={searchQuery}
             onChange={(e) => {
@@ -313,6 +314,12 @@ export default function App() {
               if (currentView !== 'watch') setCurrentView('home');
             }}
           />
+          {/* 右側獨立的灰色放大鏡按鈕 */}
+          <button className="search-btn" onClick={() => alert(`正在搜尋: ${searchQuery}`)}>
+            <svg viewBox="0 0 24 24" className="search-icon-svg">
+              <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path>
+            </svg>
+          </button>
         </div>
           
         <div className="avatar-container" ref={profileMenuRef}>
