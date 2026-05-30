@@ -901,7 +901,6 @@ export default function App() {
                         <img src={selectedVideo.avatar} alt="Channel" style={{ width: '40px', height: '40px', borderRadius: '50%', cursor: 'pointer' }} onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)} />
                         <div>
                           <div className="channel-name-large channel-name-clickable" onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)} style={{ fontWeight: 'bold', color: '#fff', cursor: 'pointer' }}>{selectedVideo.channel}</div>
-                          <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>你的專屬展示頻道</div>
                         </div>
                         <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
                           {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
