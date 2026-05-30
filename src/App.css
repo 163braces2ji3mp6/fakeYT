@@ -1122,12 +1122,13 @@ html, body {
 }
 
 .upload-video-btn .plus-icon {
-  font-size: 20px;
+  font-size: 25px;
   line-height: 1;
   display: inline-block;  /* 💡 轉成區塊，這樣微調屬性才會100%精確生效 */
-  
+  font-weight:500;
   /* 💡 究極大招：使用 translateY 來上下移動它。
      因為 + 號通常偏上，我們用正數（向下移）來精確對齊。
      如果覺得往下太多，就改成 1px；如果還不夠，就改成 2.5px 或 3px，直到完美為止！ */
-  transform: translateY(1.5px); 
+  transform: translateY(1px); 
+  margin-right: -3px;
 }
