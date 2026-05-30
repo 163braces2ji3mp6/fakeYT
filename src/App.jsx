@@ -134,16 +134,18 @@ function formatViews(views) {
 function formatSubscribers(count) {
   if (!count) return '0';
   const num = Number(count);
-  if (num >= 1000000) {
-    return `${(num / 10000)}萬`;
-  } else if (num >= 10000) {
+  if (num >= 10000) {
     return `${(num / 10000).toFixed(1)}萬`;
   }
   return num.toLocaleString();
 }
 
 export default function App() {
-  const [currentView, setCurrentView] = useState('home');
+  // 💡 【記憶刷新邏輯 1】：從 localStorage 恢復上次的視圖，沒紀錄則預設為 'home'
+  const [currentView, setCurrentView] = useState(() => {
+    return localStorage.getItem('leafhub_currentView') || 'home';
+  });
+
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -157,9 +159,13 @@ export default function App() {
   // 💡 用來鎖定網頁「第一次打開、且 Firebase 資料還沒回來」的初始化狀態
   const [isFirstInit, setIsFirstInit] = useState(true);
 
-  const [selectedVideo, setSelectedVideo] = useState(null);
-  const [isVideoLoading, setIsVideoLoading] = useState(false);
+  // 💡 【記憶刷新邏輯 2】：從 localStorage 恢復上次正在看的影片
+  const [selectedVideo, setSelectedVideo] = useState(() => {
+    const savedVideo = localStorage.getItem('leafhub_selectedVideo');
+    return savedVideo ? JSON.parse(savedVideo) : null;
+  });
 
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [isChannelLoading, setIsChannelLoading] = useState(false);
 
   const [localUsername, setLocalUsername] = useState(CHANNEL_NAME);
@@ -171,11 +177,36 @@ export default function App() {
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
-  const [targetChannel, setTargetChannel] = useState({
-    name: localUsername,
-    avatar: currentUserAvatar,
-    bio: '' 
+  // 💡 【記憶刷新邏輯 3】：從 localStorage 恢復上一次點進去的頻道資料
+  const [targetChannel, setTargetChannel] = useState(() => {
+    const savedTarget = localStorage.getItem('leafhub_targetChannel');
+    return savedTarget ? JSON.parse(savedTarget) : {
+      name: localUsername,
+      avatar: currentUserAvatar,
+      bio: '' 
+    };
   });
+
+  // 💡 【記憶刷新邏輯 4】：當 currentView, selectedVideo 或 targetChannel 改變時，即時同步到 localStorage
+  useEffect(() => {
+    localStorage.setItem('leafhub_currentView', currentView);
+  }, [currentView]);
+
+  useEffect(() => {
+    if (selectedVideo) {
+      localStorage.setItem('leafhub_selectedVideo', JSON.stringify(selectedVideo));
+    } else {
+      localStorage.removeItem('leafhub_selectedVideo');
+    }
+  }, [selectedVideo]);
+
+  useEffect(() => {
+    if (targetChannel) {
+      localStorage.setItem('leafhub_targetChannel', JSON.stringify(targetChannel));
+    } else {
+      localStorage.removeItem('leafhub_targetChannel');
+    }
+  }, [targetChannel]);
 
   useEffect(() => {
     if (targetChannel.name === CHANNEL_NAME || targetChannel.name === localUsername) {
@@ -241,13 +272,17 @@ export default function App() {
 
   // 💡 【核心邏輯 2】：點擊類別篩選按鈕時觸發 BUFFER 效果（選到「全部」時不用 BUFFER）
   const handleCategoryChange = (category) => {
-    setIsPageLoading(true);
-    setActiveCategory(category);
-    
-    // 模擬 400 毫秒極具質感的後端大數據篩選緩衝
-    setTimeout(() => {
+    if (category === '全部') {
+      setActiveCategory(category);
       setIsPageLoading(false);
-    }, 400);
+    } else {
+      setIsPageLoading(true);
+      setActiveCategory(category);
+      
+      setTimeout(() => {
+        setIsPageLoading(false);
+      }, 400);
+    }
   };
 
   useEffect(() => {
@@ -270,7 +305,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [currentView, targetChannel.name, selectedVideo?.channel]);
+  }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
   const handleUpdateUsernameSubmit = (e) => {
     e.preventDefault();
@@ -314,10 +349,7 @@ export default function App() {
   };
 
   const handleHomeNavigation = () => {
-    // 💡 1. 點擊 LOGO 時，立刻拉起高質感的骨架屏 BUFFER 效果
     setIsPageLoading(true); 
-    
-    // 清除搜尋字串與分類回到「全部」預設狀態
     setSearchInputStr('');
     setSearchQuery('');
     setActiveCategory('全部');
@@ -330,7 +362,6 @@ export default function App() {
       setVideos(shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]));
     }
 
-    // 💡 2. 模擬 400 毫秒極具質感的後端數據載入，隨後流暢淡出骨架屏顯示影片
     setTimeout(() => {
       setIsPageLoading(false);
     }, 400);
@@ -433,7 +464,7 @@ export default function App() {
       const mixedVideos = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
       setVideos(mixedVideos);
       setIsPageLoading(false);
-      setIsFirstInit(false); // 💡 Firebase 第一次拿到資料，解鎖首次加載限制
+      setIsFirstInit(false); 
     });
     return () => unsubscribe();
   }, []);
@@ -653,7 +684,6 @@ export default function App() {
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
     return currentVideos.filter(video => {
-      // 💡 如果 searchQuery 為空字串，直接判定符合（避免文字篩選干擾）
       const matchesSearch = !searchQuery.trim() || 
                             video.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             video.channel?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -949,21 +979,21 @@ export default function App() {
                       <>
                         <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
                         <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
-                          <img src={targetChannel.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                          <img src={targetChannel?.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
                           <div style={{ flex: 1 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff' }}>{targetChannel.name}</h1>
-                              {targetChannel.name !== localUsername && (
-                                <button className={`sub-action-btn ${subscribedChannels.includes(targetChannel.name) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(targetChannel.name)} style={{ padding: '8px 20px', fontSize: '14px' }}>
-                                  {subscribedChannels.includes(targetChannel.name) ? '✓ 已訂閱' : '訂閱'}
+                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff' }}>{targetChannel?.name}</h1>
+                              {targetChannel?.name !== localUsername && (
+                                <button className={`sub-action-btn ${subscribedChannels.includes(targetChannel?.name) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(targetChannel?.name)} style={{ padding: '8px 20px', fontSize: '14px' }}>
+                                  {subscribedChannels.includes(targetChannel?.name) ? '✓ 已訂閱' : '訂閱'}
                                 </button>
                               )}
                             </div>
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 
-                              &nbsp;{formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
+                              @{targetChannel?.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 
+                              <span style={{ color: '#ff6a00', fontWeight: 'bold', margin: '0 4px' }}> {formatSubscribers(liveSubscriberCount)}位 </span> 訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
                             </p>
-                            <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
+                            <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
                           </div>
                         </div>
                       </>
@@ -976,7 +1006,7 @@ export default function App() {
 
                     {channelTab === 'videos' ? (
                       <div className="video-grid">
-                        {videos.filter(v => v.channel === targetChannel.name).map((video) => (
+                        {videos.filter(v => v.channel === targetChannel?.name).map((video) => (
                           <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
                             <div className="thumbnail-wrapper">
                               <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
@@ -996,7 +1026,7 @@ export default function App() {
                     ) : (
                       <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                         <h3>簡介</h3>
-                        <p>嗨！我是 {targetChannel.name}。{targetChannel.bio || "主要分享科技觀察與網路各種奇奇怪怪的迷因研究。"}</p>
+                        <p>嗨！我是 {targetChannel?.name}。{targetChannel?.bio || "主要分享科技觀察與網路各種奇奇怪怪的迷因研究。"}</p>
                       </div>
                     )}
                   </div>
@@ -1041,7 +1071,7 @@ export default function App() {
                           <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
                             {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
                           </button>
-                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
+                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 一般發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
                         </div>
                       </div>
 
