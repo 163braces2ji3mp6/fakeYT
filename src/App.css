@@ -1109,8 +1109,13 @@ html, body {
   border-radius: 20px;
   font-weight: bold;
   cursor: pointer;
-  display: flex;
-  align-items: center;    /* 💡 改回 center：讓整個按鈕內部大體上垂直居中 */
+  
+  /* 💡 核心修正 1：確保用 Flexbox 完美垂直居中 */
+  display: inline-flex;
+  align-items: center;    
+  justify-content: center;
+  line-height: 1;          /* 💡 核心修正 2：將按鈕本身的行高設為 1，防止字體被行高往下擠 */
+  
   gap: 6px;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(255, 106, 0, 0.4);
@@ -1122,13 +1127,14 @@ html, body {
 }
 
 .upload-video-btn .plus-icon {
-  font-size: 25px;
+  font-size: 20px;         /* 💡 微調：將原本 25px 稍微縮小到 20px，跟 14px 的字體更配 */
   line-height: 1;
-  display: inline-block;  /* 💡 轉成區塊，這樣微調屬性才會100%精確生效 */
-  font-weight:500;
-  /* 💡 究極大招：使用 translateY 來上下移動它。
-     因為 + 號通常偏上，我們用正數（向下移）來精確對齊。
-     如果覺得往下太多，就改成 1px；如果還不夠，就改成 2.5px 或 3px，直到完美為止！ */
-  transform: translateY(1px); 
-  margin-right: -3px;
+  display: inline-flex;    /* 💡 改用 inline-flex，讓圖標自己也能完美置中 */
+  align-items: center;
+  font-weight: 500;
+  
+  /* 💡 究極微調：因為原本的 CSS 是 `translateY(1px)` 把 + 號往下推，
+        如果覺得字偏下，我們應該改為「負值」微調（往上拉），或者直接歸零由 Flexbox 處理 */
+  transform: translateY(-0.5px); 
+  margin-right: -1px;
 }
