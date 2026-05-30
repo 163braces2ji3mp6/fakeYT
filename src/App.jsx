@@ -10,7 +10,34 @@ import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, 
 
 import avatarImage from './assets/163braces.jpg' 
 
-const CHANNEL_NAME = "小葉"; 
+// 🟢 替換後的動態裝置辨識邏輯（完全不影響下方任何 LAYOUT）
+const getInitialUserName = () => {
+  // 先檢查這台裝置的瀏覽器本地儲存 (localStorage) 是否已經有帳號紀錄
+  const savedName = localStorage.getItem('device_user_name');
+  if (savedName) return savedName;
+
+  // 1. 自動辨識你目前的開發裝置：如果是本機環境 (localhost 或 127.0.0.1)
+  const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+  // 2. 貼心備用功能：如果未來部署到線上，你用手機或其他裝置想登入「小葉」，只需在網址後方加上 ?user=小葉 
+  // (例如：https://你的網址/?user=小葉)，該裝置就會永久綁定為小葉。
+  const urlParams = new URLSearchParams(window.location.search);
+  const isForcedMe = urlParams.get('user') === '小葉';
+
+  if (isMyDevelopDevice || isForcedMe) {
+    localStorage.setItem('device_user_name', '小葉');
+    return '小葉';
+  }
+
+  // 3. 其他不同的新裝置：一進來就隨機生成一個專屬的訪客名稱（例如：訪客_8453）
+  // 並且透過 localStorage 鎖定在該裝置中，之後每次進來都會維持同一個訪客帳號！
+  const randomGuestName = `訪客_${Math.floor(1000 + Math.random() * 9000)}`;
+  localStorage.setItem('device_user_name', randomGuestName);
+  return randomGuestName;
+};
+
+// 讓系統自動指派名稱，完全不破壞原本的變數名稱與參照
+const CHANNEL_NAME = getInitialUserName(); 
 const CHANNEL_AVATAR = avatarImage;
 
 // 🛠️ 這裡單純保留給上傳按鈕解析 YouTube URL 使用
@@ -108,6 +135,12 @@ export default function App() {
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
 
+  // 💡 用於動態渲染被點擊的頻道資訊（點擊不同人的影片能進入該作者的頻道頁）
+  const [targetChannel, setTargetChannel] = useState({
+    name: CHANNEL_NAME,
+    avatar: CHANNEL_AVATAR
+  });
+
   const [likedVideoIds, setLikedVideoIds] = useState(() => {
     const savedLikes = localStorage.getItem('leafhub_likedVideos');
     return savedLikes ? JSON.parse(savedLikes) : [];
@@ -198,10 +231,26 @@ export default function App() {
   };
 
   const handleMyChannelClick = () => {
+    setTargetChannel({
+      name: CHANNEL_NAME,
+      avatar: CHANNEL_AVATAR
+    });
     setCurrentView('channel'); 
     setChannelTab('videos'); 
     setIsProfileOpen(false); 
     forceScrollToTop(); 
+  };
+
+  // 💡 跳轉至特定頻道的共享觸發方法
+  const handleChannelNavigation = (channelName, channelAvatar, e) => {
+    if (e) e.stopPropagation(); // 防止觸發外層卡片的 onClick 事件
+    setTargetChannel({
+      name: channelName || CHANNEL_NAME,
+      avatar: channelAvatar || CHANNEL_AVATAR
+    });
+    setCurrentView('channel');
+    setChannelTab('videos');
+    forceScrollToTop();
   };
 
   useEffect(() => {
@@ -627,10 +676,24 @@ export default function App() {
                           <span className="video-duration">{video.duration}</span>
                         </div>
                         <div className="video-info-section">
-                          <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                          {/* 💡 點擊頭貼進入頻道 */}
+                          <img 
+                            src={video.avatar} 
+                            alt={video.channel} 
+                            className="channel-avatar channel-avatar-clickable" 
+                            onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                            style={{ cursor: 'pointer' }}
+                          />
                           <div>
                             <h3 className="video-title">{video.title}</h3>
-                            <p className="channel-name">{video.channel}</p>
+                            {/* 💡 點擊頻道名稱進入頻道 */}
+                            <p 
+                              className="channel-name channel-name-clickable"
+                              onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                              style={{ cursor: 'pointer', display: 'inline-block' }}
+                            >
+                              {video.channel}
+                            </p>
                             <p className="video-meta">{formatViews(video.views)} • {video.time}</p>
                           </div>
                         </div>
@@ -653,10 +716,24 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            {/* 💡 點擊頭貼進入頻道 */}
+                            <img 
+                              src={video.avatar} 
+                              alt={video.channel} 
+                              className="channel-avatar channel-avatar-clickable" 
+                              onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                              style={{ cursor: 'pointer' }}
+                            />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              <p className="channel-name">{video.channel}</p>
+                              {/* 💡 點擊名稱進入頻道 */}
+                              <p 
+                                className="channel-name channel-name-clickable"
+                                onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                                style={{ cursor: 'pointer', display: 'inline-block' }}
+                              >
+                                {video.channel}
+                              </p>
                               <p className="video-meta">{formatViews(video.views)} • {video.time}</p>
                             </div>
                           </div>
@@ -692,10 +769,24 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            {/* 💡 點擊頭貼進入頻道 */}
+                            <img 
+                              src={video.avatar} 
+                              alt={video.channel} 
+                              className="channel-avatar channel-avatar-clickable" 
+                              onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                              style={{ cursor: 'pointer' }}
+                            />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              <p className="channel-name">{video.channel}</p>
+                              {/* 💡 點擊名稱進入頻道 */}
+                              <p 
+                                className="channel-name channel-name-clickable"
+                                onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                                style={{ cursor: 'pointer', display: 'inline-block' }}
+                              >
+                                {video.channel}
+                              </p>
                               <p className="video-meta">上次觀看過</p>
                             </div>
                           </div>
@@ -721,10 +812,24 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            {/* 💡 點擊頭貼進入頻道 */}
+                            <img 
+                              src={video.avatar} 
+                              alt={video.channel} 
+                              className="channel-avatar channel-avatar-clickable" 
+                              onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                              style={{ cursor: 'pointer' }}
+                            />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              <p className="channel-name">{video.channel}</p>
+                              {/* 💡 點擊名稱進入頻道 */}
+                              <p 
+                                className="channel-name channel-name-clickable"
+                                onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                                style={{ cursor: 'pointer', display: 'inline-block' }}
+                              >
+                                {video.channel}
+                              </p>
                               <p className="video-meta">{formatViews(video.views)}</p>
                             </div>
                           </div>
@@ -737,7 +842,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 5️⃣ 「我的頻道」專屬頁面視圖 */}
+              {/* 5️⃣ 動態「頻道」專屬頁面視圖 */}
               {currentView === 'channel' && (
                 <div className="channel-page-wrapper">
                   <div className="channel-banner" style={{
@@ -747,11 +852,13 @@ export default function App() {
                   }}></div>
 
                   <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
-                    <img src={CHANNEL_AVATAR} alt="My Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                    <img src={targetChannel.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
                     <div>
-                      <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{CHANNEL_NAME}</h1>
-                      <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>@yehh_0000 • 1.2萬位訂閱者 • {videos.filter(v => v.channel === CHANNEL_NAME).length} 部影片</p>
-                      <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到小葉的個人技術與娛樂分享空間。</p>
+                      <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{targetChannel.name}</h1>
+                      <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>
+                        @{targetChannel.name === CHANNEL_NAME ? 'yehh_0000' : 'user_' + Math.floor(Math.random() * 10000)} • 1.2萬位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
+                      </p>
+                      <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
                     </div>
                   </div>
 
@@ -762,7 +869,7 @@ export default function App() {
 
                   {channelTab === 'videos' ? (
                     <div className="video-grid">
-                      {videos.filter(v => v.channel === CHANNEL_NAME).map((video) => (
+                      {videos.filter(v => v.channel === targetChannel.name).map((video) => (
                         <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
                           <div className="thumbnail-wrapper">
                             <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
@@ -782,7 +889,7 @@ export default function App() {
                   ) : (
                     <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                       <h3>簡介</h3>
-                      <p>嗨！我是小葉。主要分享科技觀察與網路各種奇奇怪怪的迷因研究。</p>
+                      <p>嗨！我是 {targetChannel.name}。主要分享科技觀察與網路各種奇奇怪怪的迷因研究。</p>
                     </div>
                   )}
                 </div>
@@ -815,9 +922,23 @@ export default function App() {
                     
                     <div className="watch-actions-row">
                       <div className="channel-info-block" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <img src={selectedVideo.avatar} alt="Channel" className="channel-avatar-large" style={{ width: '40px', height: '40px', borderRadius: '50%' }} />
+                        {/* 💡 內頁點擊頭貼進入頻道 */}
+                        <img 
+                          src={selectedVideo.avatar} 
+                          alt="Channel" 
+                          className="channel-avatar-large channel-avatar-clickable" 
+                          onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)}
+                          style={{ width: '40px', height: '40px', borderRadius: '50%', cursor: 'pointer' }} 
+                        />
                         <div>
-                          <div className="channel-name-large" style={{ fontWeight: 'bold', color: '#fff' }}>{selectedVideo.channel}</div>
+                          {/* 💡 內頁點擊名稱進入頻道 */}
+                          <div 
+                            className="channel-name-large channel-name-clickable" 
+                            onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)}
+                            style={{ fontWeight: 'bold', color: '#fff', cursor: 'pointer' }}
+                          >
+                            {selectedVideo.channel}
+                          </div>
                           <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>你的專屬展示頻道</div>
                         </div>
                         <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
@@ -960,7 +1081,7 @@ export default function App() {
 
                   {/* ➡️ 右側側邊欄推薦影片列表 */}
                   <div className="watch-sidebar-recommendations">
-                    <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
+                    <h3 style={{ color: '#ff6a00', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
                     {videos.filter(v => v.id !== selectedVideo.id).map((video, idx) => (
                       <div key={`sidebar-${video.id}-${idx}`} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
                         <div className="mini-card-thumb-wrapper" style={{ position: 'relative' }}>
@@ -969,7 +1090,14 @@ export default function App() {
                         </div>
                         <div className="mini-card-info">
                           <h4 className="mini-card-title">{video.title}</h4>
-                          <p className="mini-card-channel">{video.channel}</p>
+                          {/* 💡 推薦側欄點擊名稱進入頻道 */}
+                          <p 
+                            className="mini-card-channel channel-name-clickable"
+                            onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                            style={{ cursor: 'pointer', display: 'inline-block' }}
+                          >
+                            {video.channel}
+                          </p>
                           <p className="mini-card-views">{formatViews(video.views)}</p>
                         </div>
                       </div>

@@ -1076,3 +1076,25 @@ html, body {
   50% { background-color: #3f3f3f; }
   100% { background-color: #272727; }
 }
+
+/* ==========================================================================
+   ➕ 獨立新增：頻道頭貼與名稱 點擊 Hover 特效 (游標反饋)
+   ========================================================================== */
+.channel-avatar-clickable {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  cursor: pointer;
+}
+
+.channel-avatar-clickable:hover {
+  opacity: 0.85;
+  transform: scale(1.04);
+}
+
+.channel-name-clickable {
+  transition: color 0.15s ease;
+  cursor: pointer;
+}
+
+.channel-name-clickable:hover {
+  color: #ff6a00 !important;   /* 懸停時點亮為招牌橘色 */
+}
