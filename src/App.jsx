@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import './App.css'
 // 💡 引入 Firebase 服務層
 import { subscribeToVideos, uploadVideoToFirebase, incrementVideoViews } from './firebaseService';
-// 💡 這裡已修改：改為同時從 mockComments 中引入假評論與假影片資料
+// 🟢 從你的 mockShite 同時引入留言與影片
 import { mockComments, MOCK_VIDEOS } from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論
 import { db } from './firebase'; 
@@ -13,7 +13,7 @@ import avatarImage from './assets/163braces.jpg'
 const CHANNEL_NAME = "小葉"; 
 const CHANNEL_AVATAR = avatarImage;
 
-// 🛠️ 貼心保留：上傳新影片時仍需解析網址，因此將此乾淨的正則表達式保留在底層供上傳模態框使用
+// 🛠️ 這裡單純保留給上傳按鈕解析 YouTube URL 使用
 function extractYoutubeId(url) {
   if (!url) return '';
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
@@ -987,7 +987,7 @@ export default function App() {
         <div className="modal-overlay" onClick={() => setIsUploadModalOpen(false)}>
           <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
             <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>📥 上傳新影片到雲端資料庫</h2>
+              <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>📥 上傳新影片</h2>
               <button className="close-modal-btn" onClick={() => setIsUploadModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
             </div>
             <form onSubmit={handleUploadVideo} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1002,7 +1002,7 @@ export default function App() {
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
                 <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
-                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '🚀 確認上傳'}
+                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '確認上傳'}
                 </button>
               </div>
             </form>
