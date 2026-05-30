@@ -145,10 +145,17 @@ function formatSubscribers(count) {
 export default function App() {
   // 💡 用來記憶「在當前視窗中，剛剛才點擊上傳成功」的新影片物件
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
+
   // 💡 【記憶刷新邏輯 1】：從 localStorage 恢復上次的視圖，沒紀錄則預設為 'home'
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
+
+  useEffect(() => {
+    if (contentAreaRef.current) {
+      contentAreaRef.current.scrollTop = 0;
+    }
+  }, [currentView]); // 👈 這裡監聽了頁面變動
 
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
@@ -357,7 +364,10 @@ export default function App() {
     setSearchInputStr('');
     setSearchQuery('');
     setActiveCategory('全部');
-
+    
+    // 🟢 新增這行：讓畫面在點擊 LOGO 返回首頁時強制滾動回最上方
+    window.scrollTo(0, 0); 
+    
     // 💡 點擊 Logo 重整首頁時，清除剛上傳影片的特權，回復全部 Shuffle
     setJustUploadedVideo(null);
 
@@ -726,7 +736,10 @@ export default function App() {
     <div>
       {/* 🟢 頂部導覽列 */}
       <nav className="navbar">
-        <div className="logo-hub-style" onClick={handleHomeNavigation}>
+        <div className="logo-hub-style" onClick={() => {
+          handleHomeNavigation();
+          forceScrollToTop(); // 🟢 改用專案自訂的 forceScrollToTop，才能精準把中間滾動區域拉回最上面！
+        }}>
           <span className="logo-text-white">Leaf</span>
           <span className="logo-badge-orange">hub</span>
         </div>
