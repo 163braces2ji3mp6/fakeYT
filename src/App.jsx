@@ -501,6 +501,7 @@ export default function App() {
       await addDoc(collection(db, 'comments'), {
         videoId: selectedVideo.id,
         author: localUsername,
+        avatar: CHANNEL_AVATAR, // 🟢 💡 新增這行：讓送出留言的頭貼跟目前頻道身分完全同步！
         text: textToSend,
         likes: 0,
         replyCount: 0,
