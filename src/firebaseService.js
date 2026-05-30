@@ -17,25 +17,26 @@ import {
  * @param {any} timestamp - Firebase Timestamp、Date 物件、或時間戳記
  * @returns {string} 例如：「5 分鐘前」、「3 小時前」、「1 天前」
  */
+/**
+ * 🕒 將時間轉換為「距離現在多久」的 YouTube 風格相對時間字串
+ * @param {any} timestamp - Firebase Timestamp、Date 物件、或時間戳記
+ * @returns {string} 例如：「5 分鐘前」、「3 小時前」、「1 天前」
+ */
 export function formatTimeAgo(timestamp) {
   if (!timestamp) return '剛剛';
 
   let date;
 
-  // 1. 處理 Firebase 的 Timestamp 格式 (包含 toDate 函式)
   if (timestamp && typeof timestamp.toDate === 'function') {
     date = timestamp.toDate();
   } 
-  // 2. 處理標準 Date 物件
   else if (timestamp instanceof Date) {
     date = timestamp;
   } 
-  // 3. 處理毫秒數或字串格式 (如 Mock 資料)
   else {
     date = new Date(timestamp);
   }
 
-  // 如果時間格式解析失敗，返回預設值
   if (isNaN(date.getTime())) {
     return '未知時間';
   }
@@ -43,8 +44,8 @@ export function formatTimeAgo(timestamp) {
   const now = new Date();
   const secondsPast = Math.floor((now.getTime() - date.getTime()) / 1000);
 
-  // 如果小於 0 秒，代表可能時區微調或伺服器時間有些許誤差，直接顯示剛剛
-  if (secondsPast < 60) {
+  // 💡 核心修正：如果相減是負數（代表伺服器時間微幅快於本地），或者是真的在 60 秒內，才顯示「剛剛」
+  if (secondsPast < 0 || secondsPast < 60) {
     return '剛剛';
   }
   

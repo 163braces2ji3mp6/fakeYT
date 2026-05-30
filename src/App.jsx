@@ -145,7 +145,7 @@ function formatSubscribers(count) {
 export default function App() {
   // 💡 用來記憶「在當前視窗中，剛剛才點擊上傳成功」的新影片物件
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
-
+  const bufferTimeoutRef = useRef(null); // 用來儲存計時器 ID
   // 💡 【記憶刷新邏輯 1】：從 localStorage 恢復上次的視圖，沒紀錄則預設為 'home'
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
@@ -517,7 +517,7 @@ export default function App() {
 
     setTimeout(() => {
       setIsVideoLoading(false);
-    }, 1200);
+    }, 450);
 
     setWatchHistory(prev => {
       const nextHistory = [video, ...prev.filter(item => item.id !== video.id)];
@@ -700,7 +700,7 @@ export default function App() {
       // 🟢 修正 2：整合關閉彈窗與欄位重置，確保執行順暢
       setNewVideoTitle('');
       setNewVideoUrl('');
-      setNewVideoCategory('遊戲'); 
+      setNewVideoCategory('未分類'); 
       setIsUploadModalOpen(false); 
       
       setSearchInputStr('');
@@ -1076,10 +1076,26 @@ export default function App() {
                     <div className="watch-main-content">
                       <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000', borderRadius: '12px', overflow: 'hidden' }}>
                         {isVideoLoading ? (
-                          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: '#000', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-                            <div className="yt-buffering-spinner"></div>
-                          </div>
-                        ) : null}
+                        <div style={{ 
+                          position: 'absolute', 
+                          top: 0, 
+                          left: 0, 
+                          width: '100%', 
+                          height: '100%', 
+                          // 💡 核心改動：將原本的純黑背景 #000 換成疊加半透明黑遮罩的影片縮圖
+                          backgroundImage: selectedVideo ? `linear-gradient(rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0.65)), url(${selectedVideo.image || selectedVideo.thumbnail})` : '#000',
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center',
+                          backdropFilter: 'blur(8px)', /* 💡 加上淡淡的模糊，讓中間轉圈圈更顯眼，質感大加分 */
+                          display: 'flex', 
+                          justifyContent: 'center', 
+                          alignItems: 'center', 
+                          zIndex: 10,
+                          transition: 'background 0.3s ease'
+                        }}>
+                          <div className="yt-buffering-spinner"></div>
+                        </div>
+                      ) : null}
                         <iframe
                           className="video-player-simulation"
                           style={{ width: '100%', height: '100%', border: 'none' }}
@@ -1144,7 +1160,10 @@ export default function App() {
                                     <div className="comment-content-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                       <div className="comment-user-meta" style={{ display: 'flex', alignItems: 'center' }}>
                                         <span className="comment-author-name" style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px' }}>{comment.author}</span>
-                                        <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>{comment.isPending ? '傳送中...' : '剛剛'}</span>
+                                        <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
+                                          {/* 💡 直接把整個 createdAt 物件丟進去，不自己在外面用三元運算子卡死它 */}
+                                          {comment.createdAt ? formatTimeAgo(comment.createdAt) : '剛剛'}
+                                        </span>
                                       </div>
                                       <p className="comment-user-text" style={{ margin: '2px 0 6px 0', color: '#eee', fontSize: '14px', lineHeight: '1.5' }}>{comment.text}</p>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '2px' }}>
@@ -1168,10 +1187,14 @@ export default function App() {
                                             <div key={reply.id} style={{ display: 'flex', gap: '10px', fontSize: '13px', background: '#0e0e0e', padding: '8px', borderRadius: '6px', opacity: reply.isPending ? 0.6 : 1 }}>
                                               <div style={{ color: '#888' }}>{reply.isPending ? '⏳' : '👤'}</div>
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                <div>
-                                                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
-                                                  {reply.isPending && <span style={{ color: '#666', fontSize: '11px', marginLeft: '6px' }}>(傳送中...)</span>}
-                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
+                                                {/* 💡 讓子回覆也擁有完全一樣的安全相對時間顯示 */}
+                                                <span style={{ color: '#666', fontSize: '11px' }}>
+                                                  {reply.createdAt ? formatTimeAgo(reply.createdAt) : '剛剛'}
+                                                </span>
+                                                {reply.isPending && <span style={{ color: '#666', fontSize: '11px' }}>(傳送中...)</span>}
+                                              </div>
                                                 <p style={{ color: '#ccc', margin: '2px 0 0 0', lineHeight: '1.4' }}>{reply.text}</p>
                                               </div>
                                             </div>
