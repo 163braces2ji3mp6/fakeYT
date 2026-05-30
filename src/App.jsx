@@ -143,6 +143,8 @@ function formatSubscribers(count) {
 }
 
 export default function App() {
+  // 💡 用來記憶「在當前視窗中，剛剛才點擊上傳成功」的新影片物件
+  const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   // 💡 【記憶刷新邏輯 1】：從 localStorage 恢復上次的視圖，沒紀錄則預設為 'home'
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
@@ -356,12 +358,17 @@ export default function App() {
     setSearchQuery('');
     setActiveCategory('全部');
 
+    // 💡 點擊 Logo 重整首頁時，清除剛上傳影片的特權，回復全部 Shuffle
+    setJustUploadedVideo(null);
+
+    const totallyShuffled = shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]);
+
     if (currentView === 'watch') {
-      setVideos(shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]));
+      setVideos(totallyShuffled);
       setCurrentView('home');
     } else {
       setCurrentView('home');
-      setVideos(shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]));
+      setVideos(totallyShuffled);
     }
 
     setTimeout(() => {
@@ -463,13 +470,24 @@ export default function App() {
     const unsubscribe = subscribeToVideos((firebaseVideos) => {
       const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
       setRawFirebaseVideos(validFirebaseVideos);
-      const mixedVideos = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
-      setVideos(mixedVideos);
+      
+      // 1. 先把 Firebase 影片與 Mock 影片倒進去，進行全體打亂 (Shuffle)
+      let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
+      
+      // 2. 💡 檢查是否有「剛剛才上傳」的影片
+      if (justUploadedVideo) {
+        // 先從打亂的陣列中過濾掉這部影片（防止它在後面重複出現）
+        shuffledAll = shuffledAll.filter(v => v.id !== justUploadedVideo.id);
+        // 強制把剛剛上傳的影片塞在第一個位置！
+        shuffledAll = [justUploadedVideo, ...shuffledAll];
+      }
+      
+      setVideos(shuffledAll);
       setIsPageLoading(false);
       setIsFirstInit(false); 
     });
     return () => unsubscribe();
-  }, []);
+  }, [justUploadedVideo]); // 💡 記住在陣列加上 justUploadedVideo，這樣一上傳完就會立刻觸發重新排序
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -666,10 +684,14 @@ export default function App() {
       
       await uploadVideoToFirebase(dataToUpload);
 
+      // 🟢 修正 1：改為正確的 dataToUpload 變數，首頁排序才會抓到它並排在第一個
+      setJustUploadedVideo(dataToUpload); 
+    
+      // 🟢 修正 2：整合關閉彈窗與欄位重置，確保執行順暢
       setNewVideoTitle('');
       setNewVideoUrl('');
       setNewVideoCategory('遊戲'); 
-      setIsUploadModalOpen(false);
+      setIsUploadModalOpen(false); 
       
       setSearchInputStr('');
       setSearchQuery('');
@@ -677,11 +699,12 @@ export default function App() {
       setCurrentView('home');
       alert("上傳成功！");
     } catch (error) {
-      console.error("❌ 雲端上傳嚴重失敗：", error);
+      console.error("上傳失敗：", error);
+      alert("上傳失敗，請稍後再試！");
     } finally {
-      setIsAnalyzing(false);
+      setIsAnalyzing(false); // 確保不論成功或失敗都會結束載入狀態
     }
-  };
+};
 
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
