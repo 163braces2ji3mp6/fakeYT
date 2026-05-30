@@ -835,7 +835,7 @@ export default function App() {
                     <div>
                       <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{targetChannel.name}</h1>
                       <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>
-                        @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 1.2萬位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
+                        @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 0 位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
                       </p>
                       <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
                     </div>
