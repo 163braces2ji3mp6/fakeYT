@@ -10,12 +10,13 @@ import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, 
 
 import avatarImage from './assets/163braces.jpg' 
 
-// 1. 🟢 定義標準訪客的預設灰色頭貼 (採用內聯 SVG，100% 支援且不需額外載入外部圖片檔案)
+// 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
 const getInitialUserInfo = () => {
-  // 先檢查這台裝置的瀏覽器本地儲存 (localStorage) 是否已經有帳號紀錄
+  // 檢查瀏覽器本地儲存是否已有名字與 ID 紀錄
   const savedName = localStorage.getItem('device_user_name');
+  const savedId = localStorage.getItem('device_user_id');
 
   // 1. 自動辨識你目前的開發裝置：如果是本機環境 (localhost 或 127.0.0.1)
   const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -27,37 +28,43 @@ const getInitialUserInfo = () => {
   // 如果是你本機、或是強制指定、或是本來就記錄為小葉
   if (isMyDevelopDevice || isForcedMe || savedName === '小葉') {
     localStorage.setItem('device_user_name', '小葉');
-    return { name: '小葉', avatar: avatarImage };
+    localStorage.setItem('device_user_id', 'shiauye_official'); // 你原本專屬的 ID 帳號
+    return { name: '小葉', id: 'shiauye_official', avatar: avatarImage };
   }
 
-  // 3. 如果是其他裝置，且之前已經來過並生成過訪客名稱，直接沿用
-  if (savedName) {
-    return { name: savedName, avatar: GUEST_AVATAR };
+  // 3. 如果是其他裝置，且之前已經來過並生成過，直接沿用（確保名字與 ID 綁定該裝置不變）
+  if (savedName && savedId) {
+    return { name: savedName, id: savedId, avatar: GUEST_AVATAR };
   }
 
-  // 4. 其他全新進來的裝置：隨機組合出「純中文暱稱」加上數字，拿掉「訪客:」前綴
+  // 4. 其他全新進來的裝置：隨機生成不重複「中文暱稱」與「英數隨機 ID」
   const adjectives = ["熱心的", "潛水的", "路過的", "機智的", "佛系的", "神祕的", "愛看片的", "吃飽的", "打瞌睡的", "隨和的"];
   const nouns = ["小柴犬", "貓咪君", "水豚拉", "小企鵝", "太空人", "大熊貓", "珍奶控", "魔法師", "乾飯人", "小樹懶"];
   
   const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-  
-  // 加上 4 位數隨機數字尾碼，確保不重複
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   
-  // 🟢 💡 修改這裡：完全拿掉「訪客」這兩個字，直接輸出純中文組合與數字（例如：機智的太空人_2740）
+  // 生成隨機中文名稱 (例如: 機智的太空人_2740)
   const uniqueChineseName = `${randomAdj}${randomNoun}_${randomNum}`; 
+  
+  // 🟢 💡 新增：自動為該裝置隨機生成一個好看的英數 ID (例如: user_a8f3d)
+  const randomHex = Math.random().toString(36).substring(2, 7); // 隨機產生 5 碼英數組合
+  const uniqueId = `user_${randomHex}`;
 
   localStorage.setItem('device_user_name', uniqueChineseName);
-  return { name: uniqueChineseName, avatar: GUEST_AVATAR };
+  localStorage.setItem('device_user_id', uniqueId);
+  
+  return { name: uniqueChineseName, id: uniqueId, avatar: GUEST_AVATAR };
 };
 
 // 執行初始化並獲取當前裝置的身分
 const userInfo = getInitialUserInfo();
 
-// 🟢 重點：維持原本的變數名稱不變，下方所有 LAYOUT 元件和 Firebase 參照完全不用動！
+// 🟢 重點：維持原本變數名稱，並新增 CHANNEL_ID 供下方元件直接讀取
 const CHANNEL_NAME = userInfo.name; 
 const CHANNEL_AVATAR = userInfo.avatar;
+const CHANNEL_ID = userInfo.id; // 💡 讓隨機 ID 也可以在全域被呼叫
 
 // 🛠️ 這裡單純保留給上傳按鈕解析 YouTube URL 使用
 function extractYoutubeId(url) {
@@ -607,9 +614,6 @@ export default function App() {
         </div>
           
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <span style={{ color: '#aaa', fontSize: '12px', background: '#222', padding: '6px 12px', borderRadius: '12px' }}>
-            🏷️ 訪客：{localUsername}
-          </span>
 
           <button 
             onClick={() => setIsUploadModalOpen(true)}
