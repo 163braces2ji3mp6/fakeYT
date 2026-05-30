@@ -702,10 +702,14 @@ export default function App() {
                         <div className="video-info-section">
                           {/* 💡 點擊頭貼進入頻道 */}
                           <img 
-                            src={video.avatar} 
+                            src={
+                              video.author === '小葉' || video.channel === '小葉' 
+                                ? avatarImage 
+                                : (video.avatar || GUEST_AVATAR)
+                            } 
                             alt={video.channel} 
                             className="channel-avatar channel-avatar-clickable" 
-                            onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                            onClick={(e) => handleChannelNavigation(video.channel, video.avatar || GUEST_AVATAR, e)}
                             style={{ cursor: 'pointer' }}
                           />
                           <div>
