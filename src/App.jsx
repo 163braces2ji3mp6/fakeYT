@@ -13,31 +13,8 @@ import avatarImage from './assets/163braces.jpg'
 // 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
-const getInitialUserInfo = () => {
-  // 檢查瀏覽器本地儲存是否已有名字與 ID 紀錄
-  const savedName = localStorage.getItem('device_user_name');
-  const savedId = localStorage.getItem('device_user_id');
-
-  // 1. 自動辨識你目前的開發裝置：如果是本機環境 (localhost 或 127.0.0.1)
-  const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-  // 2. 貼心備用功能：網址後方加上 ?user=小葉 就能強制切換
-  const urlParams = new URLSearchParams(window.location.search);
-  const isForcedMe = urlParams.get('user') === '小葉';
-
-  // 如果是你本機、或是強制指定、或是本來就記錄為小葉
-  if (isMyDevelopDevice || isForcedMe || savedName === '小葉') {
-    localStorage.setItem('device_user_name', '小葉');
-    localStorage.setItem('device_user_id', 'shiauye_official'); // 你原本專屬的 ID 帳號
-    return { name: '小葉', id: 'shiauye_official', avatar: avatarImage };
-  }
-
-  // 3. 如果是其他裝置，且之前已經來過並生成過，直接沿用（確保名字與 ID 綁定該裝置不變）
-  if (savedName && savedId) {
-    return { name: savedName, id: savedId, avatar: GUEST_AVATAR };
-  }
-
-  // 4. 其他全新進來的裝置：隨機生成不重複「中文暱稱」與「英數隨機 ID」
+// 💡 獨立出隨機生成中文名稱與 ID 的核心邏輯，方便初始化與「隨機登出」時共用
+const generateRandomIdentity = () => {
   const adjectives = ["熱心的", "潛水的", "路過的", "機智的", "佛系的", "神祕的", "愛看片的", "吃飽的", "打瞌睡的", "隨和的"];
   const nouns = ["小柴犬", "貓咪君", "水豚拉", "小企鵝", "太空人", "大熊貓", "珍奶控", "魔法師", "乾飯人", "小樹懶"];
   
@@ -45,28 +22,47 @@ const getInitialUserInfo = () => {
   const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   
-  // 生成隨機中文名稱 (例如: 機智的太空人_2740)
   const uniqueChineseName = `${randomAdj}${randomNoun}_${randomNum}`; 
-  
-  // 🟢 💡 新增：自動為該裝置隨機生成一個好看的英數 ID (例如: user_a8f3d)
-  const randomHex = Math.random().toString(36).substring(2, 7); // 隨機產生 5 碼英數組合
+  const randomHex = Math.random().toString(36).substring(2, 7); 
   const uniqueId = `user_${randomHex}`;
 
-  localStorage.setItem('device_user_name', uniqueChineseName);
-  localStorage.setItem('device_user_id', uniqueId);
+  return { name: uniqueChineseName, id: uniqueId };
+};
+
+const getInitialUserInfo = () => {
+  const savedName = localStorage.getItem('device_user_name');
+  const savedId = localStorage.getItem('device_user_id');
+
+  const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const urlParams = new URLSearchParams(window.location.search);
+  const isForcedMe = urlParams.get('user') === '小葉';
+
+  if (isMyDevelopDevice || isForcedMe || savedName === '小葉') {
+    localStorage.setItem('device_user_name', '小葉');
+    localStorage.setItem('device_user_id', 'shiauye_official'); 
+    return { name: '小葉', id: 'shiauye_official', avatar: avatarImage };
+  }
+
+  if (savedName && savedId) {
+    return { name: savedName, id: savedId, avatar: GUEST_AVATAR };
+  }
+
+  // 全新裝置就地生成
+  const randomUser = generateRandomIdentity();
+  localStorage.setItem('device_user_name', randomUser.name);
+  localStorage.setItem('device_user_id', randomUser.id);
   
-  return { name: uniqueChineseName, id: uniqueId, avatar: GUEST_AVATAR };
+  return { name: randomUser.name, id: randomUser.id, avatar: GUEST_AVATAR };
 };
 
 // 執行初始化並獲取當前裝置的身分
 const userInfo = getInitialUserInfo();
 
-// 🟢 重點：維持原本變數名稱，並新增 CHANNEL_ID 供下方元件直接讀取
-const CHANNEL_NAME = userInfo.name; 
-const CHANNEL_AVATAR = userInfo.avatar;
-const CHANNEL_ID = userInfo.id; // 💡 讓隨機 ID 也可以在全域被呼叫
+// 🟢 維持全域變數名稱（作為系統初始快照）
+let CHANNEL_NAME = userInfo.name; 
+let CHANNEL_AVATAR = userInfo.avatar;
+let CHANNEL_ID = userInfo.id; 
 
-// 🛠️ 這裡單純保留給上傳按鈕解析 YouTube URL 使用
 function extractYoutubeId(url) {
   if (!url) return '';
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
@@ -77,10 +73,6 @@ function extractYoutubeId(url) {
 /* ==========================================================================
    🚀 核心功能：Firebase 評論即時同步與 Mock 資料混合邏輯
    ========================================================================== */
-
-/**
- * 💡 貼心功能：即時監聽目前影片的 Firebase 評論，如果雲端沒有，就拿獨立檔案的 mockComments 當基底！
- */
 export function subscribeToComments(selectedVideo, setCommentsCallback) {
   if (!selectedVideo?.id) return () => {};
 
@@ -138,17 +130,6 @@ function formatViews(views) {
   return `${numViews}次`;
 }
 
-const generateRandomName = () => {
-  const adjectives = ['憤怒的', '迷路的', '臭屁的', '優雅的', '超頂的', '可憐啊', '傲嬌的', '被釣魚的', '瘋狂的', '純情的'];
-  const nouns = ['地瓜球', '脆皮豬', '小丑', 'NPC', '超人', '卡皮巴拉', '可樂餅', '傻逼', '工程師', '潛水員'];
-  
-  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const noun = nouns[Math.floor(Math.random() * nouns.length)];
-  const randomNum = Math.floor(1000 + Math.random() * 9000); 
-  
-  return `${adj}${noun}#${randomNum}`;
-};
-
 export default function App() {
   const [currentView, setCurrentView] = useState('home');
   const [activeCategory, setActiveCategory] = useState('全部');
@@ -161,11 +142,27 @@ export default function App() {
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
 
-  // 💡 用於動態渲染被點擊的頻道資訊（點擊不同人的影片能進入該作者的頻道頁）
+  // 💡 【自訂名稱的核心修改】：讓當前用戶名稱變成動態 State 控制
+  const [localUsername, setLocalUsername] = useState(CHANNEL_NAME);
+  const [currentUserId, setCurrentUserId] = useState(CHANNEL_ID);
+  const [currentUserAvatar, setCurrentUserAvatar] = useState(CHANNEL_AVATAR);
+
+  // 💡 用於「帳號設定彈出視窗」的輸入框狀態
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [inputUsername, setInputUsername] = useState(localUsername);
+
+  // 💡 用於動態渲染被點擊的頻道資訊，同步隨當前狀態更新
   const [targetChannel, setTargetChannel] = useState({
-    name: CHANNEL_NAME,
-    avatar: CHANNEL_AVATAR
+    name: localUsername,
+    avatar: currentUserAvatar
   });
+
+  // 當使用者隨機切換或手動改名時，同步更新自己的頻道頁顯示
+  useEffect(() => {
+    if (targetChannel.name === CHANNEL_NAME || targetChannel.name === localUsername) {
+      setTargetChannel({ name: localUsername, avatar: currentUserAvatar });
+    }
+  }, [localUsername, currentUserAvatar]);
 
   const [likedVideoIds, setLikedVideoIds] = useState(() => {
     const savedLikes = localStorage.getItem('leafhub_likedVideos');
@@ -182,20 +179,11 @@ export default function App() {
     return savedHistory ? JSON.parse(savedHistory) : [];
   });
 
-  const [localUsername] = useState(() => {
-    const savedName = localStorage.getItem('leafhub_username');
-    if (savedName) return savedName;
-    const newName = generateRandomName();
-    localStorage.setItem('leafhub_username', newName);
-    return newName;
-  });
-
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
   const contentAreaRef = useRef(null);
   const [channelTab, setChannelTab] = useState('videos');
 
-  // 💡 用來儲存多個子回覆輸入框的動態 Refs
   const replyInputRefs = useRef({});
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -214,16 +202,44 @@ export default function App() {
   const [optimisticComments, setOptimisticComments] = useState([]);
   const [optimisticReplies, setOptimisticReplies] = useState([]);
 
-  // 💡 自動對齊補上圖片頭像：因為 MOCK_VIDEOS 移到了外部，在這裡統一注入本地引入的圖片
+  // 💡 【帳號設定：儲存手動修改名稱方法】
+  const handleUpdateUsernameSubmit = (e) => {
+    e.preventDefault();
+    if (!inputUsername.trim()) {
+      alert('名稱不能為空！');
+      return;
+    }
+    setLocalUsername(inputUsername);
+    localStorage.setItem('device_user_name', inputUsername);
+    setIsSettingsModalOpen(false); // 關閉視窗
+    alert(`帳號名稱已成功修改為：${inputUsername}`);
+  };
+
+  // 💡 【登出按鈕：隨機切換變更帳號方法】
+  const handleRandomizeUser = () => {
+    const randomUser = generateRandomIdentity();
+    
+    setLocalUsername(randomUser.name);
+    setInputUsername(randomUser.name); // 同步更新輸入框預設值
+    setCurrentUserId(randomUser.id);
+    setCurrentUserAvatar(GUEST_AVATAR);
+    
+    localStorage.setItem('device_user_name', randomUser.name);
+    localStorage.setItem('device_user_id', randomUser.id);
+    
+    setIsProfileOpen(false); 
+    alert(`已為您切換隨機新身份：${randomUser.name}`);
+  };
+
   useEffect(() => {
     if (Array.isArray(MOCK_VIDEOS)) {
       MOCK_VIDEOS.forEach(video => {
         if (!video.avatar) {
-          video.avatar = CHANNEL_AVATAR;
+          video.avatar = currentUserAvatar;
         }
       });
     }
-  }, []);
+  }, [currentUserAvatar]);
 
   const forceScrollToTop = () => {
     window.scrollTo(0, 0);
@@ -258,8 +274,8 @@ export default function App() {
 
   const handleMyChannelClick = () => {
     setTargetChannel({
-      name: CHANNEL_NAME,
-      avatar: CHANNEL_AVATAR
+      name: localUsername,
+      avatar: currentUserAvatar
     });
     setCurrentView('channel'); 
     setChannelTab('videos'); 
@@ -267,12 +283,11 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 💡 跳轉至特定頻道的共享觸發方法
   const handleChannelNavigation = (channelName, channelAvatar, e) => {
-    if (e) e.stopPropagation(); // 防止觸發外層卡片的 onClick 事件
+    if (e) e.stopPropagation(); 
     setTargetChannel({
-      name: channelName || CHANNEL_NAME,
-      avatar: channelAvatar || CHANNEL_AVATAR
+      name: channelName || localUsername,
+      avatar: channelAvatar || currentUserAvatar
     });
     setCurrentView('channel');
     setChannelTab('videos');
@@ -286,7 +301,6 @@ export default function App() {
     }
   }, [currentView, selectedVideo]);
 
-  // ✨ 留言即時同步 Effect
   useEffect(() => {
     if (!selectedVideo?.id) return;
 
@@ -311,7 +325,6 @@ export default function App() {
     return () => unsubscribe();
   }, [selectedVideo]);
 
-  // 子回覆即時監聽機制 Effect
   useEffect(() => {
     const activeCommentIds = Object.keys(expandedReplyComments).filter(id => expandedReplyComments[id]);
     if (activeCommentIds.length === 0) return;
@@ -346,7 +359,6 @@ export default function App() {
     };
   }, [expandedReplyComments]);
 
-  // 💡 Firebase 串接監聽點
   useEffect(() => {
     const unsubscribe = subscribeToVideos((firebaseVideos) => {
       const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
@@ -425,7 +437,6 @@ export default function App() {
     }
   };
 
-  // 💡 切換展開狀態時，若變為展開，則自動將焦點 Focus 到對應的 input 上
   const toggleReplySection = (commentId) => {
     setExpandedReplyComments(prev => {
       const nextState = {
@@ -438,7 +449,7 @@ export default function App() {
           if (replyInputRefs.current[commentId]) {
             replyInputRefs.current[commentId].focus();
           }
-        }, 50); // 短暫延遲確保 DOM 已成功展開並渲染
+        }, 50); 
       }
 
       return nextState;
@@ -456,6 +467,7 @@ export default function App() {
       id: `temp-reply-${Date.now()}`,
       commentId,
       author: localUsername,
+      avatar: currentUserAvatar, 
       text: replyText,
       isPending: !isMockComment, 
       createdAt: new Date().toISOString()
@@ -472,6 +484,7 @@ export default function App() {
       await addDoc(collection(db, 'replies'), {
         commentId,
         author: localUsername,
+        avatar: currentUserAvatar, 
         text: replyText,
         createdAt: new Date().toISOString()
       });
@@ -496,6 +509,7 @@ export default function App() {
       id: `temp-${Date.now()}`, 
       videoId: selectedVideo.id,
       author: localUsername,
+      avatar: currentUserAvatar, 
       text: textToSend,
       likes: 0,
       replyCount: 0,
@@ -510,7 +524,7 @@ export default function App() {
       await addDoc(collection(db, 'comments'), {
         videoId: selectedVideo.id,
         author: localUsername,
-        avatar: CHANNEL_AVATAR, // 🟢 💡 新增這行：讓送出留言的頭貼跟目前頻道身分完全同步！
+        avatar: currentUserAvatar, 
         text: textToSend,
         likes: 0,
         replyCount: 0,
@@ -547,11 +561,11 @@ export default function App() {
     try {
       const dataToUpload = {
         title: newVideoTitle,
-        channel: CHANNEL_NAME,
+        channel: localUsername, 
         views: 0,            
         time: "剛剛",            
         duration: finalDuration, 
-        avatar: CHANNEL_AVATAR,
+        avatar: currentUserAvatar,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
         thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`
@@ -631,23 +645,34 @@ export default function App() {
 
           <div className="avatar-container" ref={profileMenuRef}>
             <img 
-              src={CHANNEL_AVATAR} alt="Avatar" className="avatar" 
+              src={currentUserAvatar} alt="Avatar" className="avatar" 
               onClick={() => setIsProfileOpen(!isProfileOpen)} style={{ cursor: 'pointer' }}
             />
             {isProfileOpen && (
               <div className="profile-dropdown-menu">
                 <div className="dropdown-user-info">
-                  <img src={CHANNEL_AVATAR} alt="Avatar Large" className="dropdown-avatar-large" />
+                  <img src={currentUserAvatar} alt="Avatar Large" className="dropdown-avatar-large" />
                   <div>
-                    <div className="dropdown-username">{CHANNEL_NAME}</div>
-                    <div className="dropdown-email">@{CHANNEL_ID}</div>
+                    <div className="dropdown-username">{localUsername}</div>
+                    <div className="dropdown-email">@{currentUserId}</div>
                   </div>
                 </div>
                 <hr className="dropdown-divider" />
                 <div className="dropdown-links">
                   <button className="dropdown-item-btn" onClick={handleMyChannelClick}>👤 我的頻道</button>
-                  <button className="dropdown-item-btn" onClick={() => alert('切換帳戶中！')}>🔄 切換帳戶</button>
-                  <button className="dropdown-item-btn" onClick={() => alert('登出成功！')}>🚪 登出</button>
+                  
+                  {/* 💡 點擊開啟帳號設定視窗，並帶入目前名字 */}
+                  <button className="dropdown-item-btn" onClick={() => {
+                    setInputUsername(localUsername);
+                    setIsSettingsModalOpen(true);
+                    setIsProfileOpen(false);
+                  }}>
+                    ⚙️ 帳號設定
+                  </button>
+                  
+                  <button className="dropdown-item-btn" onClick={handleRandomizeUser}>
+                    🚪 隨機換帳號登出
+                  </button>
                 </div>
               </div>
             )}
@@ -700,7 +725,6 @@ export default function App() {
                           <span className="video-duration">{video.duration}</span>
                         </div>
                         <div className="video-info-section">
-                          {/* 💡 點擊頭貼進入頻道 */}
                           <img 
                             src={
                               video.author === '小葉' || video.channel === '小葉' 
@@ -714,7 +738,6 @@ export default function App() {
                           />
                           <div>
                             <h3 className="video-title">{video.title}</h3>
-                            {/* 💡 點擊頻道名稱進入頻道 */}
                             <p 
                               className="channel-name channel-name-clickable"
                               onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
@@ -744,7 +767,6 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            {/* 💡 點擊頭貼進入頻道 */}
                             <img 
                               src={video.avatar} 
                               alt={video.channel} 
@@ -754,7 +776,6 @@ export default function App() {
                             />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              {/* 💡 點擊名稱進入頻道 */}
                               <p 
                                 className="channel-name channel-name-clickable"
                                 onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
@@ -797,7 +818,6 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            {/* 💡 點擊頭貼進入頻道 */}
                             <img 
                               src={video.avatar} 
                               alt={video.channel} 
@@ -807,7 +827,6 @@ export default function App() {
                             />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              {/* 💡 點擊名稱進入頻道 */}
                               <p 
                                 className="channel-name channel-name-clickable"
                                 onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
@@ -840,7 +859,6 @@ export default function App() {
                             <span className="video-duration">{video.duration}</span>
                           </div>
                           <div className="video-info-section">
-                            {/* 💡 點擊頭貼進入頻道 */}
                             <img 
                               src={video.avatar} 
                               alt={video.channel} 
@@ -850,7 +868,6 @@ export default function App() {
                             />
                             <div>
                               <h3 className="video-title">{video.title}</h3>
-                              {/* 💡 點擊名稱進入頻道 */}
                               <p 
                                 className="channel-name channel-name-clickable"
                                 onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
@@ -884,7 +901,7 @@ export default function App() {
                     <div>
                       <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{targetChannel.name}</h1>
                       <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>
-                        @{targetChannel.name === CHANNEL_NAME ? 'yehh_0000' : 'user_' + Math.floor(Math.random() * 10000)} • 1.2萬位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
+                        @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 1.2萬位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
                       </p>
                       <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
                     </div>
@@ -950,7 +967,6 @@ export default function App() {
                     
                     <div className="watch-actions-row">
                       <div className="channel-info-block" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {/* 💡 內頁點擊頭貼進入頻道 */}
                         <img 
                           src={selectedVideo.avatar} 
                           alt="Channel" 
@@ -959,7 +975,6 @@ export default function App() {
                           style={{ width: '40px', height: '40px', borderRadius: '50%', cursor: 'pointer' }} 
                         />
                         <div>
-                          {/* 💡 內頁點擊名稱進入頻道 */}
                           <div 
                             className="channel-name-large channel-name-clickable" 
                             onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)}
@@ -1022,10 +1037,8 @@ export default function App() {
                                 <div style={{ display: 'flex', gap: '12px' }}>
                                   <div className="comment-user-avatar" style={{ marginTop: '2px' }}>👤</div>
                                   
-                                  {/* 名稱與留言內容垂直對齊的容器 */}
                                   <div className="comment-content-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                     
-                                    {/* 使用者名稱與時間 */}
                                     <div className="comment-user-meta" style={{ display: 'flex', alignItems: 'center' }}>
                                       <span className="comment-author-name" style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px' }}>{comment.author}</span>
                                       <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
@@ -1033,10 +1046,8 @@ export default function App() {
                                       </span>
                                     </div>
                                     
-                                    {/* 留言內文：排列在名字正下方 */}
                                     <p className="comment-user-text" style={{ margin: '2px 0 6px 0', color: '#eee', fontSize: '14px', lineHeight: '1.5' }}>{comment.text}</p>
                                     
-                                    {/* 👍 按讚按鈕 與 💬 回覆按鈕功能列 */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '2px' }}>
                                       <button 
                                         onClick={() => handleCommentLike(cid, isMock)}
@@ -1053,8 +1064,7 @@ export default function App() {
                                       </button>
                                     </div>
 
-                                    {/* 🔄 展開回覆區的下拉觸發按鈕 */}
-                                    {(totalReplyCount > 0) && (
+                                    {totalReplyCount > 0 && (
                                       <div style={{ marginTop: '6px' }}>
                                         <button 
                                           onClick={() => toggleReplySection(cid)}
@@ -1065,10 +1075,8 @@ export default function App() {
                                       </div>
                                     )}
 
-                                    {/* 📂 被展開的子回覆清單與子輸入框 */}
                                     {isExpanded && (
                                       <div style={{ paddingLeft: '20px', borderLeft: '2px solid #222', marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                        {/* 子回覆列表 */}
                                         {replies.map((reply) => (
                                           <div key={reply.id} style={{ display: 'flex', gap: '10px', fontSize: '13px', background: '#0e0e0e', padding: '8px', borderRadius: '6px', opacity: reply.isPending ? 0.6 : 1 }}>
                                             <div style={{ color: '#888' }}>{reply.isPending ? '⏳' : '👤'}</div>
@@ -1082,12 +1090,10 @@ export default function App() {
                                           </div>
                                         ))}
 
-                                        {/* 子回覆輸入表單 */}
                                         <form onSubmit={(e) => handleAddReplySubmit(e, cid)} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
                                           <input 
                                             type="text" 
                                             placeholder="新增回覆..." 
-                                            // 💡 綁定動態 Ref 節點
                                             ref={(el) => { replyInputRefs.current[cid] = el; }}
                                             value={replyInputs[cid] || ''}
                                             onChange={(e) => setReplyInputs(prev => ({ ...prev, [cid]: e.target.value }))}
@@ -1107,7 +1113,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* ➡️ 右側側邊欄推薦影片列表 */}
                   <div className="watch-sidebar-recommendations">
                     <h3 style={{ color: '#ff6a00', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
                     {videos.filter(v => v.id !== selectedVideo.id).map((video, idx) => (
@@ -1118,7 +1123,6 @@ export default function App() {
                         </div>
                         <div className="mini-card-info">
                           <h4 className="mini-card-title">{video.title}</h4>
-                          {/* 💡 推薦側欄點擊名稱進入頻道 */}
                           <p 
                             className="mini-card-channel channel-name-clickable"
                             onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
@@ -1159,6 +1163,37 @@ export default function App() {
                 <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
                 <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
                   {isAnalyzing ? '⚡ 正在解析影片結構...' : '確認上傳'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ⚙️ 【新增功能】彈出式帳號設定視窗模態框 */}
+      {isSettingsModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
+          <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>⚙️ 帳號設定</h2>
+              <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+            <form onSubmit={handleUpdateUsernameSubmit} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ color: '#aaa', fontSize: '14px' }}>自訂帳號名稱</label>
+                <input 
+                  className="comment-text-input" 
+                  type="text" 
+                  placeholder="請輸入您的新名稱..." 
+                  value={inputUsername} 
+                  onChange={(e) => setInputUsername(e.target.value)} 
+                  required 
+                />
+              </div>
+              <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                <button type="button" className="clear-btn" onClick={() => setIsSettingsModalOpen(false)}>取消</button>
+                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>
+                  確認儲存
                 </button>
               </div>
             </form>
