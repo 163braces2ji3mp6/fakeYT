@@ -36,27 +36,6 @@
   font-size: 13px; /* 💡 標籤字體放大 */
 }
 
-.search-bar {
-  display: flex;
-  align-items: center;
-  width: 45%; /* 💡 寬度佔比微調放大 */
-  max-width: 600px; /* 💡 最大寬度從 500px 放大到 600px */
-  background-color: #121212;
-  border: 1px solid #222;
-  border-radius: 24px; /* 💡 配合高度加大弧度 */
-  padding: 8px 20px; /* 💡 內襯加大，搜尋欄變大 */
-  margin:0 0 0 -50px; ;
-}
-
-.search-input {
-  width: 100%;
-  background-color: transparent;
-  border: none;
-  outline: none;
-  color: #fff;
-  font-size: 15px; /* 💡 輸入框字體放大 */
-}
-
 .avatar {
   width: 38px; /* 💡 頭像從 32px 放大到 38px */
   height: 38px;
@@ -66,13 +45,23 @@
 }
 
 /* ==========================================================================
-   🏢 基礎排版主架構 (Layout)
+   🏢 基礎排版主架構 (Layout) - ✨ 修正高度溢出黑影 Bug
    ========================================================================== */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden; 
+  background-color: #050505;
+}
+
 .main-wrapper {
   display: flex;
-  padding-top: 72px;        /* 💡 配合頂部 Navbar 高度改為 72px */
+  margin-top: 72px;          /* 💡 改用 margin-top，不要用 padding-top！ */
   background-color: #050505;
   width: 100%;
+  height: calc(100vh - 72px); /* 完美貼齊剩餘的可視視窗高度 */
+  box-sizing: border-box;
 }
 
 /* 🔵 左側固定導覽欄 */
@@ -81,11 +70,12 @@
   background-color: #0a0a0a;
   border-right: 1px solid #1f1f1f;
   padding: 16px 12px; 
-  height: calc(100vh - 72px); /* 💡 配合 Navbar 高度 */
+  height: 100%;               /* 完美繼承 main-wrapper 的正確滿高 */
   position: fixed;
-  top: 72px;                 /* 💡 配合 Navbar 高度 */
+  top: 72px;                 
   left: 0;
   z-index: 90;
+  box-sizing: border-box;
 }
 
 /* 🟡 右側工作內容區 */
@@ -94,7 +84,9 @@
   margin-left: 260px; 
   padding: 24px 40px;
   background-color: #050505;
-  min-height: calc(100vh - 72px); /* 💡 配合 Navbar 高度 */
+  height: 100%;               /* 完美對齊，再也不會把底部內容擠出螢幕了 */
+  overflow-y: auto;          
+  box-sizing: border-box;
   transition: margin-left 0.2s ease, padding 0.2s ease;
 }
 
@@ -166,6 +158,15 @@
   padding-bottom: 12px;
   margin-bottom: 24px;
   border-bottom: 1px solid #111;
+}
+
+/* 隱藏分類欄的原生滾動條，畫面更乾淨 */
+.category-bar::-webkit-scrollbar {
+  height: 4px;
+}
+.category-bar::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 4px;
 }
 
 .category-btn {
@@ -541,16 +542,16 @@
   gap: 16px;
 }
 
+/* 💡 拔除每條留言底部的細線與內襯 */
 .single-comment-card {
-  display: flex;
-  gap: 12px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #141414;
+  margin-bottom: 16px !important;
+  border-bottom: none !important;
+  padding-bottom: 0px !important;
 }
 
 .single-comment-card:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+  border-bottom: none !important;
+  padding-bottom: 0 !important;
 }
 
 .comment-user-avatar {
@@ -566,23 +567,39 @@
   border: 1px solid #333;
 }
 
-.comment-user-meta {
-  font-size: 12px;
-  font-weight: bold;
-  color: #aaa;
+/* 💡 關鍵修正：確保區塊是垂直排列 (column) */
+.comment-content-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column !important; 
+  align-items: flex-start !important; /* 確保內容不會亂拉伸 */
+  gap: 2px; /* 縮小名字與內文的上下間距 */
 }
 
+/* 💡 名字與時間的橫向列結構 */
+.comment-user-meta {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;  
+  gap: 8px !important;
+  width: 100%;
+}
+
+/* 修正原本干擾排版的 span 標籤 */
 .comment-user-meta span {
   font-weight: normal;
-  color: #444;
-  margin-left: 6px;
+  color: #666;
+  margin-left: 0px !important;
 }
 
+/* 💡 修正內文樣式：取消任何可能導致它橫向排列的因素 */
 .comment-user-text {
   font-size: 14px;
   color: #ddd;
-  margin-top: 4px;
+  margin: 2px 0 4px 0 !important;
   line-height: 1.4;
+  display: block !important; /* 強制獨佔一行 */
+  text-align: left;
 }
 
 .no-comments-prompt {
@@ -593,67 +610,78 @@
 }
 
 /* ==========================================================================
-   👉 右側推薦欄元件樣式 (Watch Right Sidebar Recommendations)
+   👉 右側推薦欄元件樣式 (Watch Right Sidebar Recommendations) - 🚀 巨大化升級版
    ========================================================================== */
 .watch-sidebar-recommendations {
-  width: 540px; /* 💡 再次放大：總寬度升級到 460px，讓右邊呈現大氣的推薦欄 */
+  width: 580px;         /* 💡 總寬度從 540px 再升級到 580px */
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .recommend-mini-card {
   display: flex;
-  gap: 14px; /* 💡 配合大縮圖，間距加大 */
-  margin-bottom: 14px;
+  gap: 18px;            /* 💡 放大縮圖與右側文字之間的間距 */
+  margin-bottom: 12px;  /* 💡 稍微縮減卡片外距，改由內部 padding 撐開 */
   cursor: pointer;
-  border-radius: 10px;
-  padding: 8px; /* 💡 內襯加大，更像一個精緻的獨立卡片 */
+  border-radius: 12px;
+  padding: 12px;        /* 💡 保持大內襯滑動質感 */
+  background-color: transparent;
   transition: background-color 0.2s ease;
+  width: 100%;          /* ⚡ 確保吃滿 580px 寬度，解決右邊有一片沒東西 */
+  box-sizing: border-box;
 }
 
 .recommend-mini-card:hover {
-  background-color: #111;
+  background-color: #141414; 
 }
 
 .mini-card-thumb {
-  width: 210px; /* 💡 再次放大：卡片縮圖從 180px 拓寬到 210px，畫面更震撼 */
+  width: 240px;         /* ⚡ 稍微微調至 240px，釋放更多彈性空間給文字區 */
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 10px;  
   background-color: #222;
   border: 1px solid #1a1a1a;
+  flex-shrink: 0;       /* ⚡ 核心關鍵：強制圖片守住固定寬度，絕對不會被長文字壓扁 */
 }
 
 .mini-card-info {
-  flex: 1;
-  min-width: 0;
+  flex: 1;              /* ⚡ 核心關鍵：自動吃滿縮圖右邊剩下的所有剩餘空間 */
+  min-width: 0;         /* ⚡ 核心關鍵：配合 Flexbox 防止子文字過長將容器硬撐出去 */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start; /* 💡 改為靠上對齊，當多行文字出現時排版才漂亮 */
 }
 
 .mini-card-title {
-  font-size: 15px; /* 💡 標題微調放大到 15px，更清晰好讀 */
-  font-weight: 600;
-  color: #eee;
+  font-size: 16px;      /* 💡 考慮到多行換行，字體改為 16px 視覺比例最完美大方 */
+  font-weight: 700;     
+  color: #ffffff;       
   line-height: 1.4;
-  display: -webkit-box;
+  margin: 0 0 6px 0;    
+  
+  /* ⚡ 核心修正：允許標題長文字自動換行，但最多限制顯示 2 行（超過自動顯示...） */
+  display: -webkit-box; 
   line-clamp: 2;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-bottom: 6px;
+  word-break: break-word; /* 避免遇到網址或超長英文字串不換行 */
 }
 
 .recommend-mini-card:hover .mini-card-title {
-  color: #ff6a00;
+  color: #ff6a00;       
 }
 
 .mini-card-channel {
-  font-size: 13px; /* 💡 頻道字體放大到 13px */
-  color: #777;
+  font-size: 14px;      /* 💡 配合寬度，頻道名稱維持 14px */
+  color: #aaa;          
+  margin: 0 0 4px 0;
 }
 
 .mini-card-views {
-  font-size: 12px;
-  color: #555;
-  margin-top: 4px;
+  font-size: 13px;      /* 💡 觀看次數微調到 13px */
+  color: #777;          
+  margin: 0;
 }
 
 /* ==========================================================================
@@ -687,27 +715,33 @@
 /* ==========================================================================
    📱 RWD 斷點微調 (針對巨大化後的寬度防擠壓優化)
    ========================================================================== */
-@media (max-width: 1200px) {
-  /* 💡 視窗稍微變小時，將右側欄漸進式縮小，優先保護左邊播放器的寬度 */
+@media (max-width: 1400px) {
+  /* 當螢幕中等時，稍微縮小推薦欄，防左側播放器被壓縮得太嚴重 */
   .watch-sidebar-recommendations {
-    width: 380px;
+    width: 420px;
   }
   .mini-card-thumb {
-    width: 160px;
+    width: 180px;
+  }
+  .mini-card-title {
+    font-size: 15px;
   }
 }
 
-@media (max-width: 950px) {
-  /* 💡 低於 950px 時，右側欄直接換行到下方變成單欄排列 */
+@media (max-width: 1080px) {
+  /* 螢幕太小時，自動將右側推薦欄彈性換行到播放器下方，排版回歸舒服的大圖 */
   .watch-layout {
     flex-direction: column;
   }
   .watch-sidebar-recommendations {
     width: 100%;
-    margin-top: 24px;
+    margin-top: 32px;
   }
   .mini-card-thumb {
-    width: 210px;
+    width: 240px;
+  }
+  .mini-card-title {
+    font-size: 16px;
   }
 }
 
@@ -812,7 +846,6 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* 頻道頂部橫幅 Banner */
 .channel-banner {
   box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
   transition: transform 0.3s ease;
@@ -822,7 +855,6 @@
   transform: scale(1.005);
 }
 
-/* 頻道資訊區塊 */
 .channel-header-info {
   border-bottom: 1px solid #111;
   padding-bottom: 24px;
@@ -842,7 +874,6 @@
   letter-spacing: -0.5px;
 }
 
-/* 頻道分頁標籤欄 */
 .channel-tabs-bar {
   user-select: none;
 }
@@ -851,12 +882,10 @@
   position: relative;
 }
 
-/* 擬真 YouTube 標籤滑過調亮效果 */
 .channel-tabs-bar button:hover {
   color: #fff !important;
 }
 
-/* 關於我 (About) 區塊排版 */
 .channel-about-section {
   background-color: #0a0a0a;
   border: 1px solid #141414;
@@ -883,29 +912,22 @@
   color: #aaa;
 }
 
-/* ==========================================================================
-   📱 頻道頁面 RWD 響應式微調
-   ========================================================================== */
 @media (max-width: 768px) {
   .channel-banner {
     height: 120px !important;
   }
-  
   .channel-header-info {
     flex-direction: column;
     text-align: center;
     gap: 16px !important;
   }
-  
   .channel-header-info img {
     width: 90px !important;
     height: 90px !important;
   }
-  
   .channel-header-info h1 {
     font-size: 24px !important;
   }
-  
   .channel-tabs-bar {
     justify-content: center;
     padding-left: 0 !important;
@@ -918,87 +940,80 @@
 .logo-hub-style {
   display: flex;
   align-items: center;
-  gap: 4px;                  /* 左右字體的間距 */
+  gap: 4px;                  
   cursor: pointer;
   user-select: none;
-  font-family: Arial, Helvetica, sans-serif; /* 採用經典無襯線粗體 */
-  font-weight: 700;          /* 確保是極粗體 */
-  font-size: 35px;           /* 調整為適合導覽列的視覺大小 */
-  letter-spacing: -0.5px;    /* 微調字距使其更緊湊 */
+  font-family: Arial, Helvetica, sans-serif; 
+  font-weight: 700;          
+  font-size: 35px;           
+  letter-spacing: -0.5px;    
   margin: 0 0px 0 15px;
 }
 
-/* 左側白色文字 */
 .logo-text-white {
   color: #ffffff;
   padding: 4px 0 4px 4px;
   margin-right: 4px;
 }
 
-/* 右側黑字與橘色圓角背景 */
 .logo-badge-orange {
-  color: #000000;            /* 背景內的文字為純黑 */
-  background-color: #ff9900; /* 經典的 Hub 亮橘色 */
-  padding: 4px 8px;          /* 讓橘色方塊有完美的上下左右呼吸空間 */
-  border-radius: 6px;        /* 恰到好處的圓角弧度 */
+  color: #000000;            
+  background-color: #ff9900; 
+  padding: 4px 8px;          
+  border-radius: 6px;        
   display: inline-block;
   transition: background-color 0.2s ease;
 }
 
-/* 滑鼠懸停時的微調動效 (可選，增加互動感) */
 .logo-hub-style:hover .logo-badge-orange {
-  background-color: #ffa51f; /* 懸停時稍微調亮 */
+  background-color: #ffa51f; 
 }
 
 /* ==========================================================================
-   🔍 擬真 YouTube 膠囊型搜尋欄 (YouTube Style Search Bar)
+   🔍 擬真 YouTube 膠囊型搜尋欄 - ✨ 移除重複，完美整併
    ========================================================================== */
 .search-bar {
   display: flex;
   align-items: center;
   width: 100%;
-  max-width: 600px;         /* 限制搜尋欄最大寬度 */
-  height: 40px;             /* 標準高 */
-  background-color: #121212; /* 輸入框內襯深暗色 */
-  border: 1px solid #303030; /* 微弱的深灰框線 */
-  border-radius: 40px;       /* 兩端完全呈現圓弧（膠囊狀） */
+  max-width: 600px;         
+  height: 40px;             
+  background-color: #121212; 
+  border: 1px solid #303030; 
+  border-radius: 40px;       
   padding: 0;
-  overflow: hidden;          /* 確保子元件不會超出圓角邊框 */
+  overflow: hidden;          
   box-sizing: border-box;
   transition: border-color 0.15s ease;
-  margin-left: -150px;
+  margin-left: 50px;       /* 保留你想要的特殊偏移 */
 }
 
-/* 當使用者點擊搜尋欄準備打字時 (Focus 狀態) */
 .search-bar:focus-within {
-  border-color: #ff6a00;     /* 邊框轉為 YouTube 經典藍色（或改為 #ff9900 配合你的網站主題） */
+  border-color: #ff6a00;     
 }
 
-/* 左側文字輸入框 */
 .search-input {
   flex: 1;
   height: 100%;
-  background: transparent;   /* 繼承父層的暗黑色 */
-  border: none;              /* 拔除原生的框線 */
-  outline: none;             /* 拔除點擊時的外框 */
+  background: transparent;   
+  border: none;              
+  outline: none;             
   color: #ffffff;
   font-size: 16px;
-  padding: 0 4px 0 16px;     /* 左邊留多一點空間給「搜尋」字樣呼吸 */
+  padding: 0 4px 0 16px;     
 }
 
-/* 搜尋字樣提示顏色 (Placeholder) */
 .search-input::placeholder {
   color: #888888;
   opacity: 1;
 }
 
-/* 右側獨立的灰色放大鏡按鈕 */
 .search-btn {
   width: 64px;
   height: 100%;
-  background-color: #222222; /* 比輸入框稍亮的灰色背景 */
+  background-color: #222222; 
   border: none;
-  border-left: 1px solid #303030; /* 輸入框與按鈕之間的分隔線 */
+  border-left: 1px solid #303030; 
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1006,14 +1021,44 @@
   transition: background-color 0.2s;
 }
 
-/* 滑鼠懸停在放大鏡按鈕上的調亮效果 */
 .search-btn:hover {
   background-color: #272727;
 }
 
-/* 放大鏡 SVG 圖標顏色與大小控制 */
 .search-icon-svg {
   width: 20px;
   height: 20px;
-  fill: #ff6a00;             /* 白色放大鏡 */
+  fill: #ff6a00;             
+}
+
+/* 緩衝與骨架屏 */
+.yt-buffering-spinner {
+  width: 64px;
+  height: 64px;
+  border: 6px solid rgba(255, 255, 255, 0.2);
+  border-left-color: #ff6a00; 
+  border-radius: 50%;
+  animation: yt-spin 0.8s linear infinite;
+}
+
+@keyframes yt-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.skeleton-btn, .skeleton-thumb, .skeleton-avatar, .skeleton-text {
+  background: #272727;
+  animation: pulse 1.5s infinite ease-in-out;
+}
+.skeleton-btn { width: 60px; height: 32px; border-radius: 8px; }
+.skeleton-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 12px; }
+.skeleton-avatar { width: 36px; height: 36px; border-radius: 50%; }
+.skeleton-text { border-radius: 4px; margin-bottom: 6px; }
+.skeleton-text.title { width: 80%; height: 16px; }
+.skeleton-text.meta { width: 50%; height: 12px; }
+
+@keyframes pulse {
+  0% { background-color: #272727; }
+  50% { background-color: #3f3f3f; }
+  100% { background-color: #272727; }
 }

@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
+// 💡 引入 Firebase 服務層
+import { subscribeToVideos, uploadVideoToFirebase, incrementVideoViews } from './firebaseService';
+// 💡 這裡已修改：改為同時從 mockComments 中引入假評論與假影片資料
+import { mockComments, MOCK_VIDEOS } from './mockShite';
+// 💡 引入 Firebase Firestore 核心元件來處理評論
+import { db } from './firebase'; 
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment } from 'firebase/firestore';
 
-// 💡 1. 這是最保險的標準寫法：用 import 把資產引進來
-// 請確認 163braces.jpg 檔案真的在 src/assets/ 資料夾裡面喔！
 import avatarImage from './assets/163braces.jpg' 
 
 const CHANNEL_NAME = "小葉"; 
-
-// 💡 2. 直接把剛剛引入的變數 assign 給頭像常量
 const CHANNEL_AVATAR = avatarImage;
 
-// 💡 輔助函式：自動從 YouTube 網址中解析出 11 碼的 Video ID
+// 🛠️ 貼心保留：上傳新影片時仍需解析網址，因此將此乾淨的正則表達式保留在底層供上傳模態框使用
 function extractYoutubeId(url) {
   if (!url) return '';
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
@@ -18,211 +21,266 @@ function extractYoutubeId(url) {
   return (match && match[2].length === 11) ? match[2] : '';
 }
 
-const MOCK_VIDEOS = [
-  { 
-    id: '1', 
-    title: '這是我看過最糟糕的騙讚直播', 
-    channel: CHANNEL_NAME, 
-    views: '14.8萬次', 
-    time: '1 年前', 
-    duration: '02:56', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=mK25i1yx0-M', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); }, 
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '2', 
-    title: '這是我看過最扯的釣魚直播...(把觀眾當白痴)', 
-    channel: CHANNEL_NAME, 
-    views: '3.1萬次', 
-    time: '1 個月前', 
-    duration: '03:00', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=_25Lw6RxrLE', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '3', 
-    title: 'YouTube竟然推出語音留言功能功能了！？', 
-    channel: CHANNEL_NAME, 
-    views: '9100次', 
-    time: '1 個月前', 
-    duration: '01:38', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=7y1oQWOjCF0', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '4', 
-    title: '這個YouTube功能竟然沒人知道...（粉絲推薦有什麼意義？🤦‍♂️）', 
-    channel: CHANNEL_NAME, 
-    views: '1.7萬次', 
-    time: '3 個月前', 
-    duration: '02:12', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=5R9l6qutBbk', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '5', 
-    title: '我把今年的迷因排名...(這世代完蛋了🤦‍♂️)', 
-    channel: CHANNEL_NAME, 
-    views: '1.2萬次', 
-    time: '4 個月前', 
-    duration: '05:20', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=2cITOYrfq-4', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '6', 
-    title: '我的Spotify年度回顧是NPC😭😭😭', 
-    channel: CHANNEL_NAME, 
-    views: '8500次', 
-    time: '5 個月前', 
-    duration: '04:15', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=knMguT5wWBQ', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '7', 
-    title: '臭屁超人到底是誰？？(Incredible Gassy)', 
-    channel: CHANNEL_NAME, 
-    views: '2.3萬次', 
-    time: '半年 前', 
-    duration: '08:10', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=1WsVANRj6bk', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '8', 
-    title: '這些IG短片的留言快笑死我了 PT.3', 
-    channel: CHANNEL_NAME, 
-    views: '4.5萬次', 
-    time: '7 個月前', 
-    duration: '03:19', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=HPaOabWw5xw', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '9', 
-    title: '你就是這樣被他釣怒的 (Rage-bait是怎麼運作的)', 
-    channel: CHANNEL_NAME, 
-    views: '3.6萬次', 
-    time: '8 個月前', 
-    duration: '03:10', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=fHTCwxn8-4Y', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '10', 
-    title: '這些IG短片的留言快笑死我了', 
-    channel: CHANNEL_NAME, 
-    views: '15.5萬次', 
-    time: '9 個月前', 
-    duration: '03:31', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=a-q-sp1kZIc', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '11', 
-    title: '為什麼我的IG都是這個小丑😭😭😭', 
-    channel: CHANNEL_NAME, 
-    views: '1.2萬次', 
-    time: '10 個月前', 
-    duration: '04:19', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=AwfSJ4EU-_E', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '12', 
-    title: '這人被釣怒到直接開炸我伺服器🤦‍♂️（YT頻道還差點沒了）', 
-    channel: CHANNEL_NAME, 
-    views: '6.5萬次', 
-    time: '10 個月前', 
-    duration: '03:01', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=CLRFLIO1IJs', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  },
-  { 
-    id: '13', 
-    title: '這些AI迷因已經超出了我的認知', 
-    channel: CHANNEL_NAME, 
-    views: '1.6萬次', 
-    time: '11 個月前', 
-    duration: '02:02', 
-    avatar: CHANNEL_AVATAR,
-    videoUrl: 'https://www.youtube.com/watch?v=kOb_IOxmhQE', 
-    get youtubeId() { return extractYoutubeId(this.videoUrl); },
-    get thumbnail() { return `https://img.youtube.com/vi/${this.youtubeId}/maxresdefault.jpg`; }
-  }
-];
+/* ==========================================================================
+   🚀 核心功能：Firebase 評論即時同步與 Mock 資料混合邏輯
+   ========================================================================== */
 
-const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
+/**
+ * 💡 貼心功能：即時監聽目前影片的 Firebase 評論，如果雲端沒有，就拿獨立檔案的 mockComments 當基底！
+ */
+export function subscribeToComments(selectedVideo, setCommentsCallback) {
+  if (!selectedVideo?.id) return () => {};
 
-function shuffleArray(array) {
+  const videoId = selectedVideo.id;
+  const youtubeId = selectedVideo.youtubeId;
+
+  const commentsQuery = query(
+    collection(db, 'comments'),
+    where('videoId', '==', videoId),
+    orderBy('createdAt', 'desc')
+  );
+
+  return onSnapshot(commentsQuery, (snapshot) => {
+    const firebaseComments = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    const currentMockComments = mockComments.map(c => ({
+      ...c,
+      likes: c.likes || 0,
+      replyCount: c.replyCount || 0
+    })).filter(c => 
+      String(c.videoId) === String(videoId) || (youtubeId && String(c.videoId) === String(youtubeId))
+    );
+
+    setCommentsCallback([...firebaseComments, ...currentMockComments]);
+  }, (error) => {
+    console.error("讀取 Firebase 評論失敗，切換回純 Mock 模式:", error);
+    const currentMockComments = mockComments.filter(c => 
+      String(c.videoId) === String(videoId) || (youtubeId && String(c.videoId) === String(youtubeId))
+    );
+    setCommentsCallback(currentMockComments);
+  });
+}
+
+const shuffleArray = (array) => {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+    [arr[i], arr[j]] = [arr[j], arr[i]]; 
   }
   return arr;
+};
+
+const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
+
+function formatViews(views) {
+  if (views === undefined || views === null) return '0次';
+  if (typeof views === 'string') return views; 
+  const numViews = Number(views);
+  if (numViews >= 10000) {
+    return `${(numViews / 10000).toFixed(1)}萬次`;
+  }
+  return `${numViews}次`;
 }
+
+const generateRandomName = () => {
+  const adjectives = ['憤怒的', '迷路的', '臭屁的', '優雅的', '超頂的', '可憐啊', '傲嬌的', '被釣魚的', '瘋狂的', '純情的'];
+  const nouns = ['地瓜球', '脆皮豬', '小丑', 'NPC', '超人', '卡皮巴拉', '可樂餅', '傻逼', '工程師', '潛水員'];
+  
+  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const noun = nouns[Math.floor(Math.random() * nouns.length)];
+  const randomNum = Math.floor(1000 + Math.random() * 9000); 
+  
+  return `${adj}${noun}#${randomNum}`;
+};
 
 export default function App() {
   const [currentView, setCurrentView] = useState('home');
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
-  const [videos, setVideos] = useState([]);
+  
+  const [videos, setVideos] = useState([]); 
+  const [rawFirebaseVideos, setRawFirebaseVideos] = useState([]);
+  
+  const [isPageLoading, setIsPageLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState(null);
-  const [likedVideoIds, setLikedVideoIds] = useState([]);
-  const [subscribedChannels, setSubscribedChannels] = useState(['我的 YouTube 頻道']);
-  const [watchHistory, setWatchHistory] = useState([]);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
+
+  const [likedVideoIds, setLikedVideoIds] = useState(() => {
+    const savedLikes = localStorage.getItem('leafhub_likedVideos');
+    return savedLikes ? JSON.parse(savedLikes) : [];
+  });
+
+  const [subscribedChannels, setSubscribedChannels] = useState(() => {
+    const savedSubs = localStorage.getItem('leafhub_subscriptions');
+    return savedSubs ? JSON.parse(savedSubs) : ['我的 YouTube 頻道', '小葉'];
+  }); 
+
+  const [watchHistory, setWatchHistory] = useState(() => {
+    const savedHistory = localStorage.getItem('leafhub_watchHistory');
+    return savedHistory ? JSON.parse(savedHistory) : [];
+  });
+
+  const [localUsername] = useState(() => {
+    const savedName = localStorage.getItem('leafhub_username');
+    if (savedName) return savedName;
+    const newName = generateRandomName();
+    localStorage.setItem('leafhub_username', newName);
+    return newName;
+  });
+
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
+  const contentAreaRef = useRef(null);
   const [channelTab, setChannelTab] = useState('videos');
 
-  // 新增影片相關的 State
+  // 💡 用來儲存多個子回覆輸入框的動態 Refs
+  const replyInputRefs = useRef({});
+
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [newVideoTitle, setNewVideoTitle] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false); // 💡 新增：載入中動畫狀態
+  const [isAnalyzing, setIsAnalyzing] = useState(false); 
 
-  const [commentsData, setCommentsData] = useState({
-    '1': [
-      { author: 'Jerry1024_tw', text: '太棒了！下次可以從肛門嗎?', time: '2 小時前' },
-      { author: 'star_ocean', text: '留言區第一發就這麼重口味的嗎 😂😂😂', time: '1 小時前' },
-      { author: '喵星人守護者', text: '高技術流推推，跪求下一期做詳細教學！', time: '30 分鐘前' }
-    ],
-    '2': [
-      { author: 'cyber_punk2026', text: '這剪輯節奏太神了吧！背景音樂一下雞皮疙瘩都起來了。', time: '5 小時前' },
-      { author: '阿明大師', text: '只有我重複看了五次嗎？這細節處理得真好。', time: '3 三小時前' },
-      { author: 'Louise_L', text: '2026 還能看到這種品質的創作，真的必須一鍵三連支持！', time: '1 小時前' }
-    ]
-  });
+  const [comments, setComments] = useState([]);
   const [newCommentInput, setNewCommentInput] = useState('');
+  
+  const [isCommentsLoading, setIsCommentsLoading] = useState(true);
+  const [expandedReplyComments, setExpandedReplyComments] = useState({}); 
+  const [replyInputs, setReplyInputs] = useState({}); 
+  const [commentReplies, setCommentReplies] = useState({}); 
+
+  const [optimisticComments, setOptimisticComments] = useState([]);
+  const [optimisticReplies, setOptimisticReplies] = useState([]);
+
+  // 💡 自動對齊補上圖片頭像：因為 MOCK_VIDEOS 移到了外部，在這裡統一注入本地引入的圖片
+  useEffect(() => {
+    if (Array.isArray(MOCK_VIDEOS)) {
+      MOCK_VIDEOS.forEach(video => {
+        if (!video.avatar) {
+          video.avatar = CHANNEL_AVATAR;
+        }
+      });
+    }
+  }, []);
+
+  const forceScrollToTop = () => {
+    window.scrollTo(0, 0);
+    if (document.documentElement) document.documentElement.scrollTop = 0;
+    if (document.body) document.body.scrollTop = 0;
+    if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
+    const wrapper = document.querySelector('.main-wrapper');
+    if (wrapper) wrapper.scrollTop = 0;
+  };
+
+  const triggerBufferAndReload = () => {
+    setIsPageLoading(true);
+    const mixedVideos = shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]);
+    setVideos(mixedVideos);
+    setTimeout(() => {
+      setIsPageLoading(false);
+    }, 600);
+  };
+
+  const handleHomeNavigation = () => {
+    setSearchQuery('');
+    setActiveCategory('全部');
+
+    if (currentView === 'watch') {
+      setVideos(shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]));
+      setCurrentView('home');
+    } else {
+      setCurrentView('home');
+      triggerBufferAndReload();
+    }
+  };
+
+  const handleMyChannelClick = () => {
+    setCurrentView('channel'); 
+    setChannelTab('videos'); 
+    setIsProfileOpen(false); 
+    forceScrollToTop(); 
+  };
 
   useEffect(() => {
-    setVideos(shuffleArray(MOCK_VIDEOS));
+    if (currentView === 'watch') {
+      forceScrollToTop();
+      requestAnimationFrame(forceScrollToTop);
+    }
+  }, [currentView, selectedVideo]);
+
+  // ✨ 留言即時同步 Effect
+  useEffect(() => {
+    if (!selectedVideo?.id) return;
+
+    setIsCommentsLoading(true);
+    setOptimisticComments([]);
+    setOptimisticReplies([]); 
+    setExpandedReplyComments({});
+
+    const unsubscribe = subscribeToComments(selectedVideo, (mixedComments) => {
+      setComments(mixedComments);
+      setIsCommentsLoading(false);
+      
+      setOptimisticComments(prev => 
+        prev.filter(localComment => 
+          !mixedComments.some(serverComment => 
+            serverComment.text === localComment.text && serverComment.author === localComment.author
+          )
+        )
+      );
+    });
+
+    return () => unsubscribe();
+  }, [selectedVideo]);
+
+  // 子回覆即時監聽機制 Effect
+  useEffect(() => {
+    const activeCommentIds = Object.keys(expandedReplyComments).filter(id => expandedReplyComments[id]);
+    if (activeCommentIds.length === 0) return;
+
+    const unsubscribes = activeCommentIds.map(commentId => {
+      if (commentId.startsWith('temp-') || commentId.length < 10) {
+        return () => {};
+      }
+
+      const replyQuery = query(
+        collection(db, 'replies'),
+        where('commentId', '==', commentId),
+        orderBy('createdAt', 'asc')
+      );
+
+      return onSnapshot(replyQuery, (snapshot) => {
+        const repliesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCommentReplies(prev => ({ ...prev, [commentId]: repliesList }));
+
+        setOptimisticReplies(prev => 
+          prev.filter(localReply => 
+            !(localReply.commentId === commentId && repliesList.some(serverReply => 
+              serverReply.text === localReply.text && serverReply.author === localReply.author
+            ))
+          )
+        );
+      });
+    });
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+  }, [expandedReplyComments]);
+
+  // 💡 Firebase 串接監聽點
+  useEffect(() => {
+    const unsubscribe = subscribeToVideos((firebaseVideos) => {
+      const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
+      setRawFirebaseVideos(validFirebaseVideos);
+      const mixedVideos = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
+      setVideos(mixedVideos);
+      setIsPageLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -235,125 +293,228 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleVideoClick = (video) => {
+  const handleVideoClick = async (video) => {
+    setIsVideoLoading(true); 
     setSelectedVideo(video);
     setCurrentView('watch');
-    setWatchHistory(prev => [video, ...prev.filter(item => item.id !== video.id)]);
+    forceScrollToTop();
+
+    setTimeout(() => {
+      setIsVideoLoading(false);
+    }, 1200);
+
+    setWatchHistory(prev => {
+      const nextHistory = [video, ...prev.filter(item => item.id !== video.id)];
+      localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+      return nextHistory;
+    });
+
+    const isMockVideo = ['1','2','3','4','5','6','7','8','9','10','11','12','13'].includes(video.id);
+    if (!isMockVideo) {
+      try {
+        await incrementVideoViews(video.id);
+      } catch (error) {
+        console.error("無法更新觀看次數：", error);
+      }
+    }
   };
 
   const toggleLike = (id) => {
-    setLikedVideoIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const toggleSubscribe = (channelName) => {
-    setSubscribedChannels(prev =>
-      prev.includes(channelName) ? prev.filter(item => item !== channelName) : [...prev, channelName]
-    );
-  };
-
-  const handleAddComment = (e) => {
-    e.preventDefault();
-    if (!newCommentInput.trim()) return;
-
-    const currentComments = commentsData[selectedVideo.id] || [];
-    const updatedComments = [
-      { author: '傻逼(你)', text: newCommentInput, time: '剛剛' },
-      ...currentComments
-    ];
-
-    setCommentsData({ ...commentsData, [selectedVideo.id]: updatedComments });
-    setNewCommentInput(''); 
-  };
-
-  // 💡 核心黑科技：免 API 自動探測影片長度
-  const fetchVideoDuration = (ytId) => {
-    return new Promise((resolve) => {
-      // 利用 YouTube 串流音訊暫存檔
-      const audio = new Audio(`https://ext.y2mate.nu/api/json/stream/${ytId}`);
-      audio.addEventListener('loadedmetadata', () => {
-        if (audio.duration && !isNaN(audio.duration) && audio.duration !== Infinity) {
-          const minutes = Math.floor(audio.duration / 60).toString().padStart(2, '0');
-          const seconds = Math.floor(audio.duration % 60).toString().padStart(2, '0');
-          resolve(`${minutes}:${seconds}`);
-        } else {
-          resolve(generateRandomDuration());
-        }
-      });
-      audio.addEventListener('error', () => {
-        resolve(generateRandomDuration()); // 發生阻擋時安全退回隨機時間
-      });
-      // 設置超時防呆
-      setTimeout(() => resolve(generateRandomDuration()), 1200);
+    setLikedVideoIds(prev => {
+      const nextLikes = prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id];
+      localStorage.setItem('leafhub_likedVideos', JSON.stringify(nextLikes));
+      return nextLikes;
     });
   };
 
-  // 💡 輔助函式：產生合理的隨機影片長度 (防呆機制)
-  const generateRandomDuration = () => {
-    const randMin = Math.floor(Math.random() * 8) + 1; // 1~8分鐘
-    const randSec = Math.floor(Math.random() * 60);
-    return `${randMin.toString().padStart(2, '0')}:${randSec.toString().padStart(2, '0')}`;
+  const toggleSubscribe = (channelName) => {
+    setSubscribedChannels(prev => {
+      const nextSubs = prev.includes(channelName) ? prev.filter(item => item !== channelName) : [...prev, channelName];
+      localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
+      return nextSubs;
+    });
   };
 
-  // ⚙️ 處理影片上傳提交（整合自動抓取時間）
+  const handleCommentLike = async (commentId, isMock) => {
+    if (isMock || commentId.startsWith('temp-')) {
+      setComments(prev => prev.map(c => c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c));
+      return;
+    }
+    try {
+      const commentRef = doc(db, 'comments', commentId);
+      await updateDoc(commentRef, {
+        likes: increment(1)
+      });
+    } catch (error) {
+      console.error("更新留言按讚失敗:", error);
+    }
+  };
+
+  // 💡 切換展開狀態時，若變為展開，則自動將焦點 Focus 到對應的 input 上
+  const toggleReplySection = (commentId) => {
+    setExpandedReplyComments(prev => {
+      const nextState = {
+        ...prev,
+        [commentId]: !prev[commentId]
+      };
+
+      if (nextState[commentId]) {
+        setTimeout(() => {
+          if (replyInputRefs.current[commentId]) {
+            replyInputRefs.current[commentId].focus();
+          }
+        }, 50); // 短暫延遲確保 DOM 已成功展開並渲染
+      }
+
+      return nextState;
+    });
+  };
+
+  const handleAddReplySubmit = async (e, commentId) => {
+    e.preventDefault();
+    const replyText = replyInputs[commentId]?.trim();
+    if (!replyText) return;
+
+    const isMockComment = commentId.startsWith('temp-') || commentId.length < 10;
+
+    const temporaryLocalReply = {
+      id: `temp-reply-${Date.now()}`,
+      commentId,
+      author: localUsername,
+      text: replyText,
+      isPending: !isMockComment, 
+      createdAt: new Date().toISOString()
+    };
+
+    setOptimisticReplies(prev => [...prev, temporaryLocalReply]);
+    setReplyInputs(prev => ({ ...prev, [commentId]: '' }));
+
+    if (isMockComment) {
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'replies'), {
+        commentId,
+        author: localUsername,
+        text: replyText,
+        createdAt: new Date().toISOString()
+      });
+
+      const commentRef = doc(db, 'comments', commentId);
+      await updateDoc(commentRef, {
+        replyCount: increment(1)
+      });
+    } catch (error) {
+      console.error("發布回覆失敗:", error);
+      setOptimisticReplies(prev => prev.filter(item => item.id !== temporaryLocalReply.id));
+      alert("回覆雲端儲存失敗！");
+    }
+  };
+
+  const handleAddComment = async (e) => {
+    e.preventDefault();
+    const textToSend = newCommentInput.trim();
+    if (!textToSend || !selectedVideo?.id) return;
+
+    const temporaryLocalComment = {
+      id: `temp-${Date.now()}`, 
+      videoId: selectedVideo.id,
+      author: localUsername,
+      text: textToSend,
+      likes: 0,
+      replyCount: 0,
+      isPending: true, 
+      createdAt: new Date().toISOString()
+    };
+
+    setOptimisticComments(prev => [temporaryLocalComment, ...prev]);
+    setNewCommentInput(''); 
+
+    try {
+      await addDoc(collection(db, 'comments'), {
+        videoId: selectedVideo.id,
+        author: localUsername,
+        text: textToSend,
+        likes: 0,
+        replyCount: 0,
+        createdAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("發布評論到 Firebase 失敗：", error);
+      setOptimisticComments(prev => prev.filter(item => item.id !== temporaryLocalComment.id));
+      alert("留言發布失敗，請檢查網路連線！");
+    }
+  };
+
+  const fetchVideoDuration = (ytId) => {
+    return new Promise((resolve) => {
+      const randMin = Math.floor(Math.random() * 8) + 1; 
+      const randSec = Math.floor(Math.random() * 60);
+      const duration = `${randMin.toString().padStart(2, '0')}:${randSec.toString().padStart(2, '0')}`;
+      resolve(duration);
+    });
+  };
+
   const handleUploadVideo = async (e) => {
     e.preventDefault();
     const ytId = extractYoutubeId(newVideoUrl);
 
-    if (!newVideoTitle.trim()) {
-      alert('請輸入影片標題！');
-      return;
-    }
-    if (!ytId) {
-      alert('無法解析該 YouTube 網址，請確認連結是否正確！');
+    if (!newVideoTitle.trim() || !ytId) {
+      alert('請輸入完整資訊！');
       return;
     }
 
-    setIsAnalyzing(true); // 開啟載入特效
-
-    // 呼叫抓取長度函式
+    setIsAnalyzing(true); 
     const finalDuration = await fetchVideoDuration(ytId);
 
-    const newVideoItem = {
-      id: Date.now().toString(),
-      title: newVideoTitle,
-      channel: CHANNEL_NAME,
-      views: '0次',
-      time: '剛剛',
-      duration: finalDuration, // 🔥 這裡成功拿到了真實的長度！
-      avatar: CHANNEL_AVATAR,
-      videoUrl: newVideoUrl,
-      youtubeId: ytId,
-      thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`
-    };
+    try {
+      const dataToUpload = {
+        title: newVideoTitle,
+        channel: CHANNEL_NAME,
+        views: 0,            
+        time: "剛剛",            
+        duration: finalDuration, 
+        avatar: CHANNEL_AVATAR,
+        videoUrl: newVideoUrl,
+        youtubeId: ytId,
+        thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`
+      };
+      
+      await uploadVideoToFirebase(dataToUpload);
 
-    setVideos(prev => [newVideoItem, ...prev]);
-
-    // 重設狀態
-    setNewVideoTitle('');
-    setNewVideoUrl('');
-    setIsAnalyzing(false);
-    setIsUploadModalOpen(false);
-    
-    setCurrentView('home');
-    setActiveCategory('全部');
+      setNewVideoTitle('');
+      setNewVideoUrl('');
+      setIsUploadModalOpen(false);
+      
+      setSearchQuery('');
+      setActiveCategory('全部');
+      setCurrentView('home');
+      alert("上傳成功！");
+    } catch (error) {
+      console.error("❌ 雲端上傳嚴重失敗：", error);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const getFilteredVideos = () => {
-    return videos.filter(video => {
-      const matchesSearch = video.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            video.channel.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = activeCategory === '全部' || video.title.includes(activeCategory) || video.channel.includes(activeCategory);
+    const currentVideos = Array.isArray(videos) ? videos : [];
+    return currentVideos.filter(video => {
+      const matchesSearch = video.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            video.channel?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = activeCategory === '全部' || video.title?.includes(activeCategory) || video.channel?.includes(activeCategory);
       return matchesSearch && matchesCategory;
     });
   };
+
+  const allDisplayedComments = [...optimisticComments, ...comments];
 
   return (
     <div>
       {/* 🟢 頂部導覽列 */}
       <nav className="navbar">
-        <div className="logo-hub-style" onClick={() => { setCurrentView('home'); setActiveCategory('全部'); }}>
+        <div className="logo-hub-style" onClick={handleHomeNavigation}>
           <span className="logo-text-white">Leaf</span>
           <span className="logo-badge-orange">hub</span>
         </div>
@@ -377,6 +538,10 @@ export default function App() {
         </div>
           
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span style={{ color: '#aaa', fontSize: '12px', background: '#222', padding: '6px 12px', borderRadius: '12px' }}>
+            🏷️ 訪客：{localUsername}
+          </span>
+
           <button 
             onClick={() => setIsUploadModalOpen(true)}
             style={{
@@ -407,9 +572,9 @@ export default function App() {
                 </div>
                 <hr className="dropdown-divider" />
                 <div className="dropdown-links">
-                  <button className="dropdown-item-btn" onClick={() => { setCurrentView('channel'); setChannelTab('videos'); setIsProfileOpen(false); }}>👤 我的頻道</button>
-                  <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767！')}>🔄 切換帳戶</button>
-                  <button className="dropdown-item-btn" onClick={() => alert('6767676767676767676767676767676767')}>🚪 登出</button>
+                  <button className="dropdown-item-btn" onClick={handleMyChannelClick}>👤 我的頻道</button>
+                  <button className="dropdown-item-btn" onClick={() => alert('切換帳戶中！')}>🔄 切換帳戶</button>
+                  <button className="dropdown-item-btn" onClick={() => alert('登出成功！')}>🚪 登出</button>
                 </div>
               </div>
             )}
@@ -417,12 +582,16 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 主要內容包裝架構 */}
       <div className="main-wrapper">
         {currentView !== 'watch' && (
           <aside className="sidebar">
             <div className="sidebar-menu">
-              <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={() => setCurrentView('home')}>🏠 首頁</button>
+              <button 
+                className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} 
+                onClick={handleHomeNavigation}
+              >
+                🏠 首頁
+              </button>
               <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => setCurrentView('subscriptions')}>📺 訂閱頻道</button>
               <hr style={{ border: 'none', borderTop: '1px solid #1f1f1f', margin: '12px 0' }} />
               <div className="sidebar-section-title">我的專區</div>
@@ -432,317 +601,408 @@ export default function App() {
           </aside>
         )}
 
-        <main className="content-area">
-          {/* 1️⃣ 首頁視圖 */}
-          {currentView === 'home' && (
+        <main className="content-area" ref={contentAreaRef}>
+          {isPageLoading ? (
+            <div style={{
+              display: 'flex', justifyContent: 'center', alignItems: 'center',
+              width: '100%', height: '70vh'
+            }}>
+              <div className="yt-buffering-spinner"></div>
+            </div>
+          ) : (
             <>
-              <div className="category-bar">
-                {CATEGORIES.map((category) => (
-                  <button key={category} onClick={() => setActiveCategory(category)} className={`category-btn ${activeCategory === category ? 'active' : ''}`}>{category}</button>
-                ))}
-              </div>
-              <div className="video-grid">
-                {getFilteredVideos().map((video) => (
-                  <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                    <div className="thumbnail-wrapper">
-                      <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                      <span className="video-duration">{video.duration}</span>
-                    </div>
-                    <div className="video-info-section">
-                      <img src={video.avatar} alt={video.channel} className="channel-avatar" />
-                      <div>
-                        <h3 className="video-title">{video.title}</h3>
-                        <p className="channel-name">{video.channel}</p>
-                        <p className="video-meta">{video.views} • {video.time}</p>
-                      </div>
-                    </div>
+              {/* 1️⃣ 首頁視圖 */}
+              {currentView === 'home' && (
+                <>
+                  <div className="category-bar">
+                    {CATEGORIES.map((category) => (
+                      <button key={category} onClick={() => setActiveCategory(category)} className={`category-btn ${activeCategory === category ? 'active' : ''}`}>{category}</button>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* 2️⃣ 訂閱頻道視圖 */}
-          {currentView === 'subscriptions' && (
-            <div>
-              <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
-              <div className="video-grid">
-                {videos.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
-                  videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => (
-                    <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                      <div className="thumbnail-wrapper">
-                        <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                        <span className="video-duration">{video.duration}</span>
-                      </div>
-                      <div className="video-info-section">
-                        <img src={video.avatar} alt={video.channel} className="channel-avatar" />
-                        <div>
-                          <h3 className="video-title">{video.title}</h3>
-                          <p className="channel-name">{video.channel}</p>
-                          <p className="video-meta">{video.views} • {video.time}</p>
+                  <div className="video-grid">
+                    {getFilteredVideos().map((video) => (
+                      <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+                        <div className="thumbnail-wrapper">
+                          <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                          <span className="video-duration">{video.duration}</span>
                         </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">目前訂閱的頻道還沒有發布影片。</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 3️⃣ 觀看紀錄視圖 */}
-          {currentView === 'history' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2 className="view-page-title">🕒 我的觀看紀錄</h2>
-                {watchHistory.length > 0 && <button className="clear-btn" onClick={() => setWatchHistory([])}>🗑️ 清除所有紀錄</button>}
-              </div>
-              <div className="video-grid">
-                {watchHistory.length > 0 ? (
-                  watchHistory.map((video, index) => (
-                    <div key={`${video.id}-${index}`} className="video-card" onClick={() => handleVideoClick(video)}>
-                      <div className="thumbnail-wrapper">
-                        <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                        <span className="video-duration">{video.duration}</span>
-                      </div>
-                      <div className="video-info-section">
-                        <img src={video.avatar} alt={video.channel} className="channel-avatar" />
-                        <div>
-                          <h3 className="video-title">{video.title}</h3>
-                          <p className="channel-name">{video.channel}</p>
-                          <p className="video-meta">上次觀看過</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">沒有觀看紀錄。</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 4️⃣ 喜歡的影片視圖 */}
-          {currentView === 'liked' && (
-            <div>
-              <h2 className="view-page-title">🔥 我按讚的影片</h2>
-              <div className="video-grid">
-                {videos.filter(v => likedVideoIds.includes(v.id)).length > 0 ? (
-                  videos.filter(v => likedVideoIds.includes(v.id)).map((video) => (
-                    <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                      <div className="thumbnail-wrapper">
-                        <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                        <span className="video-duration">{video.duration}</span>
-                      </div>
-                      <div className="video-info-section">
-                        <img src={video.avatar} alt={video.channel} className="channel-avatar" />
-                        <div>
-                          <h3 className="video-title">{video.title}</h3>
-                          <p className="channel-name">{video.channel}</p>
-                          <p className="video-meta">{video.views}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">還沒有按讚的影片。</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 5️⃣ 「我的頻道」專屬頁面視圖 */}
-          {currentView === 'channel' && (
-            <div className="channel-page-wrapper">
-              <div className="channel-banner" style={{
-                width: '100%', height: '180px',
-                background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)',
-                borderRadius: '16px', marginBottom: '24px', border: '1px solid #222'
-              }}></div>
-
-              <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
-                <img src={CHANNEL_AVATAR} alt="My Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
-                <div>
-                  <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{CHANNEL_NAME}</h1>
-                  <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>@yehh_0000 • 1.2萬位訂閱者 • {videos.filter(v => v.channel === CHANNEL_NAME).length} 部影片</p>
-                  <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到小葉的個人技術與娛樂分享空間。這裡紀錄了各種有趣的生活觀察與網路迷因分析！</p>
-                </div>
-              </div>
-
-              <div className="channel-tabs-bar" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
-                <button onClick={() => setChannelTab('videos')} style={{ background: 'transparent', border: 'none', color: channelTab === 'videos' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'videos' ? '3px solid #ff6a00' : '3px solid transparent', transition: 'all 0.2s' }}>影片</button>
-                <button onClick={() => setChannelTab('about')} style={{ background: 'transparent', border: 'none', color: channelTab === 'about' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'about' ? '3px solid #ff6a00' : '3px solid transparent', transition: 'all 0.2s' }}>關於</button>
-              </div>
-
-              {channelTab === 'videos' ? (
-                <div className="video-grid">
-                  {videos.filter(v => v.channel === CHANNEL_NAME).map((video) => (
-                    <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                      <div className="thumbnail-wrapper">
-                        <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                        <span className="video-duration">{video.duration}</span>
-                      </div>
-                      <div className="video-info-section">
-                        <img src={video.avatar} alt={video.channel} className="channel-avatar" />
-                        <div>
-                          <h3 className="video-title">{video.title}</h3>
-                          <p className="channel-name">{video.channel}</p>
-                          <p className="video-meta">{video.views} • {video.time}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
-                  <h3>簡介</h3>
-                  <p>嗨！我是小葉。主要分享科技觀察、時事釣魚解析以及網路各種奇奇怪怪的迷因研究。</p>
-                  <p>本頻道致力於提供高畫質且充滿思辨（以及垃圾笑話）的精緻內容，喜歡的話記得訂閱並開啟小鈴鐺！</p>
-                  <hr style={{ border: 'none', borderTop: '1px solid #222', margin: '24px 0' }} />
-                  <h3>頻道詳細資料</h3>
-                  <p style={{ color: '#888' }}>加入時間：2021年10月15日</p>
-                  <p style={{ color: '#888' }}>總觀看次數：5,432,109 次</p>
-                  <p style={{ color: '#888' }}>居住地：台灣</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 6️⃣ 影片內頁播放視圖 */}
-          {currentView === 'watch' && selectedVideo && (
-            <div className="watch-layout">
-              <div className="watch-main-content">
-                <iframe
-                  key={selectedVideo.id} className="video-player-simulation"
-                  src={`https://www.youtube.com/embed/${selectedVideo.youtubeId || extractYoutubeId(selectedVideo.videoUrl)}?autoplay=1&rel=0`}
-                  title={selectedVideo.title} frameBorder="0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen
-                ></iframe>
-
-                <h1 className="watch-video-title">{selectedVideo.title}</h1>
-                
-                <div className="watch-actions-row">
-                  <div className="channel-info-block">
-                    <img src={selectedVideo.avatar} alt="Channel" className="channel-avatar-large" />
-                    <div>
-                      <div className="channel-name-large">{selectedVideo.channel}</div>
-                      <div className="channel-subs-count">你的專屬展示頻道</div>
-                    </div>
-                    <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
-                      {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
-                    </button>
-                  </div>
-
-                  <div className="video-interactions-block">
-                    <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
-                      {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
-                    </button>
-                    <span className="views-date-text">{selectedVideo.views} • 發布於 {selectedVideo.time}</span>
-                  </div>
-                </div>
-
-                <div className="comments-section-wrapper">
-                  <h3>💬 評論區 ({(commentsData[selectedVideo.id] || []).length})</h3>
-                  <form onSubmit={handleAddComment} className="comment-form-box">
-                    <input type="text" placeholder="留下你的公開評論..." className="comment-text-input" value={newCommentInput} onChange={(e) => setNewCommentInput(e.target.value)} />
-                    <button type="submit" className="comment-submit-btn">發布</button>
-                  </form>
-                  <div className="comment-list-container">
-                    {(commentsData[selectedVideo.id] || []).length > 0 ? (
-                      (commentsData[selectedVideo.id] || []).map((comment, i) => (
-                        <div key={i} className="single-comment-card">
-                          <div className="comment-user-avatar">👤</div>
+                        <div className="video-info-section">
+                          <img src={video.avatar} alt={video.channel} className="channel-avatar" />
                           <div>
-                            <div className="comment-user-meta">{comment.author} <span>• {comment.time}</span></div>
-                            <div className="comment-user-text">{comment.text}</div>
+                            <h3 className="video-title">{video.title}</h3>
+                            <p className="channel-name">{video.channel}</p>
+                            <p className="video-meta">{formatViews(video.views)} • {video.time}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* 2️⃣ 訂閱頻道視圖 */}
+              {currentView === 'subscriptions' && (
+                <div>
+                  <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
+                  <div className="video-grid">
+                    {videos.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
+                      videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => (
+                        <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+                          <div className="thumbnail-wrapper">
+                            <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                            <span className="video-duration">{video.duration}</span>
+                          </div>
+                          <div className="video-info-section">
+                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            <div>
+                              <h3 className="video-title">{video.title}</h3>
+                              <p className="channel-name">{video.channel}</p>
+                              <p className="video-meta">{formatViews(video.views)} • {video.time}</p>
+                            </div>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="no-comments-prompt">目前還沒有人對這部影片發表評論。</div>
+                      <div className="empty-state">目前訂閱的頻道還沒有發布影片。</div>
                     )}
                   </div>
                 </div>
-              </div>
+              )}
 
-              <div className="watch-sidebar-recommendations">
-                <h4 style={{ margin: '0 0 16px 0', color: '#ff6a00' }}>▶ 接下來播放</h4>
-                {videos.filter(v => v.id !== selectedVideo.id).map(video => (
-                  <div key={video.id} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
-                    <img src={video.thumbnail} alt="mini-card" className="mini-card-thumb" />
-                    <div className="mini-card-info">
-                      <div className="mini-card-title">{video.title}</div>
-                      <div className="mini-card-channel">{video.channel}</div>
-                      <div className="mini-card-views">{video.views}</div>
+              {/* 3️⃣ 觀看紀錄視圖 */}
+              {currentView === 'history' && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 className="view-page-title">🕒 我的觀看紀錄</h2>
+                    {watchHistory.length > 0 && (
+                      <button className="clear-btn" onClick={() => {
+                        setWatchHistory([]);
+                        localStorage.removeItem('leafhub_watchHistory');
+                      }}>
+                        🗑️ 清除所有紀錄
+                      </button>
+                    )}
+                  </div>
+                  <div className="video-grid">
+                    {watchHistory.length > 0 ? (
+                      watchHistory.map((video, idx) => (
+                        <div key={`history-${video.id}-${idx}`} className="video-card" onClick={() => handleVideoClick(video)}>
+                          <div className="thumbnail-wrapper">
+                            <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                            <span className="video-duration">{video.duration}</span>
+                          </div>
+                          <div className="video-info-section">
+                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            <div>
+                              <h3 className="video-title">{video.title}</h3>
+                              <p className="channel-name">{video.channel}</p>
+                              <p className="video-meta">上次觀看過</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="empty-state">沒有觀看紀錄。</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 4️⃣ 喜歡的影片視圖 */}
+              {currentView === 'liked' && (
+                <div>
+                  <h2 className="view-page-title">🔥 我按讚的影片</h2>
+                  <div className="video-grid">
+                    {videos.filter(v => likedVideoIds.includes(v.id)).length > 0 ? (
+                      videos.filter(v => likedVideoIds.includes(v.id)).map((video) => (
+                        <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+                          <div className="thumbnail-wrapper">
+                            <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                            <span className="video-duration">{video.duration}</span>
+                          </div>
+                          <div className="video-info-section">
+                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            <div>
+                              <h3 className="video-title">{video.title}</h3>
+                              <p className="channel-name">{video.channel}</p>
+                              <p className="video-meta">{formatViews(video.views)}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="empty-state">還沒有按讚的影片。</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 5️⃣ 「我的頻道」專屬頁面視圖 */}
+              {currentView === 'channel' && (
+                <div className="channel-page-wrapper">
+                  <div className="channel-banner" style={{
+                    width: '100%', height: '180px',
+                    background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)',
+                    borderRadius: '16px', marginBottom: '24px', border: '1px solid #222'
+                  }}></div>
+
+                  <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
+                    <img src={CHANNEL_AVATAR} alt="My Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                    <div>
+                      <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{CHANNEL_NAME}</h1>
+                      <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>@yehh_0000 • 1.2萬位訂閱者 • {videos.filter(v => v.channel === CHANNEL_NAME).length} 部影片</p>
+                      <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到小葉的個人技術與娛樂分享空間。</p>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+
+                  <div className="channel-tabs-bar" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
+                    <button onClick={() => setChannelTab('videos')} style={{ background: 'transparent', border: 'none', color: channelTab === 'videos' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'videos' ? '3px solid #ff6a00' : '3px solid transparent' }}>影片</button>
+                    <button onClick={() => setChannelTab('about')} style={{ background: 'transparent', border: 'none', color: channelTab === 'about' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'about' ? '3px solid #ff6a00' : '3px solid transparent' }}>關於</button>
+                  </div>
+
+                  {channelTab === 'videos' ? (
+                    <div className="video-grid">
+                      {videos.filter(v => v.channel === CHANNEL_NAME).map((video) => (
+                        <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+                          <div className="thumbnail-wrapper">
+                            <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                            <span className="video-duration">{video.duration}</span>
+                          </div>
+                          <div className="video-info-section">
+                            <img src={video.avatar} alt={video.channel} className="channel-avatar" />
+                            <div>
+                              <h3 className="video-title">{video.title}</h3>
+                              <p className="channel-name">{video.channel}</p>
+                              <p className="video-meta">{formatViews(video.views)} • {video.time}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
+                      <h3>簡介</h3>
+                      <p>嗨！我是小葉。主要分享科技觀察與網路各種奇奇怪怪的迷因研究。</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 6️⃣ 影片內頁播放視圖 */}
+              {currentView === 'watch' && selectedVideo && (
+                <div className="watch-layout">
+                  <div className="watch-main-content">
+                    <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000', borderRadius: '12px', overflow: 'hidden' }}>
+                      {isVideoLoading ? (
+                        <div style={{
+                          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                          background: '#000', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10
+                        }}>
+                          <div className="yt-buffering-spinner"></div>
+                        </div>
+                      ) : null}
+
+                      <iframe
+                        className="video-player-simulation"
+                        style={{ width: '100%', height: '100%', border: 'none' }}
+                        src={`https://www.youtube.com/embed/${selectedVideo.youtubeId || extractYoutubeId(selectedVideo.videoUrl)}?autoplay=1&rel=0`}
+                        title={selectedVideo.title}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen
+                      ></iframe>
+                    </div>
+
+                    <h1 className="watch-video-title" style={{ marginTop: '16px' }}>{selectedVideo.title}</h1>
+                    
+                    <div className="watch-actions-row">
+                      <div className="channel-info-block" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <img src={selectedVideo.avatar} alt="Channel" className="channel-avatar-large" style={{ width: '40px', height: '40px', borderRadius: '50%' }} />
+                        <div>
+                          <div className="channel-name-large" style={{ fontWeight: 'bold', color: '#fff' }}>{selectedVideo.channel}</div>
+                          <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>你的專屬展示頻道</div>
+                        </div>
+                        <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
+                          {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
+                        </button>
+                      </div>
+
+                      <div className="video-interactions-block">
+                        <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
+                          {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
+                        </button>
+                        <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 發布於 {selectedVideo.time}</span>
+                      </div>
+                    </div>
+
+                    {/* 💬 評論區區塊 */}
+                    <div className="comments-section-wrapper">
+                      <h3>💬 評論區 ({allDisplayedComments.length})</h3>
+                      <form onSubmit={handleAddComment} className="comment-form-box">
+                        <input 
+                          type="text" 
+                          placeholder="留下你的公開評論..." 
+                          className="comment-text-input" value={newCommentInput}
+                          onChange={(e) => setNewCommentInput(e.target.value)}
+                        />
+                        <button type="submit" className="comment-submit-btn" disabled={!newCommentInput.trim()}>發布</button>
+                      </form>
+
+                      {/* 💬 評論列表區塊 */}
+                      <div className="comment-list-container">
+                        {isCommentsLoading ? (
+                          <div style={{
+                            display: 'flex', flexDirection: 'column', justifyContent: 'center', 
+                            alignItems: 'center', padding: '40px 0', gap: '12px', color: '#888'
+                          }}>
+                            <div className="yt-buffering-spinner" style={{ width: '32px', height: '32px' }}></div>
+                            <span style={{ fontSize: '14px', letterSpacing: '1px' }}>正在讀取社群留言...</span>
+                          </div>
+                        ) : (
+                          allDisplayedComments.map((comment, idx) => {
+                            const cid = comment.id || `comment-${idx}`;
+                            const isExpanded = !!expandedReplyComments[cid];
+                            
+                            const serverReplies = commentReplies[cid] || [];
+                            const localPendingReplies = optimisticReplies.filter(r => r.commentId === cid);
+                            const replies = [...serverReplies, ...localPendingReplies];
+
+                            const isMock = !comment.id || comment.id.length < 10;
+                            const totalReplyCount = (comment.replyCount || serverReplies.length) + localPendingReplies.length;
+
+                            return (
+                              <div key={cid} className={`single-comment-card ${comment.isPending ? 'pending' : ''}`} style={{ opacity: comment.isPending ? 0.6 : 1, marginBottom: '20px' }}>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                  <div className="comment-user-avatar" style={{ marginTop: '2px' }}>👤</div>
+                                  
+                                  {/* 名稱與留言內容垂直對齊的容器 */}
+                                  <div className="comment-content-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    
+                                    {/* 使用者名稱與時間 */}
+                                    <div className="comment-user-meta" style={{ display: 'flex', alignItems: 'center' }}>
+                                      <span className="comment-author-name" style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px' }}>{comment.author}</span>
+                                      <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
+                                        {comment.isPending ? '傳送中...' : '剛剛'}
+                                      </span>
+                                    </div>
+                                    
+                                    {/* 留言內文：排列在名字正下方 */}
+                                    <p className="comment-user-text" style={{ margin: '2px 0 6px 0', color: '#eee', fontSize: '14px', lineHeight: '1.5' }}>{comment.text}</p>
+                                    
+                                    {/* 👍 按讚按鈕 與 💬 回覆按鈕功能列 */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '2px' }}>
+                                      <button 
+                                        onClick={() => handleCommentLike(cid, isMock)}
+                                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', padding: 0 }}
+                                      >
+                                        👍 <span style={{ color: '#888' }}>{comment.likes || 0}</span>
+                                      </button>
+                                      
+                                      <button 
+                                        onClick={() => toggleReplySection(cid)}
+                                        style={{ background: 'transparent', border: 'none', color: '#ff6a00', cursor: 'pointer', fontSize: '13px', padding: 0, fontWeight: '500' }}
+                                      >
+                                        回覆
+                                      </button>
+                                    </div>
+
+                                    {/* 🔄 展開回覆區的下拉觸發按鈕 */}
+                                    {(totalReplyCount > 0) && (
+                                      <div style={{ marginTop: '6px' }}>
+                                        <button 
+                                          onClick={() => toggleReplySection(cid)}
+                                          style={{ background: 'transparent', border: 'none', color: '#3ea6ff', cursor: 'pointer', fontSize: '13px', padding: 0, display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}
+                                        >
+                                          {isExpanded ? '▼ 收起回覆' : `▶ ${totalReplyCount} 則回覆`}
+                                        </button>
+                                      </div>
+                                    )}
+
+                                    {/* 📂 被展開的子回覆清單與子輸入框 */}
+                                    {isExpanded && (
+                                      <div style={{ paddingLeft: '20px', borderLeft: '2px solid #222', marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        {/* 子回覆列表 */}
+                                        {replies.map((reply) => (
+                                          <div key={reply.id} style={{ display: 'flex', gap: '10px', fontSize: '13px', background: '#0e0e0e', padding: '8px', borderRadius: '6px', opacity: reply.isPending ? 0.6 : 1 }}>
+                                            <div style={{ color: '#888' }}>{reply.isPending ? '⏳' : '👤'}</div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                              <div>
+                                                <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
+                                                {reply.isPending && <span style={{ color: '#666', fontSize: '11px', marginLeft: '6px' }}>(傳送中...)</span>}
+                                              </div>
+                                              <p style={{ color: '#ccc', margin: '2px 0 0 0', lineHeight: '1.4' }}>{reply.text}</p>
+                                            </div>
+                                          </div>
+                                        ))}
+
+                                        {/* 子回覆輸入表單 */}
+                                        <form onSubmit={(e) => handleAddReplySubmit(e, cid)} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                                          <input 
+                                            type="text" 
+                                            placeholder="新增回覆..." 
+                                            // 💡 綁定動態 Ref 節點
+                                            ref={(el) => { replyInputRefs.current[cid] = el; }}
+                                            value={replyInputs[cid] || ''}
+                                            onChange={(e) => setReplyInputs(prev => ({ ...prev, [cid]: e.target.value }))}
+                                            style={{ flex: 1, background: '#111', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '16px', fontSize: '13px' }}
+                                          />
+                                          <button type="submit" style={{ background: '#3ea6ff', color: '#000', border: 'none', padding: '4px 12px', borderRadius: '14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>回覆</button>
+                                        </form>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ➡️ 右側側邊欄推薦影片列表 */}
+                  <div className="watch-sidebar-recommendations">
+                    <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
+                    {videos.filter(v => v.id !== selectedVideo.id).map((video, idx) => (
+                      <div key={`sidebar-${video.id}-${idx}`} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
+                        <div className="mini-card-thumb-wrapper" style={{ position: 'relative' }}>
+                          <img src={video.thumbnail} alt={video.title} className="thumbnail-img" style={{ borderRadius: '10px', border: '1px solid #1a1a1a', width: '240px', height: 'auto', aspectRatio: '16/9', objectFit: 'cover' }} />
+                          <span className="video-duration">{video.duration}</span>
+                        </div>
+                        <div className="mini-card-info">
+                          <h4 className="mini-card-title">{video.title}</h4>
+                          <p className="mini-card-channel">{video.channel}</p>
+                          <p className="mini-card-views">{formatViews(video.views)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </main>
       </div>
 
-      {/* ⚙️ 彈出式新增影片視圖 (Modal) */}
+      {/* 📥 彈出式影片上傳視窗模態框 */}
       {isUploadModalOpen && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-          backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center',
-          alignItems: 'center', zIndex: 9999, backdropFilter: 'blur(4px)'
-        }}>
-          <div style={{
-            background: '#181818', border: '1px solid #333', padding: '32px',
-            borderRadius: '16px', width: '100%', maxWidth: '480px', color: '#fff',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
-          }}>
-            <h2 style={{ margin: '0 0 20px 0', color: '#ff6a00', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {isAnalyzing ? '🔍 正在分析影片長度...' : '📺 新增自訂 YouTube 影片'}
-            </h2>
-            <form onSubmit={handleUploadVideo}>
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', color: '#aaa', fontSize: '14px' }}>影片標題</label>
-                <input 
-                  type="text" placeholder="輸入你想展示的影片名稱..." disabled={isAnalyzing}
-                  value={newVideoTitle} onChange={(e) => setNewVideoTitle(e.target.value)}
-                  style={{
-                    width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #444',
-                    background: '#0f0f0f', color: '#fff', boxSizing: 'border-box', fontSize: '15px',
-                    opacity: isAnalyzing ? 0.5 : 1
-                  }}
-                />
+        <div className="modal-overlay" onClick={() => setIsUploadModalOpen(false)}>
+          <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>📥 上傳新影片到雲端資料庫</h2>
+              <button className="close-modal-btn" onClick={() => setIsUploadModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+            <form onSubmit={handleUploadVideo} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ color: '#aaa', fontSize: '14px' }}>影片標題</label>
+                <input className="comment-text-input" type="text" placeholder="請輸入吸引人的影片標題..." value={newVideoTitle} onChange={(e) => setNewVideoTitle(e.target.value)} disabled={isAnalyzing} required />
               </div>
-              <div style={{ marginBottom: '28px' }}>
-                <label style={{ display: 'block', marginBottom: '8px', color: '#aaa', fontSize: '14px' }}>YouTube 影片網址</label>
-                <input 
-                  type="text" placeholder="https://www.youtube.com/watch?v=..." disabled={isAnalyzing}
-                  value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)}
-                  style={{
-                    width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #444',
-                    background: '#0f0f0f', color: '#fff', boxSizing: 'border-box', fontSize: '15px',
-                    opacity: isAnalyzing ? 0.5 : 1
-                  }}
-                />
+              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ color: '#aaa', fontSize: '14px' }}>YouTube 影片網址</label>
+                <input className="comment-text-input" type="url" placeholder="https://www.youtube.com/watch?v=..." value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)} disabled={isAnalyzing} required />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button 
-                  type="button" disabled={isAnalyzing}
-                  onClick={() => { setIsUploadModalOpen(false); setNewVideoTitle(''); setNewVideoUrl(''); }}
-                  style={{
-                    background: '#333', color: '#fff', border: 'none', padding: '10px 20px',
-                    borderRadius: '8px', cursor: isAnalyzing ? 'not-allowed' : 'pointer', fontWeight: 'bold'
-                  }}
-                >
-                  取消
-                </button>
-                <button 
-                  type="submit" disabled={isAnalyzing}
-                  style={{
-                    background: isAnalyzing ? '#555' : '#ff6a00', color: '#fff', border: 'none', padding: '10px 20px',
-                    borderRadius: '8px', cursor: isAnalyzing ? 'not-allowed' : 'pointer', fontWeight: 'bold'
-                  }}
-                >
-                  {isAnalyzing ? '分析中...' : '確認新增'}
+              <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
+                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
+                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '🚀 確認上傳'}
                 </button>
               </div>
             </form>
