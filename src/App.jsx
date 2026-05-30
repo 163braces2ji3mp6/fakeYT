@@ -215,7 +215,6 @@ export default function App() {
     setLocalUsername(inputUsername);
     localStorage.setItem('device_user_name', inputUsername);
     setIsSettingsModalOpen(false);
-    alert(`帳號名稱已成功修改為：${inputUsername}`);
   };
 
   // 💡 隨機切換變更帳號
