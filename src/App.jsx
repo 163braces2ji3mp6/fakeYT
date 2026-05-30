@@ -118,8 +118,8 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
-const UPLOAD_CATEGORIES = ['遊戲', '直播中', '音樂'];
+const CATEGORIES = ['全部', '音樂', '娛樂', '遊戲', 'VLOG'];
+const UPLOAD_CATEGORIES = ['未分類', '音樂', '娛樂', '遊戲', 'VLOG'];
 
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
@@ -239,7 +239,7 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [newVideoTitle, setNewVideoTitle] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
-  const [newVideoCategory, setNewVideoCategory] = useState('遊戲'); 
+  const [newVideoCategory, setNewVideoCategory] = useState('未分類'); 
   const [isAnalyzing, setIsAnalyzing] = useState(false); 
 
   const [comments, setComments] = useState([]);
