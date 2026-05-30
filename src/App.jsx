@@ -20,7 +20,7 @@ const getInitialUserInfo = () => {
   // 1. 自動辨識你目前的開發裝置：如果是本機環境 (localhost 或 127.0.0.1)
   const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-  // 2. 貼心備用功能：如果未來部署到線上，網址後方加上 ?user=小葉 就能強制切換
+  // 2. 貼心備用功能：網址後方加上 ?user=小葉 就能強制切換
   const urlParams = new URLSearchParams(window.location.search);
   const isForcedMe = urlParams.get('user') === '小葉';
 
@@ -35,16 +35,18 @@ const getInitialUserInfo = () => {
     return { name: savedName, avatar: GUEST_AVATAR };
   }
 
-  // 4. 其他全新進來的裝置：隨機組合出「不重複」的趣味中文暱稱
+  // 4. 其他全新進來的裝置：隨機組合出「純中文暱稱」加上數字，拿掉「訪客:」前綴
   const adjectives = ["熱心的", "潛水的", "路過的", "機智的", "佛系的", "神祕的", "愛看片的", "吃飽的", "打瞌睡的", "隨和的"];
   const nouns = ["小柴犬", "貓咪君", "水豚拉", "小企鵝", "太空人", "大熊貓", "珍奶控", "魔法師", "乾飯人", "小樹懶"];
   
   const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
   
-  // 加上 3 位數隨機數字尾碼，確保不同裝置之間產生的名字「絕對不會重複」
-  const randomNum = Math.floor(100 + Math.random() * 900);
-  const uniqueChineseName = `${randomAdj}${randomNoun}_${randomNum}`; // 例如：神祕的小柴犬_582
+  // 加上 4 位數隨機數字尾碼，確保不重複
+  const randomNum = Math.floor(1000 + Math.random() * 9000);
+  
+  // 🟢 💡 修改這裡：完全拿掉「訪客」這兩個字，直接輸出純中文組合與數字（例如：機智的太空人_2740）
+  const uniqueChineseName = `${randomAdj}${randomNoun}_${randomNum}`; 
 
   localStorage.setItem('device_user_name', uniqueChineseName);
   return { name: uniqueChineseName, avatar: GUEST_AVATAR };
