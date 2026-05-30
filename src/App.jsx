@@ -640,7 +640,7 @@ export default function App() {
                   <img src={CHANNEL_AVATAR} alt="Avatar Large" className="dropdown-avatar-large" />
                   <div>
                     <div className="dropdown-username">{CHANNEL_NAME}</div>
-                    <div className="dropdown-email">@yehh_0000</div>
+                    <div className="dropdown-email">@{CHANNEL_ID}</div>
                   </div>
                 </div>
                 <hr className="dropdown-divider" />
