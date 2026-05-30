@@ -628,16 +628,9 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button 
             onClick={() => setIsUploadModalOpen(true)}
-            style={{
-              background: '#ff6a00', color: '#fff', border: 'none', padding: '8px 16px',
-              borderRadius: '20px', fontWeight: 'bold', cursor: 'pointer', display: 'flex',
-              alignItems: 'center', gap: '6px', fontSize: '14px',
-              boxShadow: '0 2px 8px rgba(255, 106, 0, 0.4)', transition: 'transform 0.2s'
-            }}
-            onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-            onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            className="upload-video-btn" // 使用新的 CSS 類
           >
-            <span>➕</span> 新增影片
+            <span className="plus-icon">+</span> 上傳影片
           </button>
 
           <div className="avatar-container" ref={profileMenuRef}>

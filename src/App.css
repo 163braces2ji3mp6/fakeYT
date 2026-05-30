@@ -1098,3 +1098,36 @@ html, body {
 .channel-name-clickable:hover {
   color: #ff6a00 !important;   /* 懸停時點亮為招牌橘色 */
 }
+
+/* 添加到 App.css 文件的底部或相關部分 */
+
+.upload-video-btn {
+  background: #ff6a00;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;    /* 💡 改回 center：讓整個按鈕內部大體上垂直居中 */
+  gap: 6px;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(255, 106, 0, 0.4);
+  transition: transform 0.2s;
+}
+
+.upload-video-btn:hover {
+  transform: scale(1.05);
+}
+
+.upload-video-btn .plus-icon {
+  font-size: 20px;
+  line-height: 1;
+  display: inline-block;  /* 💡 轉成區塊，這樣微調屬性才會100%精確生效 */
+  
+  /* 💡 究極大招：使用 translateY 來上下移動它。
+     因為 + 號通常偏上，我們用正數（向下移）來精確對齊。
+     如果覺得往下太多，就改成 1px；如果還不夠，就改成 2.5px 或 3px，直到完美為止！ */
+  transform: translateY(1.5px); 
+}
