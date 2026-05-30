@@ -1070,7 +1070,7 @@ export default function App() {
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
                 <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
-                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '確認上傳'}
+                  {isAnalyzing ? '上傳中...' : '確認上傳'}
                 </button>
               </div>
             </form>
@@ -1093,7 +1093,7 @@ export default function App() {
               </div>
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsSettingsModalOpen(false)}>取消</button>
-                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認儲存</button>
+                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>儲存</button>
               </div>
             </form>
           </div>
