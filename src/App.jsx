@@ -134,7 +134,9 @@ function formatViews(views) {
 function formatSubscribers(count) {
   if (!count) return '0';
   const num = Number(count);
-  if (num >= 10000) {
+  if (num >= 1000000) {
+    return `${(num / 10000)}萬`;
+  } else if (num >= 10000) {
     return `${(num / 10000).toFixed(1)}萬`;
   }
   return num.toLocaleString();
@@ -982,7 +984,7 @@ export default function App() {
                           <img src={targetChannel?.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
                           <div style={{ flex: 1 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff' }}>{targetChannel?.name}</h1>
+                              <h1 style={{ fontSize: '32px', margin: '0 -20px 0 0', color: '#fff' }}>{targetChannel?.name}</h1>
                               {targetChannel?.name !== localUsername && (
                                 <button className={`sub-action-btn ${subscribedChannels.includes(targetChannel?.name) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(targetChannel?.name)} style={{ padding: '8px 20px', fontSize: '14px' }}>
                                   {subscribedChannels.includes(targetChannel?.name) ? '✓ 已訂閱' : '訂閱'}
@@ -990,8 +992,8 @@ export default function App() {
                               )}
                             </div>
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel?.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 
-                              <span style={{ color: '#ff6a00', fontWeight: 'bold', margin: '0 4px' }}> {formatSubscribers(liveSubscriberCount)}位 </span> 訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
+                              @{targetChannel?.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} •&nbsp;
+                              {formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
                           </div>
