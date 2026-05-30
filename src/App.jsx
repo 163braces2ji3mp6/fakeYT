@@ -13,7 +13,7 @@ import {
 import { mockComments, MOCK_VIDEOS, getRandomBio } from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論
 import { db } from './firebase'; 
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 
@@ -73,19 +73,51 @@ function extractYoutubeId(url) {
   return (match && match[2].length === 11) ? match[2] : '';
 }
 
-export function subscribeToComments(selectedVideo, setCommentsCallback) {
+// 🟢 調整：修改主留言訂閱器，讓它在回傳留言時，順便一併監聽/撈取該影片下所有的回覆
+export function subscribeToComments(selectedVideo, setCommentsCallback, setCommentRepliesCallback) {
   if (!selectedVideo?.id) return () => {};
 
   const videoId = selectedVideo.id;
   const youtubeId = selectedVideo.youtubeId;
 
+  // 1. 監聽主留言
   const commentsQuery = query(
     collection(db, 'comments'),
     where('videoId', '==', videoId),
     orderBy('createdAt', 'desc')
   );
 
-  return onSnapshot(commentsQuery, (snapshot) => {
+  // 2. 建立即時同步回覆的獨立監聽器（不再依賴點開動作，直接全量監聽該影片的所有回覆）
+  const repliesQuery = query(
+    collection(db, 'replies')
+  );
+
+  const unsubReplies = onSnapshot(repliesQuery, (replySnapshot) => {
+    const allRepliesMap = {};
+    replySnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const cId = data.commentId;
+      if (cId) {
+        if (!allRepliesMap[cId]) allRepliesMap[cId] = [];
+        allRepliesMap[cId].push({ id: doc.id, ...data });
+      }
+    });
+
+    // 針對每個留言的回覆陣列進行前端時間排序
+    Object.keys(allRepliesMap).forEach(cId => {
+      allRepliesMap[cId].sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : Date.now();
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : Date.now();
+        return timeA - timeB;
+      });
+    });
+
+    if (setCommentRepliesCallback) {
+      setCommentRepliesCallback(allRepliesMap);
+    }
+  });
+
+  const unsubComments = onSnapshot(commentsQuery, (snapshot) => {
     const firebaseComments = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
@@ -107,6 +139,11 @@ export function subscribeToComments(selectedVideo, setCommentsCallback) {
     );
     setCommentsCallback(currentMockComments);
   });
+
+  return () => {
+    unsubComments();
+    unsubReplies();
+  };
 }
 
 const shuffleArray = (array) => {
@@ -418,77 +455,50 @@ export default function App() {
     }
   }, [currentView, selectedVideo]);
 
-  useEffect(() => {
-    if (!selectedVideo?.id) return;
-
-    setIsCommentsLoading(true);
-    setOptimisticComments([]);
-    setOptimisticReplies([]); 
-    setExpandedReplyComments({});
-
-    const unsubscribe = subscribeToComments(selectedVideo, (mixedComments) => {
-      setComments(mixedComments);
-      setIsCommentsLoading(false);
-      
-      setOptimisticComments(prev => 
-        prev.filter(localComment => 
-          !mixedComments.some(serverComment => 
-            serverComment.text === localComment.text && serverComment.author === localComment.author
-          )
-        )
-      );
-    });
-
-    return () => unsubscribe();
-  }, [selectedVideo]);
-
+  // 📢 🟢 調整：因為回覆已經在進入影片時由 subscribeToComments 提前一併同步載入，此處只需保留清理樂觀更新快取的輔助邏輯即可
   useEffect(() => {
     const activeCommentIds = Object.keys(expandedReplyComments).filter(id => expandedReplyComments[id]);
     if (activeCommentIds.length === 0) return;
 
-    const unsubscribes = activeCommentIds.map(commentId => {
-      if (commentId.startsWith('temp-') || commentId.length < 10) {
-        return () => {};
-      }
-
-      const replyQuery = query(
-        collection(db, 'replies'),
-        where('commentId', '==', commentId),
-        orderBy('createdAt', 'asc')
+    activeCommentIds.forEach(commentId => {
+      const repliesList = commentReplies[commentId] || [];
+      setOptimisticReplies(prev => 
+        prev.filter(localReply => 
+          !(localReply.commentId === commentId && repliesList.some(serverReply => 
+            serverReply.text === localReply.text && serverReply.author === localReply.author
+          ))
+        )
       );
-
-      return onSnapshot(replyQuery, (snapshot) => {
-        const repliesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setCommentReplies(prev => ({ ...prev, [commentId]: repliesList }));
-
-        setOptimisticReplies(prev => 
-          prev.filter(localReply => 
-            !(localReply.commentId === commentId && repliesList.some(serverReply => 
-              serverReply.text === localReply.text && serverReply.author === localReply.author
-            ))
-          )
-        );
-      });
     });
+  }, [expandedReplyComments, commentReplies]);
 
-    return () => {
-      unsubscribes.forEach(unsub => unsub());
-    };
-  }, [expandedReplyComments]);
+  // 📢 即時監聽主留言（同時也會一併把所有回覆提前載入好）
+  useEffect(() => {
+    if (!selectedVideo?.id) {
+      setIsCommentsLoading(false);
+      return;
+    }
+
+    setIsCommentsLoading(true); // 切換影片時重新亮起讀取狀態
+
+    // 🟢 這裡傳入了 setCommentReplies，讓主留言跟回覆可以同步提前加載完成
+    const unsubscribe = subscribeToComments(selectedVideo, (fetchedComments) => {
+      setComments(fetchedComments);
+      setIsCommentsLoading(false); // 資料回來後，成功將留言讀取圈圈關閉！
+    }, setCommentReplies);
+
+    return () => unsubscribe();
+  }, [selectedVideo]);
 
   useEffect(() => {
     const unsubscribe = subscribeToVideos((firebaseVideos) => {
       const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
       setRawFirebaseVideos(validFirebaseVideos);
       
-      // 1. 先把 Firebase 影片與 Mock 影片倒進去，進行全體打亂 (Shuffle)
       let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
       
-      // 2. 💡 檢查是否有「剛剛才上傳」的影片
       if (justUploadedVideo) {
-        // 先從打亂的陣列中過濾掉這部影片（防止它在後面重複出現）
         shuffledAll = shuffledAll.filter(v => v.id !== justUploadedVideo.id);
-        // 強制把剛剛上傳的影片塞在第一個位置！
         shuffledAll = [justUploadedVideo, ...shuffledAll];
       }
       
@@ -497,7 +507,7 @@ export default function App() {
       setIsFirstInit(false); 
     });
     return () => unsubscribe();
-  }, [justUploadedVideo]); // 💡 記住在陣列加上 justUploadedVideo，這樣一上傳完就會立刻觸發重新排序
+  }, [justUploadedVideo]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -568,15 +578,8 @@ export default function App() {
 
   const toggleReplySection = (commentId) => {
     setExpandedReplyComments(prev => {
-      const nextState = { ...prev, [commentId]: !prev[commentId] };
-      if (nextState[commentId]) {
-        setTimeout(() => {
-          if (replyInputRefs.current[commentId]) {
-            replyInputRefs.current[commentId].focus();
-          }
-        }, 50); 
-      }
-      return nextState;
+      // 🟢 僅切換展開/收起狀態，完全移除會導致畫面跳動的 focus() 聚焦邏輯
+      return { ...prev, [commentId]: !prev[commentId] };
     });
   };
 
@@ -586,10 +589,11 @@ export default function App() {
     if (!replyText) return;
 
     const isMockComment = commentId.startsWith('temp-') || commentId.length < 10;
+    const tempReplyId = `temp-reply-${Date.now()}`;
 
     const temporaryLocalReply = {
-      id: `temp-reply-${Date.now()}`,
-      commentId,
+      id: tempReplyId,
+      commentId: commentId,
       author: localUsername,
       avatar: currentUserAvatar, 
       text: replyText,
@@ -599,12 +603,13 @@ export default function App() {
 
     setOptimisticReplies(prev => [...prev, temporaryLocalReply]);
     setReplyInputs(prev => ({ ...prev, [commentId]: '' }));
+    setExpandedReplyComments(prev => ({ ...prev, [commentId]: true }));
 
     if (isMockComment) return;
 
     try {
       await addDoc(collection(db, 'replies'), {
-        commentId,
+        commentId: commentId,
         author: localUsername,
         avatar: currentUserAvatar, 
         text: replyText,
@@ -615,7 +620,7 @@ export default function App() {
       await updateDoc(commentRef, { replyCount: increment(1) });
     } catch (error) {
       console.error("發布回覆失敗:", error);
-      setOptimisticReplies(prev => prev.filter(item => item.id !== temporaryLocalReply.id));
+      setOptimisticReplies(prev => prev.filter(item => item.id !== tempReplyId));
       alert("回覆雲端儲存失敗！");
     }
   };
@@ -694,10 +699,8 @@ export default function App() {
       
       await uploadVideoToFirebase(dataToUpload);
 
-      // 🟢 修正 1：改為正確的 dataToUpload 變數，首頁排序才會抓到它並排在第一個
       setJustUploadedVideo(dataToUpload); 
     
-      // 🟢 修正 2：整合關閉彈窗與欄位重置，確保執行順暢
       setNewVideoTitle('');
       setNewVideoUrl('');
       setNewVideoCategory('未分類'); 
@@ -712,9 +715,9 @@ export default function App() {
       console.error("上傳失敗：", error);
       alert("上傳失敗，請稍後再試！");
     } finally {
-      setIsAnalyzing(false); // 確保不論成功或失敗都會結束載入狀態
+      setIsAnalyzing(false); 
     }
-};
+  };
 
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
@@ -738,7 +741,7 @@ export default function App() {
       <nav className="navbar">
         <div className="logo-hub-style" onClick={() => {
           handleHomeNavigation();
-          forceScrollToTop(); // 🟢 改用專案自訂的 forceScrollToTop，才能精準把中間滾動區域拉回最上面！
+          forceScrollToTop(); 
         }}>
           <span className="logo-text-white">Leaf</span>
           <span className="logo-badge-orange">hub</span>
@@ -831,7 +834,6 @@ export default function App() {
                 ))}
               </div>
 
-              {/* 💡 只要還在初次加載或觸發加載，一律走骨架屏 Buffer 機制 */}
               {(isPageLoading || isFirstInit) ? (
                 <div className="video-grid">
                   {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
@@ -848,7 +850,6 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                /* 💡 載入完成，顯示搜尋篩選過後的真實影片網格 */
                 <div className="video-grid">
                   {getFilteredVideos().length > 0 ? (
                     getFilteredVideos().map((video) => (
@@ -882,13 +883,11 @@ export default function App() {
                       </div>
                     ))
                   ) : (
-                    /* 💡 只有在「搜尋欄真的有打字」且找不到時，才跳出找不到提示 */
                     searchQuery.trim() ? (
                       <div className="empty-state" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#888' }}>
                         🔍 找不到符合「{searchQuery}」的影片
                       </div>
                     ) : (
-                      /* 如果是切換特定分類沒影片，顯示分類為空提示 */
                       <div className="empty-state" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#888' }}>
                         該分類目前沒有影片
                       </div>
@@ -1082,11 +1081,10 @@ export default function App() {
                           left: 0, 
                           width: '100%', 
                           height: '100%', 
-                          // 💡 核心改動：將原本的純黑背景 #000 換成疊加半透明黑遮罩的影片縮圖
                           backgroundImage: selectedVideo ? `linear-gradient(rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0.65)), url(${selectedVideo.image || selectedVideo.thumbnail})` : '#000',
                           backgroundSize: 'cover',
                           backgroundPosition: 'center',
-                          backdropFilter: 'blur(8px)', /* 💡 加上淡淡的模糊，讓中間轉圈圈更顯眼，質感大加分 */
+                          backdropFilter: 'blur(8px)', 
                           display: 'flex', 
                           justifyContent: 'center', 
                           alignItems: 'center', 
@@ -1125,7 +1123,7 @@ export default function App() {
                           <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
                             {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
                           </button>
-                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 一般發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
+                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
                         </div>
                       </div>
 
@@ -1141,7 +1139,6 @@ export default function App() {
                           {isCommentsLoading ? (
                             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px 0', gap: '12px', color: '#888' }}>
                               <div className="yt-buffering-spinner" style={{ width: '32px', height: '32px' }}></div>
-                              <span style={{ fontSize: '14px', letterSpacing: '1px' }}>正在讀取社群留言...</span>
                             </div>
                           ) : (
                             allDisplayedComments.map((comment, idx) => {
@@ -1161,7 +1158,6 @@ export default function App() {
                                       <div className="comment-user-meta" style={{ display: 'flex', alignItems: 'center' }}>
                                         <span className="comment-author-name" style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px' }}>{comment.author}</span>
                                         <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
-                                          {/* 💡 直接把整個 createdAt 物件丟進去，不自己在外面用三元運算子卡死它 */}
                                           {comment.createdAt ? formatTimeAgo(comment.createdAt) : '剛剛'}
                                         </span>
                                       </div>
@@ -1186,15 +1182,17 @@ export default function App() {
                                           {replies.map((reply) => (
                                             <div key={reply.id} style={{ display: 'flex', gap: '10px', fontSize: '13px', background: '#0e0e0e', padding: '8px', borderRadius: '6px', opacity: reply.isPending ? 0.6 : 1 }}>
                                               <div style={{ color: '#888' }}>{reply.isPending ? '⏳' : '👤'}</div>
-                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                              
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
-                                                {/* 💡 讓子回覆也擁有完全一樣的安全相對時間顯示 */}
-                                                <span style={{ color: '#666', fontSize: '11px' }}>
-                                                  {reply.createdAt ? formatTimeAgo(reply.createdAt) : '剛剛'}
-                                                </span>
-                                                {reply.isPending && <span style={{ color: '#666', fontSize: '11px' }}>(傳送中...)</span>}
-                                              </div>
+                                                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
+                                                  
+                                                  <span style={{ color: '#666', fontSize: '11px' }}>
+                                                    {reply.createdAt ? formatTimeAgo(reply.createdAt) : '剛剛'}
+                                                  </span>
+                                                  
+                                                  {reply.isPending && <span style={{ color: '#666', fontSize: '11px' }}>(傳送中...)</span>}
+                                                </div>
                                                 <p style={{ color: '#ccc', margin: '2px 0 0 0', lineHeight: '1.4' }}>{reply.text}</p>
                                               </div>
                                             </div>
