@@ -61,3 +61,17 @@ export const mockComments = [
   { id: "c9", videoId: "2", author: "反詐騙先鋒", text: "每次滑到直播畫面寫著『不點讚不放手』都直接檢舉。感謝踢爆！", isPending: false },
   { id: "c10", videoId: "2", author: "吃瓜群眾", text: "最扯的是還有一堆人在那裡刷跑車 🤦‍♂️", isPending: false }
 ];
+
+const BIO_TEMPLATES = [
+  "主要分享科技觀察與網路各種奇奇怪怪的迷因研究。不定期更新，喜歡的話記得點個讚！",
+  "重度網路成癮症患者。致力於拆解網路上那些把觀眾當傻子的騙讚直播與 Rage-bait 釣魚手法。功德林常客，地獄梗重度愛好者。",
+  "這裡是一個充滿科技、短片留言迷因與 NPC 研究的奇妙空間。每天都被演算法洗腦，決定拍成影片迫害大家。😭",
+  "歡迎來到我的個人頻道！主要紀錄那些超出人類認知的 AI 迷因、IG 短片底下笑死人的留言，以及各種網路奇人異事考察。",
+  "沒什麼，只是一個想努力保住 YouTube 頻道不被炸、每天努力對抗 Rage-bait 網路釣魚的普通創作者。謝謝你的訂閱！",
+  "一個專注於把垃圾演算法內容變成精緻考察影片的網路清流（自稱）。歡迎廠商洽談，前提是不要叫我開騙讚直播。🤦‍♂️"
+];
+
+// 💡 寫一個導出的函式，讓 App.jsx 可以隨機抓取簡介
+export const getRandomBio = () => {
+  return BIO_TEMPLATES[Math.floor(Math.random() * BIO_TEMPLATES.length)];
+};

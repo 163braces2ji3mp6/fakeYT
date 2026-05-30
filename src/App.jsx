@@ -1,9 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 // 💡 引入 Firebase 服務層
-import { subscribeToVideos, uploadVideoToFirebase, incrementVideoViews } from './firebaseService';
-// 🟢 從你的 mockShite 同時引入留言與影片
-import { mockComments, MOCK_VIDEOS } from './mockShite';
+import { 
+  subscribeToVideos, 
+  uploadVideoToFirebase, 
+  incrementVideoViews,
+  subscribeToChannelData,
+  toggleChannelSubscription
+} from './firebaseService';
+// 🟢 從你的 mockShite 同時引入留言、影片，以及隨機簡介產生器
+import { mockComments, MOCK_VIDEOS, getRandomBio } from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論
 import { db } from './firebase'; 
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment } from 'firebase/firestore';
@@ -118,9 +124,8 @@ const shuffleArray = (array) => {
   return arr;
 };
 
-// 💡 獨立出可供上傳與首頁分類列共享的陣列（扣除「全部」這個複合按鈕）
-const CATEGORIES = ['全部', '音樂', '遊戲', 'VLOG'];
-const UPLOAD_CATEGORIES = ['未分類', '音樂','遊戲', 'VLOG'];
+const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
+const UPLOAD_CATEGORIES = ['遊戲', '直播中', '音樂'];
 
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
@@ -130,6 +135,18 @@ function formatViews(views) {
     return `${(numViews / 10000).toFixed(1)}萬次`;
   }
   return `${numViews}次`;
+}
+
+// 💡 用於將訂閱人數做更精緻的格式化 (例如：12543 人 -> 1.3萬)
+function formatSubscribers(count) {
+  if (!count) return '0';
+  const num = Number(count);
+  if (num >= 1000000) {
+    return `${(num / 10000)}萬`;
+  } else if (num >= 10000) {
+    return `${(num / 10000).toFixed(1)}萬`;
+  }
+  return num.toLocaleString();
 }
 
 export default function App() {
@@ -144,24 +161,28 @@ export default function App() {
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
 
-  // 💡 用戶名稱動態 State 控制
+  // 💡 頻道資訊載入 BUFFER 的 State
+  const [isChannelLoading, setIsChannelLoading] = useState(false);
+
   const [localUsername, setLocalUsername] = useState(CHANNEL_NAME);
   const [currentUserId, setCurrentUserId] = useState(CHANNEL_ID);
   const [currentUserAvatar, setCurrentUserAvatar] = useState(CHANNEL_AVATAR);
 
-  // 💡 用於「帳號設定彈出視窗」的輸入框狀態
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState(localUsername);
 
-  // 💡 用於動態渲染被點擊的頻道資訊
+  // 💡 雲端即時同步的當前頻道訂閱數 State
+  const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
+
   const [targetChannel, setTargetChannel] = useState({
     name: localUsername,
-    avatar: currentUserAvatar
+    avatar: currentUserAvatar,
+    bio: '' 
   });
 
   useEffect(() => {
     if (targetChannel.name === CHANNEL_NAME || targetChannel.name === localUsername) {
-      setTargetChannel({ name: localUsername, avatar: currentUserAvatar });
+      setTargetChannel(prev => ({ ...prev, name: localUsername, avatar: currentUserAvatar }));
     }
   }, [localUsername, currentUserAvatar]);
 
@@ -187,11 +208,10 @@ export default function App() {
 
   const replyInputRefs = useRef({});
 
-  // 💡 上傳影片相關狀態（新增類別選擇 State）
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [newVideoTitle, setNewVideoTitle] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
-  const [newVideoCategory, setNewVideoCategory] = useState('未分類'); // 預設為遊戲
+  const [newVideoCategory, setNewVideoCategory] = useState('遊戲'); 
   const [isAnalyzing, setIsAnalyzing] = useState(false); 
 
   const [comments, setComments] = useState([]);
@@ -205,7 +225,31 @@ export default function App() {
   const [optimisticComments, setOptimisticComments] = useState([]);
   const [optimisticReplies, setOptimisticReplies] = useState([]);
 
-  // 💡 帳號設定提交
+  // 💡 即時監聽「頻道頁面」或「影片內頁」中當前頻道的訂閱人數
+  useEffect(() => {
+    let activeChannelName = null;
+    if (currentView === 'channel' && targetChannel?.name) {
+      activeChannelName = targetChannel.name;
+    } else if (currentView === 'watch' && selectedVideo?.channel) {
+      activeChannelName = selectedVideo.channel;
+    }
+
+    if (!activeChannelName) return;
+
+    // 調用服務層監聽
+    const unsubscribe = subscribeToChannelData(activeChannelName, (channelData) => {
+      if (channelData && channelData.subscriberCount !== undefined) {
+        setLiveSubscriberCount(channelData.subscriberCount);
+        // 💡 雲端一拿到數據，就關閉頻道載入的 Buffer 狀態
+        setTimeout(() => {
+          setIsChannelLoading(false);
+        }, 350); // 微調緩衝感，體驗極佳
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentView, targetChannel.name, selectedVideo?.channel]);
+
   const handleUpdateUsernameSubmit = (e) => {
     e.preventDefault();
     if (!inputUsername.trim()) {
@@ -215,9 +259,9 @@ export default function App() {
     setLocalUsername(inputUsername);
     localStorage.setItem('device_user_name', inputUsername);
     setIsSettingsModalOpen(false);
+    alert(`帳號名稱已成功修改為：${inputUsername}`);
   };
 
-  // 💡 隨機切換變更帳號
   const handleRandomizeUser = () => {
     const randomUser = generateRandomIdentity();
     
@@ -271,9 +315,11 @@ export default function App() {
   };
 
   const handleMyChannelClick = () => {
+    setIsChannelLoading(true); // 💡 開啟頻道資訊載入 BUFFER
     setTargetChannel({
       name: localUsername,
-      avatar: currentUserAvatar
+      avatar: currentUserAvatar,
+      bio: getRandomBio() 
     });
     setCurrentView('channel'); 
     setChannelTab('videos'); 
@@ -283,9 +329,11 @@ export default function App() {
 
   const handleChannelNavigation = (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
+    setIsChannelLoading(true); // 💡 開啟頻道資訊載入 BUFFER
     setTargetChannel({
       name: channelName || localUsername,
-      avatar: channelAvatar || currentUserAvatar
+      avatar: channelAvatar || currentUserAvatar,
+      bio: getRandomBio() 
     });
     setCurrentView('channel');
     setChannelTab('videos');
@@ -411,12 +459,19 @@ export default function App() {
     });
   };
 
-  const toggleSubscribe = (channelName) => {
+  // 💡 同步更新本地與雲端資料庫的訂閱數
+  const toggleSubscribe = async (channelName) => {
+    const isCurrentlySubbed = subscribedChannels.includes(channelName);
+    
+    // 1. 先更新本地 State 與 變色狀態
     setSubscribedChannels(prev => {
-      const nextSubs = prev.includes(channelName) ? prev.filter(item => item !== channelName) : [...prev, channelName];
+      const nextSubs = isCurrentlySubbed ? prev.filter(item => item !== channelName) : [...prev, channelName];
       localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
       return nextSubs;
     });
+
+    // 2. 觸發雲端 Firestore 計算 (+1 或是 -1)
+    await toggleChannelSubscription(channelName, !isCurrentlySubbed);
   };
 
   const handleCommentLike = async (commentId, isMock) => {
@@ -536,7 +591,6 @@ export default function App() {
     });
   };
 
-  // 💡 【修正上傳邏輯】：將 newVideoCategory 封裝進上傳資料中
   const handleUploadVideo = async (e) => {
     e.preventDefault();
     const ytId = extractYoutubeId(newVideoUrl);
@@ -559,7 +613,7 @@ export default function App() {
         avatar: currentUserAvatar,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
-        category: newVideoCategory, // 💡 新增的類別欄位
+        category: newVideoCategory, 
         thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`
       };
       
@@ -567,7 +621,7 @@ export default function App() {
 
       setNewVideoTitle('');
       setNewVideoUrl('');
-      setNewVideoCategory('遊戲'); // 重設為預設值
+      setNewVideoCategory('遊戲'); 
       setIsUploadModalOpen(false);
       
       setSearchQuery('');
@@ -581,14 +635,12 @@ export default function App() {
     }
   };
 
-  // 💡 【篩選機制精準優化】：如果分類不是「全部」，則嚴格比對欄位，或者當作傳統備案
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
     return currentVideos.filter(video => {
       const matchesSearch = video.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             video.channel?.toLowerCase().includes(searchQuery.toLowerCase());
       
-      // 💡 精準判定：如果影片有帶 category 屬性就嚴格比對；沒有的話則採用原本標題/頻道名模糊 include 的備案機制
       const matchesCategory = activeCategory === '全部' || 
                               (video.category ? video.category === activeCategory : (video.title?.includes(activeCategory) || video.channel?.includes(activeCategory)));
       
@@ -618,7 +670,7 @@ export default function App() {
               if (currentView !== 'watch') setCurrentView('home');
             }}
           />
-          <button className="search-btn">
+          <button className="search-btn" onClick={() => alert(`正在搜尋: ${searchQuery}`)}>
             <svg viewBox="0 0 24 24" className="search-icon-svg">
               <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path>
             </svg>
@@ -628,9 +680,9 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button 
             onClick={() => setIsUploadModalOpen(true)}
-            className="upload-video-btn" // 使用新的 CSS 類
+            className="upload-video-btn"
           >
-            <span className="plus-icon">+</span> 上傳影片
+            <span className="plus-icon">+</span> 新增影片
           </button>
 
           <div className="avatar-container" ref={profileMenuRef}>
@@ -658,7 +710,7 @@ export default function App() {
                     ⚙️ 帳號設定
                   </button>
                   <button className="dropdown-item-btn" onClick={handleRandomizeUser}>
-                    🚪 登出
+                    🚪 隨機換帳號登出
                   </button>
                 </div>
               </div>
@@ -829,17 +881,47 @@ export default function App() {
               {/* 5️⃣ 動態「頻道」專屬頁面視圖 */}
               {currentView === 'channel' && (
                 <div className="channel-page-wrapper">
-                  <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
-                  <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
-                    <img src={targetChannel.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
-                    <div>
-                      <h1 style={{ fontSize: '32px', margin: '0 0 8px 0', color: '#fff' }}>{targetChannel.name}</h1>
-                      <p style={{ color: '#aaa', margin: '0 0 6px 0', fontSize: '15px' }}>
-                        @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} • 0 位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
-                      </p>
-                      <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
+                  {/* 💡 如果正在載入頻道資料，秀出高質感的 Skeleton 骨架屏 Buffer */}
+                  {isChannelLoading ? (
+                    <div className="channel-loading-skeleton" style={{ padding: '8px' }}>
+                      <div className="skeleton-thumb" style={{ width: '100%', height: '180px', borderRadius: '16px', marginBottom: '24px' }}></div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px' }}>
+                        <div className="skeleton-avatar" style={{ width: '120px', height: '120px' }}></div>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div className="skeleton-text" style={{ width: '250px', height: '28px', borderRadius: '6px' }}></div>
+                          <div className="skeleton-text" style={{ width: '380px', height: '16px', borderRadius: '4px' }}></div>
+                          <div className="skeleton-text" style={{ width: '450px', height: '14px', borderRadius: '4px' }}></div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    /* 💡 載入完畢後，正常顯示頻道數據 */
+                    <>
+                      <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
+                      <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
+                        <img src={targetChannel.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                            <h1 style={{ fontSize: '32px', margin: '0', color: '#fff' }}>{targetChannel.name}</h1>
+                            {targetChannel.name !== localUsername && (
+                              <button 
+                                className={`sub-action-btn ${subscribedChannels.includes(targetChannel.name) ? 'is-subbed' : ''}`} 
+                                onClick={() => toggleSubscribe(targetChannel.name)}
+                                style={{ padding: '8px 20px', fontSize: '14px' }}
+                              >
+                                {subscribedChannels.includes(targetChannel.name) ? '✓ 已訂閱' : '訂閱'}
+                              </button>
+                            )}
+                          </div>
+                          <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
+                            @{targetChannel.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} •
+                            &nbsp;{formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel.name).length} 部影片
+                          </p>
+                          <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel.name} 的個人技術與娛樂分享空間。</p>
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   <div className="channel-tabs-bar" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
                     <button onClick={() => setChannelTab('videos')} style={{ background: 'transparent', border: 'none', color: channelTab === 'videos' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'videos' ? '3px solid #ff6a00' : '3px solid transparent' }}>影片</button>
@@ -868,7 +950,10 @@ export default function App() {
                   ) : (
                     <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                       <h3>簡介</h3>
-                      <p>嗨！我是 {targetChannel.name}。主要分享科技觀察與網路各種奇奇怪怪的迷因研究。</p>
+                      <p>
+                        嗨！我是 {targetChannel.name}。
+                        {targetChannel.bio || "主要分享科技觀察與網路各種奇奇怪怪的迷因研究。"}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -901,10 +986,16 @@ export default function App() {
                         <img src={selectedVideo.avatar} alt="Channel" style={{ width: '40px', height: '40px', borderRadius: '50%', cursor: 'pointer' }} onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)} />
                         <div>
                           <div className="channel-name-large channel-name-clickable" onClick={(e) => handleChannelNavigation(selectedVideo.channel, selectedVideo.avatar, e)} style={{ fontWeight: 'bold', color: '#fff', cursor: 'pointer' }}>{selectedVideo.channel}</div>
+                          {/* 💡 這裡同步讀取來自雲端的即時訂閱總人數 */}
+                          <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
+                            {formatSubscribers(liveSubscriberCount)} 位訂閱者
+                          </div>
                         </div>
-                        <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
-                          {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
-                        </button>
+                        {selectedVideo.channel !== localUsername && (
+                          <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
+                            {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
+                          </button>
+                        )}
                       </div>
 
                       <div className="video-interactions-block">
@@ -1034,7 +1125,6 @@ export default function App() {
                 <input className="comment-text-input" type="url" placeholder="https://www.youtube.com/watch?v=..." value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)} disabled={isAnalyzing} required />
               </div>
               
-              {/* 💡 【新增功能】：影片類別選擇器（下拉選單） */}
               <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ color: '#aaa', fontSize: '14px' }}>影片類別</label>
                 <select 
@@ -1061,7 +1151,7 @@ export default function App() {
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
                 <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
-                  {isAnalyzing ? '上傳中...' : '確認上傳'}
+                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '確認上傳'}
                 </button>
               </div>
             </form>
@@ -1084,7 +1174,7 @@ export default function App() {
               </div>
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsSettingsModalOpen(false)}>取消</button>
-                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>儲存</button>
+                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認儲存</button>
               </div>
             </form>
           </div>

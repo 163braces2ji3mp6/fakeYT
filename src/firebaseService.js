@@ -4,8 +4,10 @@ import {
   query, 
   orderBy, 
   onSnapshot, 
-  addDoc,       // 💡 剛才這裡漏掉了，這次確實引入！
+  addDoc,      
   doc, 
+  getDoc,
+  setDoc,
   updateDoc, 
   increment, 
   serverTimestamp 
@@ -70,5 +72,50 @@ export async function incrementVideoViews(videoId) {
   } catch (error) {
     console.error("🚀 [Service] 觀看次數更新失敗：", error);
     throw error;
+  }
+}
+
+/**
+ * 📢 即時監聽特定頻道的資訊與訂閱數（包含自動初始化機制）
+ */
+export function subscribeToChannelData(channelName, callback) {
+  if (!channelName) return () => {};
+  
+  // 💡 以頻道名稱作為 Document ID
+  const channelRef = doc(db, "Channels", channelName);
+  
+  return onSnapshot(channelRef, async (docSnapshot) => {
+    if (docSnapshot.exists()) {
+      callback(docSnapshot.data());
+    } else {
+      // 💡 如果雲端尚未存在這個帳號，自動建立，並給予一個隨機的「基礎訂閱人數」充場面（1000 ~ 50000）
+      const baseSubs = Math.floor(1000 + Math.random() * 9000);
+      const initialData = {
+        name: channelName,
+        subscriberCount: baseSubs,
+        createdAt: serverTimestamp()
+      };
+      try {
+        await setDoc(channelRef, initialData);
+        callback(initialData);
+      } catch (err) {
+        console.error("自動建立雲端頻道資料失敗:", err);
+        callback({ name: channelName, subscriberCount: 0 });
+      }
+    }
+  });
+}
+
+/**
+ * 🔔 變更雲端頻道的訂閱人數 (isSubscribing ? +1 : -1)
+ */
+export async function toggleChannelSubscription(channelName, isSubscribing) {
+  try {
+    const channelRef = doc(db, "Channels", channelName);
+    await updateDoc(channelRef, {
+      subscriberCount: increment(isSubscribing ? 1 : -1)
+    });
+  } catch (error) {
+    console.error("更新雲端頻道訂閱數失敗:", error);
   }
 }
