@@ -119,8 +119,8 @@ const shuffleArray = (array) => {
 };
 
 // 💡 獨立出可供上傳與首頁分類列共享的陣列（扣除「全部」這個複合按鈕）
-const CATEGORIES = ['全部', '遊戲', '直播中', '音樂'];
-const UPLOAD_CATEGORIES = ['未分類','遊戲', '直播中', '音樂'];
+const CATEGORIES = ['全部', '遊戲', 'VLOG', '音樂'];
+const UPLOAD_CATEGORIES = ['未分類','遊戲', 'VLOG', '音樂'];
 
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
