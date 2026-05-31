@@ -447,7 +447,10 @@ export default function App() {
   const oldUsername = localUsername;
   const newUsername = inputUsername.trim();
 
-  if (oldUsername === newUsername) {
+  if (
+    oldUsername === newUsername &&
+    previewAvatar === currentUserAvatar
+  ) {
     setIsSettingsModalOpen(false);
     return;
   }
