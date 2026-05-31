@@ -476,12 +476,17 @@ export default function App() {
       const newDocRef = doc(db, 'Channels', newUsername);
       await setDoc(newDocRef, {
         channelName: newUsername,
-        avatar: GUEST_AVATAR,
+        avatar: previewAvatar,
         userId: currentUserId,
         subscriberCount: currentSubCount, // 訂閱數完美繼承！
         createdAt: new Date().toISOString()
       });
+      setCurrentUserAvatar(previewAvatar);
 
+      localStorage.setItem(
+        'device_user_avatar',
+        previewAvatar
+      );
       // 同步網頁狀態
       setLocalUsername(newUsername);
       setIsSettingsModalOpen(false);
@@ -495,16 +500,36 @@ export default function App() {
   // 🟢 當點擊隨機換帳號登出時，同步建立一組全新的資料庫對應關係
   const handleRandomizeUser = async () => {
     const randomUser = generateRandomIdentity();
+
+    const avatarUrl = generateRandomAvatar();
+
     setLocalUsername(randomUser.name);
     setInputUsername(randomUser.name);
+
     setCurrentUserId(randomUser.id);
-    setCurrentUserAvatar(GUEST_AVATAR);
-    localStorage.setItem('device_user_avatar', GUEST_AVATAR);
-    localStorage.setItem('device_user_name', randomUser.name);
-    localStorage.setItem('device_user_id', randomUser.id);
-    
-    setIsProfileOpen(false); 
-    showToast(`已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`);
+
+    setCurrentUserAvatar(avatarUrl);
+
+    localStorage.setItem(
+      'device_user_avatar',
+      avatarUrl
+    );
+
+    localStorage.setItem(
+      'device_user_name',
+      randomUser.name
+    );
+
+    localStorage.setItem(
+      'device_user_id',
+      randomUser.id
+    );
+
+    setIsProfileOpen(false);
+
+    showToast(
+      `已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`
+    );
   };
 
   useEffect(() => {
