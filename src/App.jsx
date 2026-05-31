@@ -15,7 +15,16 @@ import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, 
 import avatarImage from './assets/163braces.jpg' 
 
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
+const isCurrentUserAsset = (item) => {
+  if (!item) return false;
 
+  return (
+    item.author === '小葉' ||
+    item.channel === '小葉' ||
+    item.creatorName === '小葉' ||
+    item.username === '小葉'
+  );
+};
 // 🟢 【統一的頭貼管理函數】改一個地方，所有地方同步更新
 const getUnifiedAvatar = (channelName, fallbackAvatar) => {
   if (channelName === '小葉') return avatarImage;
@@ -687,18 +696,23 @@ export default function App() {
   }, [currentUserAvatar]);
 
   useEffect(() => {
-    if (!currentUserId) return;
+    if (
+      !currentUserId ||
+      currentUserId === 'loading...' ||
+      localUsername === '載入中...'
+    ) {
+      return;
+    }
 
     const isCurrentUserAsset = (item = {}) => (
-      String(item.userId ?? '') === String(currentUserId ?? '') ||
-      String(item.channel ?? '') === String(localUsername ?? '') ||
-      String(item.author ?? '') === String(localUsername ?? '') ||
-      String(item.creatorName ?? '') === String(localUsername ?? '') ||
-      String(item.username ?? '') === String(localUsername ?? '') ||
-      String(item.name ?? '') === String(localUsername ?? '')
+      String(item.userId ?? '') === String(currentUserId) ||
+      String(item.channel ?? '') === String(localUsername) ||
+      String(item.author ?? '') === String(localUsername) ||
+      String(item.creatorName ?? '') === String(localUsername) ||
+      String(item.username ?? '') === String(localUsername) ||
+      String(item.name ?? '') === String(localUsername)
     );
 
-    // 更新首頁影片
     setVideos(prev =>
       Array.isArray(prev)
         ? prev.map(video =>
@@ -713,18 +727,20 @@ export default function App() {
         : prev
     );
 
-    // 更新 Firebase 原始影片
     setRawFirebaseVideos(prev =>
       Array.isArray(prev)
         ? prev.map(video =>
             isCurrentUserAsset(video)
-              ? { ...video, avatar: unifiedAvatar, creatorAvatar: unifiedAvatar }
+              ? {
+                  ...video,
+                  avatar: unifiedAvatar,
+                  creatorAvatar: unifiedAvatar
+                }
               : video
           )
         : prev
     );
 
-    // 如果目前開的是自己的頻道，同步更新頻道頁頭像
     setTargetChannel(prev =>
       prev && isCurrentUserAsset(prev)
         ? {
@@ -734,18 +750,19 @@ export default function App() {
         : prev
     );
 
-    // 更新留言
     setComments(prev =>
       Array.isArray(prev)
         ? prev.map(comment =>
             isCurrentUserAsset(comment)
-              ? { ...comment, avatar: unifiedAvatar }
+              ? {
+                  ...comment,
+                  avatar: unifiedAvatar
+                }
               : comment
           )
         : prev
     );
 
-    // 更新回覆
     setCommentReplies(prev => {
       const updated = {};
 
@@ -753,7 +770,10 @@ export default function App() {
         updated[key] = Array.isArray(prev[key])
           ? prev[key].map(reply =>
               isCurrentUserAsset(reply)
-                ? { ...reply, avatar: unifiedAvatar }
+                ? {
+                    ...reply,
+                    avatar: unifiedAvatar
+                  }
                 : reply
             )
           : prev[key];
@@ -762,11 +782,11 @@ export default function App() {
       return updated;
     });
 
-    // mock 資料同步
     if (Array.isArray(MOCK_VIDEOS)) {
       MOCK_VIDEOS.forEach(video => {
         if (isCurrentUserAsset(video)) {
           video.avatar = unifiedAvatar;
+          video.creatorAvatar = unifiedAvatar;
         }
       });
     }
@@ -1382,7 +1402,14 @@ export default function App() {
     return (
       <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
         <div className="thumbnail-wrapper">
-          <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+          <img
+            src={video.thumbnail || '/default-thumbnail.jpg'}
+            alt={video.title}
+            className="thumbnail-img"
+            onError={(e) => {
+              e.currentTarget.src = '/default-thumbnail.jpg';
+            }}
+          />
           <span className="video-duration">{video.duration}</span>
         </div>
         <div className="video-info-section">
@@ -1603,19 +1630,14 @@ export default function App() {
                         </div>
                           {/* 🟢 修正後的無敵保險版（完美解決小葉舊上傳影片無頭貼問題） */}
                           <div className="video-info-section">
-                          <img 
+                          <img
                             src={
-                              // 🟢 檢查所有名字相關欄位，只要有小葉，就給小葉頭貼
-                              video.author === '小葉' || 
-                              video.channel === '小葉' || 
-                              video.creatorName === '小葉' || 
-                              video.username === '小葉'
-                                ? avatarImage 
-                                : (video.avatar || video.creatorAvatar || GUEST_AVATAR)
-                            } 
-                            alt={video.channel || video.author} 
-                            className="channel-avatar channel-avatar-clickable" 
-                            // 💡 點擊事件維持你原本的，但名字傳送多做幾層保險
+                              isCurrentUserAsset(video)
+                                ? unifiedAvatar
+                                : (video.creatorAvatar || video.avatar || GUEST_AVATAR)
+                            }
+                            alt={video.channel || video.author}
+                            className="channel-avatar channel-avatar-clickable"
                             onClick={(e) =>
                               handleChannelNavigation(
                                 video.channel || video.author,
