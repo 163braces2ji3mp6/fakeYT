@@ -20,18 +20,18 @@ import avatarImage from './assets/163braces.jpg'
 // 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
-// 🟢 請把它改成下面這段新寫法：
-const generateRandomIdentity = () => {
-  // ✨ 直接調用 mockShite 的名稱產生器，後面一樣幫他加上隨機數字後綴
-  const randomChineseName = getRandomUsername();
-  const randomNum = Math.floor(1000 + Math.random() * 9000);
-  
-  const uniqueChineseName = `${randomChineseName}_${randomNum}`; 
-  const randomHex = Math.random().toString(36).substring(2, 7); 
-  const uniqueId = `user_${randomHex}`;
+// 🟢 整合版：建立新訪客識別碼（統一用 ID 做為唯一綁定）
+  const generateRandomIdentity = () => {
+    const randomChineseName = getRandomUsername();
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    
+    const uniqueChineseName = `${randomChineseName}_${randomNum}`; 
+    // 🎯 產生一組長度固定的用戶專屬隨機 ID (例: user_ab12)
+    const randomHex = Math.random().toString(16).substring(2, 6); 
+    const uniqueId = `user_${randomHex}`;
 
-  return { name: uniqueChineseName, id: uniqueId };
-};
+    return { name: uniqueChineseName, id: uniqueId };
+  };
 
 function extractYoutubeId(url) {
   if (!url) return '';
@@ -383,32 +383,41 @@ export default function App() {
     return () => unsubscribe();
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
-  // 🟢 修改使用者名稱時，同步更新雲端資料庫
+  // 🟢 整合版：更換名稱表單送出
   const handleUpdateUsernameSubmit = async (e) => {
     e.preventDefault();
-    if (!inputUsername.trim()) {
-      alert('名稱不能為空！');
-      return;
-    }
-
-    const oldName = localUsername;
-    const newName = inputUsername;
-
-    setLocalUsername(newName);
-    localStorage.setItem('device_user_name', newName);
+    if (!inputUsername.trim()) return;
 
     try {
-      await setDoc(doc(db, 'users', newName), {
-        userId: currentUserId,
-        username: newName,
-        updatedAt: new Date().toISOString()
+      // 🎯 核心整合點：直接拿固定的 currentUserId 去 Channels 集合修改裡面的名字！
+      const userDocRef = doc(db, 'Channels', currentUserId);
+      
+      // 使用 updateDoc 只局部更新 channelName 欄位，原本的訂閱數、ID 等全部完好如初
+      await updateDoc(userDocRef, {
+        channelName: inputUsername.trim()
       });
-    } catch (err) {
-      console.error("更新雲端名稱失敗:", err);
-    }
 
-    setIsSettingsModalOpen(false);
-    alert(`帳號名稱已成功修改為：${newName}`);
+      // 同步更新本機狀態與關閉視窗
+      setLocalUsername(inputUsername.trim());
+      setIsSettingsModalOpen(false);
+      alert('帳號名稱已成功同步更新至頻道資料！');
+    } catch (err) {
+      console.error("更新 Channels 集合名稱失敗:", err);
+      // 防呆：如果該用戶在 Channels 還沒有任何文件，直接幫他補創
+      try {
+        await setDoc(doc(db, 'Channels', currentUserId), {
+          channelName: inputUsername.trim(),
+          avatar: GUEST_AVATAR,
+          userId: currentUserId,
+          subscriberCount: 0,
+          createdAt: new Date().toISOString()
+        });
+        setLocalUsername(inputUsername.trim());
+        setIsSettingsModalOpen(false);
+      } catch (innerErr) {
+        console.error("補創頻道文件失敗:", innerErr);
+      }
+    }
   };
 
   // 🟢 當點擊隨機換帳號登出時，同步建立一組全新的資料庫對應關係
@@ -487,23 +496,20 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 防閃爍大寫版 + 核心修正：綁定固定用戶 ID（解決改名變新帳號問題）
+  // 🟢 整合版：防閃爍與頻道資料一體化（只讀寫 Channels 集合）
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
-    // 1. 🌟 秒切換，立刻跑 Buffer 轉圈圈
     setIsChannelLoading(true); 
     setCurrentView('channel');
     setChannelTab('videos');
     forceScrollToTop();
 
-    // ⏱️ 紀錄開始轉圈的時間點
     const startTime = Date.now();
-
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
 
-    // 如果是小葉，給固定專屬設定，並秒關載入
+    // 1. 小葉官方帳號固定設定
     if (finalName === '小葉') {
       const shiauyeChannel = {
         name: '小葉',
@@ -513,46 +519,35 @@ export default function App() {
       };
       setTargetChannel(shiauyeChannel);
       setTargetChannelUserId('shiauye_official'); 
-      
-      // 💾 同步寫入本地儲存，防重新整理不見
       localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
-      
       setIsChannelLoading(false);
       return; 
     }
 
-    // 先設定初步狀態物件（先放空字串 ID），稍後查到 Firebase 再更新進快取
     const initialBio = getRandomBio();
-    const initialChannelData = {
-      name: finalName,
-      avatar: finalAvatar,
-      bio: initialBio,
-      userId: '' 
-    };
+    const initialChannelData = { name: finalName, avatar: finalAvatar, bio: initialBio, userId: '' };
     setTargetChannel(initialChannelData);
 
     let finalId = '';
 
     try {
-      // 🟢 核心修正：判斷是不是自己的頻道
       const isMyOwnChannel = (finalName === localUsername);
 
-      // 如果是自己的頻道，不再盲目用名字查，而是直接用固定不變的 currentUserId 當作文件 ID 去讀取！
-      // 如果是別人的頻道，才用名字去搜尋 Channels 集合
+      // 🎯 核心整合點：如果是自己，直接用 currentUserId 去 Channels 找對應的文件
       if (isMyOwnChannel) {
         const docRef = doc(db, 'Channels', currentUserId);
-        const docSnap = await getDoc(docRef); // 💡 注意：如果頂部沒有引入 getDoc，請在 import 補上
+        const docSnap = await getDoc(docRef); // 💡 確保頂部有引入 getDoc
 
         if (docSnap.exists()) {
           const channelData = docSnap.data();
           finalId = channelData.userId || currentUserId;
           
-          // 順便檢查如果資料庫內的名字跟現在不一樣（代表剛改完名），自動幫忙更新同步資料庫
+          // 如果資料庫內的名字跟現在 local 的不一樣（可能剛改名），自動覆蓋更新
           if (channelData.channelName !== finalName) {
             await updateDoc(docRef, { channelName: finalName });
           }
         } else {
-          // 自己是全新帳號，第一次登入建立，直接用 currentUserId 作為文件名稱
+          // 第一次登入建立，直接用 currentUserId 當作文件 ID，資料一次給齊！
           finalId = currentUserId;
           await setDoc(docRef, {
             channelName: finalName,
@@ -563,24 +558,22 @@ export default function App() {
           });
         }
       } else {
-        // 🔹 點擊別人的頻道：維持原本的 query 邏輯
+        // 🔹 點擊別人的頻道：使用 channelName 去搜尋 Channels 集合
         const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
         const querySnapshot = await getDocs(q);
         
-        const randomHex = Math.random().toString(16).substring(2, 6); 
-        const generatedId = `user_${randomHex}`;
-
         if (!querySnapshot.empty) {
           const channelDoc = querySnapshot.docs[0];
           const channelData = channelDoc.data();
           finalId = channelData.userId || channelDoc.id;
         } else {
-          // 完全沒有這個別人的頻道，幫他建立
-          finalId = generatedId;
+          // 完全沒有這個人的頻道，幫他建立新文件（用名字當 Doc ID）
+          const randomHex = Math.random().toString(16).substring(2, 6); 
+          finalId = `user_${randomHex}`;
           await setDoc(doc(db, 'Channels', finalName), {
             channelName: finalName,
             avatar: finalAvatar,
-            userId: generatedId,
+            userId: finalId,
             subscriberCount: 0,
             createdAt: new Date().toISOString()
           });
@@ -593,10 +586,8 @@ export default function App() {
       finalId = `user_${suffix}`;
     }
 
-    // 🎯 核心同步修正：將成功的 finalId 同步更新到狀態中
+    // 2. 同步 React 狀態與 localStorage 快取
     setTargetChannelUserId(finalId);
-
-    // 🎯 核心同步修正：打包帶有最新 ID 的完整物件，寫入 React 狀態與 localStorage
     const updatedChannelData = {
       name: finalName,
       avatar: finalAvatar,
@@ -606,15 +597,13 @@ export default function App() {
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
-    // 2. 🌟【核心修正：防閃爍時間計算】
-    const minimumDelay = 650; // 最少要轉 650 毫秒
-    const elapsedTime = Date.now() - startTime; // 計算 Firebase 耗費了多少時間
-    const remainingTime = minimumDelay - elapsedTime; // 計算還差多少時間才滿 minimumDelay
+    // 3. 最低轉圈延遲控制（650ms）
+    const minimumDelay = 650;
+    const elapsedTime = Date.now() - startTime;
+    const remainingTime = minimumDelay - elapsedTime;
 
     if (remainingTime > 0) {
-      setTimeout(() => {
-        setIsChannelLoading(false);
-      }, remainingTime);
+      setTimeout(() => { setIsChannelLoading(false); }, remainingTime);
     } else {
       setIsChannelLoading(false);
     }
