@@ -10,7 +10,7 @@ import {
   formatTimeAgo
 } from './firebaseService';
 // 🟢 從你的 mockShite 同時引入留言、影片，以及隨機簡介產生器
-import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername } from './mockShite';
+import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論與使用者資料
 import { db } from './firebase'; 
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc } from 'firebase/firestore';
@@ -20,12 +20,13 @@ import avatarImage from './assets/163braces.jpg'
 // 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
+// 🟢 請把它改成下面這段新寫法：
 const generateRandomIdentity = () => {
-  const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+  // ✨ 直接調用 mockShite 的名稱產生器，後面一樣幫他加上隨機數字後綴
+  const randomChineseName = getRandomUsername();
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   
-  const uniqueChineseName = `${randomAdj}${randomNoun}_${randomNum}`; 
+  const uniqueChineseName = `${randomChineseName}_${randomNum}`; 
   const randomHex = Math.random().toString(36).substring(2, 7); 
   const uniqueId = `user_${randomHex}`;
 
