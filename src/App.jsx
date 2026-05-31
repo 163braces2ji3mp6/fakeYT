@@ -220,18 +220,6 @@ export default function App() {
       localStorage.setItem('device_user_id', savedId);
       localStorage.setItem('device_user_avatar', avatar); 
 
-      // 同步到雲端資料庫
-      try {
-        await setDoc(doc(db, 'users', savedName), {
-          userId: savedId,
-          username: savedName,
-          avatar: avatar, 
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      } catch (err) {
-        console.error("無法將使用者身份同步至資料庫:", err);
-      }
-
       // 設定 React 畫面狀態
       setLocalUsername(savedName);
       setCurrentUserId(savedId);
@@ -437,16 +425,6 @@ export default function App() {
     localStorage.setItem('device_user_avatar', GUEST_AVATAR);
     localStorage.setItem('device_user_name', randomUser.name);
     localStorage.setItem('device_user_id', randomUser.id);
-    
-    try {
-      await setDoc(doc(db, 'users', randomUser.name), {
-        userId: randomUser.id,
-        username: randomUser.name,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (err) {
-      console.error("隨機切換身份寫入資料庫失敗:", err);
-    }
     
     setIsProfileOpen(false); 
     alert(`已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`);
