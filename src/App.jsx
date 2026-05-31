@@ -350,7 +350,12 @@ export default function App() {
 
   const [optimisticComments, setOptimisticComments] = useState([]);
   const [optimisticReplies, setOptimisticReplies] = useState([]);
+  const checkUsernameExists = async (username) => {
+  const channelRef = doc(db, "Channels", username);
+  const channelSnap = await getDoc(channelRef);
 
+  return channelSnap.exists();
+  };
   useEffect(() => {
     if (currentView !== 'home') return;
     if (searchInputStr.trim()) {
@@ -399,18 +404,30 @@ export default function App() {
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
   const handleUpdateUsernameSubmit = async (e) => {
-    e.preventDefault();
-    if (!inputUsername.trim()) return;
+  e.preventDefault();
 
-    const oldUsername = localUsername; 
-    const newUsername = inputUsername.trim();
+  if (!inputUsername.trim()) {
+    showToast('請輸入名稱', 'warning');
+    return;
+  }
 
-    if (oldUsername === newUsername) {
-      setIsSettingsModalOpen(false);
-      return;
-    }
+  const oldUsername = localUsername;
+  const newUsername = inputUsername.trim();
 
-    try {
+  if (oldUsername === newUsername) {
+    setIsSettingsModalOpen(false);
+    return;
+  }
+
+  // ⭐ 新增這段
+  const usernameExists = await checkUsernameExists(newUsername);
+
+  if (usernameExists) {
+    showToast('此名稱已被使用', 'error');
+    return;
+  }
+
+  try {
       // 1. 先抓出舊中文檔案裡的資料（例如訂閱數等等）
       const oldDocRef = doc(db, 'Channels', oldUsername);
       const oldDocSnap = await getDoc(oldDocRef);
