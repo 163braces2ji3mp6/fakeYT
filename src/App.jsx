@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
-// 💡 引入 Firebase 服務層
 import { 
   subscribeToVideos, 
   uploadVideoToFirebase, 
@@ -9,33 +8,33 @@ import {
   toggleChannelSubscription,
   formatTimeAgo
 } from './firebaseService';
-// 🟢 從你的 mockShite 同時引入留言、影片，以及隨機簡介產生器
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
-// 💡 引入 Firebase Firestore 核心元件來處理評論與使用者資料
 import { db } from './firebase'; 
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 
-// 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
+
+// 🟢 【統一的頭貼管理函數】改一個地方，所有地方同步更新
+const getUnifiedAvatar = (channelName, fallbackAvatar) => {
+  if (channelName === '小葉') return avatarImage;
+  return fallbackAvatar || GUEST_AVATAR;
+};
+
 const generateRandomAvatar = () => {
   const seed = crypto.randomUUID();
-
   return `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}`;
 };
-// 🟢 整合版：建立新訪客識別碼（統一用 ID 做為唯一綁定）
-  const generateRandomIdentity = () => {
+
+const generateRandomIdentity = () => {
     const randomChineseName = getRandomUsername();
     const randomNum = Math.floor(1000 + Math.random() * 9000);
-    
     const uniqueChineseName = `${randomChineseName}_${randomNum}`; 
-    // 🎯 產生一組長度固定的用戶專屬隨機 ID (例: user_ab12)
     const randomHex = Math.random().toString(16).substring(2, 6); 
     const uniqueId = `user_${randomHex}`;
-
     return { name: uniqueChineseName, id: uniqueId };
-  };
+};
 
 function extractYoutubeId(url) {
   if (!url) return '';
@@ -672,7 +671,11 @@ export default function App() {
     const startTime = Date.now();
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
-
+    const getUnifiedAvatar = (channelName, avatar, isCurrentUser = false) => {
+      if (isCurrentUser) return avatar;
+      if (channelName === '小葉') return avatarImage;
+      return avatar || GUEST_AVATAR;
+    };
     // 1. 小葉官方帳號固定設定
     if (finalName === '小葉') {
       const shiauyeChannel = {
@@ -1125,32 +1128,76 @@ export default function App() {
             <span className="plus-icon">+</span> 新增影片
           </button>
 
-          <div className="avatar-container" ref={profileMenuRef}>
-            <img 
-              src={previewAvatar} alt="Avatar" className="avatar" 
-              onClick={() => setIsProfileOpen(!isProfileOpen)} style={{ cursor: 'pointer' }}
+          <div
+            className="avatar-container"
+            ref={profileMenuRef}
+          >
+            <img
+              src={currentUserAvatar}
+              alt={localUsername}
+              className="avatar"
+              onClick={() =>
+                setIsProfileOpen(prev => !prev)
+              }
+              style={{ cursor: 'pointer' }}
+              onError={e => {
+                e.currentTarget.src =
+                  GUEST_AVATAR;
+              }}
             />
+
             {isProfileOpen && (
               <div className="profile-dropdown-menu">
                 <div className="dropdown-user-info">
-                  <img src={currentUserAvatar} alt="Avatar Large" className="dropdown-avatar-large" />
+                  <img
+                    src={currentUserAvatar}
+                    alt="Avatar Large"
+                    className="dropdown-avatar-large"
+                  />
+
                   <div>
-                    <div className="dropdown-username">{localUsername}</div>
-                    <div className="dropdown-email">@{currentUserId}</div>
+                    <div className="dropdown-username">
+                      {localUsername}
+                    </div>
+
+                    <div className="dropdown-email">
+                      @{currentUserId}
+                    </div>
                   </div>
                 </div>
+
                 <hr className="dropdown-divider" />
+
                 <div className="dropdown-links">
-                  <button className="dropdown-item-btn" onClick={handleMyChannelClick}>👤 我的頻道</button>
-                  <button className="dropdown-item-btn" onClick={() => {
-                    setInputUsername(localUsername);
-                    setPreviewAvatar(currentUserAvatar);
-                    setIsSettingsModalOpen(true);
-                    setIsProfileOpen(false);
-                  }}>
+                  <button
+                    className="dropdown-item-btn"
+                    onClick={handleMyChannelClick}
+                  >
+                    👤 我的頻道
+                  </button>
+
+                  <button
+                    className="dropdown-item-btn"
+                    onClick={() => {
+                      setInputUsername(
+                        localUsername
+                      );
+                      setPreviewAvatar(
+                        currentUserAvatar
+                      );
+                      setIsSettingsModalOpen(
+                        true
+                      );
+                      setIsProfileOpen(false);
+                    }}
+                  >
                     ⚙️ 帳號設定
                   </button>
-                  <button className="dropdown-item-btn" onClick={handleRandomizeUser}>
+
+                  <button
+                    className="dropdown-item-btn"
+                    onClick={handleRandomizeUser}
+                  >
                     🚪 隨機換帳號登出
                   </button>
                 </div>
@@ -1818,13 +1865,14 @@ export default function App() {
               >
                 <img
                   src={currentUserAvatar}
-                  alt="使用者頭像"
-                  style={{
-                    width: '90px',
-                    height: '90px',
-                    borderRadius: '50%',
-                    border: '2px solid #333',
-                    background: '#222'
+                  alt={localUsername}
+                  className="w-9 h-9 rounded-full object-cover cursor-pointer"
+                  onClick={() =>
+                    setIsProfileOpen(prev => !prev)
+                  }
+                  onError={e => {
+                    e.currentTarget.src =
+                      GUEST_AVATAR;
                   }}
                 />
 
