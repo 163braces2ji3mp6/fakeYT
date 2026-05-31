@@ -383,12 +383,10 @@ export default function App() {
     return () => unsubscribe();
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
-  // 🟢 整合進階版：改名成功的瞬間，立刻回頭清空無影片的舊名字文件
   const handleUpdateUsernameSubmit = async (e) => {
     e.preventDefault();
     if (!inputUsername.trim()) return;
 
-    // 💾 先把改名之前的「舊名字」記錄下來
     const oldUsername = localUsername; 
     const newUsername = inputUsername.trim();
 
@@ -398,48 +396,34 @@ export default function App() {
     }
 
     try {
-      // 1. 更新自己固定 ID 文件裡面的名字
-      const userDocRef = doc(db, 'Channels', currentUserId);
-      await updateDoc(userDocRef, {
-        channelName: newUsername
+      // 1. 先抓出舊中文檔案裡的資料（例如訂閱數等等）
+      const oldDocRef = doc(db, 'Channels', oldUsername);
+      const oldDocSnap = await getDoc(oldDocRef);
+      let currentSubCount = 0;
+
+      if (oldDocSnap.exists()) {
+        currentSubCount = oldDocSnap.data().subscriberCount || 0;
+        // 2. 刪除舊的中文檔名檔案
+        await deleteDoc(oldDocRef);
+      }
+
+      // 3. 用「新中文名字」當作文件 ID，建立全新的漂亮檔案，並把舊訂閱數無縫搬過來！
+      const newDocRef = doc(db, 'Channels', newUsername);
+      await setDoc(newDocRef, {
+        channelName: newUsername,
+        avatar: GUEST_AVATAR,
+        userId: currentUserId,
+        subscriberCount: currentSubCount, // 訂閱數完美繼承！
+        createdAt: new Date().toISOString()
       });
 
-      // 同步更新本機狀態與關閉視窗
+      // 同步網頁狀態
       setLocalUsername(newUsername);
       setIsSettingsModalOpen(false);
-      alert('帳號名稱已成功更新！');
-
-      // 🧹 2. 【核心大掃除】：回頭去查剛剛被你拋棄的 oldUsername
-      // 這裡要檢查這個舊名字文件是不是跟你本人固定 ID（currentUserId）同名，如果不同，代表它是以名字命名的舊殘留文件
-      if (oldUsername !== currentUserId) {
-        // 去 Videos 集合查看看，有沒有屬於這個舊名字的影片
-        const videoQuery = query(collection(db, 'Videos'), where('creatorName', '==', oldUsername));
-        const videoSnapshot = await getDocs(videoQuery);
-
-        // 如果這個舊名字文件在影片庫裡一部影片都沒有，代表它是改名留下的垃圾空殼
-        if (videoSnapshot.empty) {
-          console.log(`🧹 [自動清理] 偵測到改名後留下的無影片舊空殼 [${oldUsername}]，正在執行刪除...`);
-          // 直接用舊名字當作文件 ID 去 Channels 集合刪除它！
-          await deleteDoc(doc(db, 'Channels', oldUsername));
-        }
-      }
+      alert('帳號名稱已成功變更，資料庫檔案已同步更新為中文檔名！');
 
     } catch (err) {
-      console.error("更新 Channels 集合名稱或清理舊帳號失敗:", err);
-      // 防呆：如果 Channels 裡連你自己的固定 ID 文件都沒有，直接幫你補創一個
-      try {
-        await setDoc(doc(db, 'Channels', currentUserId), {
-          channelName: newUsername,
-          avatar: GUEST_AVATAR,
-          userId: currentUserId,
-          subscriberCount: 0,
-          createdAt: new Date().toISOString()
-        });
-        setLocalUsername(newUsername);
-        setIsSettingsModalOpen(false);
-      } catch (innerErr) {
-        console.error("補創自身頻道文件失敗:", innerErr);
-      }
+      console.error("改名並搬移中文檔案失敗:", err);
     }
   };
 
@@ -519,11 +503,10 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 終極治本版：內建「全自動空殼清道夫」，只要是無影片的舊殘留文件一律秒殺
+  // 🟢 中文檔名完美版：統一用中文帳號名稱當作 Firebase 的文件 ID
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
-    // 1. 秒切換，立刻跑載入轉圈圈
     setIsChannelLoading(true); 
     setCurrentView('channel');
     setChannelTab('videos');
@@ -533,7 +516,7 @@ export default function App() {
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
 
-    // 如果是官方帳號小葉，給固定專屬設定
+    // 1. 小葉官方帳號固定設定
     if (finalName === '小葉') {
       const shiauyeChannel = {
         name: '小葉',
@@ -555,79 +538,36 @@ export default function App() {
     let finalId = '';
 
     try {
-      // 🧹 【第一步：超級全自動清道夫】—— 乾淨度強迫症專用
-      // 先不管我們要去哪，先把 Channels 集合裡「所有文件」都抓出來檢查一次
-      const allChannelsSnap = await getDocs(collection(db, 'Channels'));
-      
-      for (const channelDoc of allChannelsSnap.docs) {
-        const cData = channelDoc.data();
-        const cDocId = channelDoc.id;
-        const cName = cData.channelName;
-
-        // 條件：只要這個文件「不是我目前的固定主鍵 (currentUserId)」
-        // 且「它的名字不是我現在的新名字 (localUsername)」
-        if (cDocId !== currentUserId && cName !== localUsername && cDocId !== '小葉') {
-          // 去查看看這筆舊紀錄有沒有任何影片
-          const checkVideoQ = query(collection(db, 'Videos'), where('creatorName', '==', cName));
-          const checkVideoSnap = await getDocs(checkVideoQ);
-
-          // 🛑 抓到了！這是一個沒有任何影片的過期垃圾空殼（包含你改名以前留下的所有舊名字）
-          if (checkVideoSnap.empty) {
-            console.log(`🧹 [清道夫自動啟動] 拔除無影片舊殘留文件: ${cDocId} (名稱: ${cName})`);
-            await deleteDoc(doc(db, 'Channels', cDocId)); // 💥 連根拔除，絕不留情！
-          }
-        }
-      }
-
-      // 🎯 【第二步：回歸正常頻道定位與建立邏輯】
       const isMyOwnChannel = (finalName === localUsername);
 
-      if (isMyOwnChannel) {
-        // 如果是自己，直接用固定不變的 currentUserId 當 Doc ID
-        const docRef = doc(db, 'Channels', currentUserId);
-        const docSnap = await getDoc(docRef);
+      // 🎯 核心修正：不管是自己還是別人，統一用「中文名字 (finalName)」直接當作文件 ID 去尋找！
+      const docRef = doc(db, 'Channels', finalName);
+      const docSnap = await getDoc(docRef);
 
-        if (docSnap.exists()) {
-          const channelData = docSnap.data();
-          finalId = channelData.userId || currentUserId;
-          if (channelData.channelName !== finalName) {
-            await updateDoc(docRef, { channelName: finalName });
-          }
-        } else {
-          finalId = currentUserId;
-          await setDoc(docRef, {
-            channelName: finalName,
-            avatar: finalAvatar,
-            userId: finalId,
-            subscriberCount: 0,
-            createdAt: new Date().toISOString()
-          });
-        }
+      if (docSnap.exists()) {
+        // 👍 如果文件已經存在，直接讀取裡面的資料
+        const channelData = docSnap.data();
+        finalId = channelData.userId || `user_${Math.random().toString(16).substring(2, 6)}`;
       } else {
-        // 🔹 點擊別人的頻道：用名字去搜尋 Channels 集合
-        const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          const channelDoc = querySnapshot.docs[0];
-          const channelData = channelDoc.data();
-          finalId = channelData.userId || channelDoc.id;
+        // 🆕 如果不存在（全新帳號或別人新頻道），直接用中文名字建立文件，配給他一組背景識別 ID
+        if (isMyOwnChannel) {
+          finalId = currentUserId; // 自己的話維持你原本的 currentUserId 確保前後一致
         } else {
-          // 完全沒有這個人的頻道，幫他建立新文件（分配隨機 ID）
-          const randomHex = Math.random().toString(16).substring(2, 6); 
-          finalId = `user_${randomHex}`;
-          await setDoc(doc(db, 'Channels', finalName), {
-            channelName: finalName,
-            avatar: finalAvatar,
-            userId: finalId,
-            subscriberCount: 0,
-            createdAt: new Date().toISOString()
-          });
+          finalId = `user_${Math.random().toString(16).substring(2, 6)}`;
         }
+
+        await setDoc(docRef, {
+          channelName: finalName,
+          avatar: finalAvatar,
+          userId: finalId,
+          subscriberCount: 0,
+          createdAt: new Date().toISOString()
+        });
+        console.log(`✨ [新建成功] 已成功建立中文文件名檔案：Channels/${finalName}`);
       }
 
     } catch (err) {
-      console.error("Firebase 核心資料處理或清理失敗:", err);
+      console.error("Firebase Channels 讀取或寫入失敗:", err);
       const suffix = finalName.split('_')[1] || 'temp';
       finalId = `user_${suffix}`;
     }
