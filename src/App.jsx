@@ -383,39 +383,62 @@ export default function App() {
     return () => unsubscribe();
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
-  // 🟢 整合版：更換名稱表單送出
+  // 🟢 整合進階版：改名成功的瞬間，立刻回頭清空無影片的舊名字文件
   const handleUpdateUsernameSubmit = async (e) => {
     e.preventDefault();
     if (!inputUsername.trim()) return;
 
+    // 💾 先把改名之前的「舊名字」記錄下來
+    const oldUsername = localUsername; 
+    const newUsername = inputUsername.trim();
+
+    if (oldUsername === newUsername) {
+      setIsSettingsModalOpen(false);
+      return;
+    }
+
     try {
-      // 🎯 核心整合點：直接拿固定的 currentUserId 去 Channels 集合修改裡面的名字！
+      // 1. 更新自己固定 ID 文件裡面的名字
       const userDocRef = doc(db, 'Channels', currentUserId);
-      
-      // 使用 updateDoc 只局部更新 channelName 欄位，原本的訂閱數、ID 等全部完好如初
       await updateDoc(userDocRef, {
-        channelName: inputUsername.trim()
+        channelName: newUsername
       });
 
       // 同步更新本機狀態與關閉視窗
-      setLocalUsername(inputUsername.trim());
+      setLocalUsername(newUsername);
       setIsSettingsModalOpen(false);
-      alert('帳號名稱已成功同步更新至頻道資料！');
+      alert('帳號名稱已成功更新！');
+
+      // 🧹 2. 【核心大掃除】：回頭去查剛剛被你拋棄的 oldUsername
+      // 這裡要檢查這個舊名字文件是不是跟你本人固定 ID（currentUserId）同名，如果不同，代表它是以名字命名的舊殘留文件
+      if (oldUsername !== currentUserId) {
+        // 去 Videos 集合查看看，有沒有屬於這個舊名字的影片
+        const videoQuery = query(collection(db, 'Videos'), where('creatorName', '==', oldUsername));
+        const videoSnapshot = await getDocs(videoQuery);
+
+        // 如果這個舊名字文件在影片庫裡一部影片都沒有，代表它是改名留下的垃圾空殼
+        if (videoSnapshot.empty) {
+          console.log(`🧹 [自動清理] 偵測到改名後留下的無影片舊空殼 [${oldUsername}]，正在執行刪除...`);
+          // 直接用舊名字當作文件 ID 去 Channels 集合刪除它！
+          await deleteDoc(doc(db, 'Channels', oldUsername));
+        }
+      }
+
     } catch (err) {
-      console.error("更新 Channels 集合名稱失敗:", err);
-      // 防呆：如果該用戶在 Channels 還沒有任何文件，直接幫他補創
+      console.error("更新 Channels 集合名稱或清理舊帳號失敗:", err);
+      // 防呆：如果 Channels 裡連你自己的固定 ID 文件都沒有，直接幫你補創一個
       try {
         await setDoc(doc(db, 'Channels', currentUserId), {
-          channelName: inputUsername.trim(),
+          channelName: newUsername,
           avatar: GUEST_AVATAR,
           userId: currentUserId,
           subscriberCount: 0,
           createdAt: new Date().toISOString()
         });
-        setLocalUsername(inputUsername.trim());
+        setLocalUsername(newUsername);
         setIsSettingsModalOpen(false);
       } catch (innerErr) {
-        console.error("補創頻道文件失敗:", innerErr);
+        console.error("補創自身頻道文件失敗:", innerErr);
       }
     }
   };
@@ -496,7 +519,7 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 整合優化版：支援自動刪除無影片的舊重複頻道
+  // 🟢 整合優化版：支援自動刪除無影片的舊重複頻道（修復不刪除問題）
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
@@ -569,7 +592,6 @@ export default function App() {
           finalId = channelData.userId || channelDocId;
 
           // 🎯 核心加強：檢查這個舊帳號/別人帳號有沒有發過任何影片！
-          // 去 Videos 集合裡，查詢 creatorName 等於這個頻道名稱的影片數量
           const videoQuery = query(collection(db, 'Videos'), where('creatorName', '==', finalName));
           const videoSnapshot = await getDocs(videoQuery);
 
@@ -579,7 +601,7 @@ export default function App() {
             console.log(`🧹 偵測到無影片的舊空殼頻道 [${finalName}]，正在自動執行清理...`);
             await deleteDoc(doc(db, 'Channels', channelDocId));
             
-            // 既然舊的刪除了，就當作全新頻道重新初始化，避免網頁壞掉
+            // ✨ 核心修正：舊的被刪除了，重新初始化一個完全乾淨的新渠道 ID 分配給它
             const randomHex = Math.random().toString(16).substring(2, 6); 
             finalId = `user_${randomHex}`;
             await setDoc(doc(db, 'Channels', finalName), {
@@ -589,6 +611,7 @@ export default function App() {
               subscriberCount: 0,
               createdAt: new Date().toISOString()
             });
+            console.log(`✨ [清理完成] 舊殼已拔除，新頻道 [${finalName}] 重新綁定 ID: ${finalId}`);
           }
         } else {
           // 完全沒有這個人的頻道，幫他建立新文件
