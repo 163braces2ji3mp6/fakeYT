@@ -1120,55 +1120,101 @@ export default function App() {
   };
 
   const handleAddComment = async (e) => {
-  e.preventDefault();
+      e.preventDefault();
 
-  const textToSend = newCommentInput.trim();
-  if (!textToSend || !selectedVideo?.id) return;
+      const textToSend = newCommentInput.trim();
+      if (!textToSend || !selectedVideo?.id) return;
 
-  const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${Date.now()}`;
 
-  setOptimisticComments(prev => [
-    {
-      id: tempId,
-      videoId: selectedVideo.id,
-      author: localUsername,
-      avatar: unifiedAvatar,
-      text: textToSend,
-      likes: 0,
-      replyCount: 0,
-      isPending: true,
-      createdAt: new Date().toISOString()
-    },
-    ...prev
-  ]);
+      setOptimisticComments(prev => [
+        {
+          id: tempId,
+          videoId: selectedVideo.id,
+          author: localUsername,
+          avatar: unifiedAvatar,
+          text: textToSend,
+          likes: 0,
+          replyCount: 0,
+          isPending: true,
+          createdAt: new Date().toISOString()
+        },
+        ...prev
+      ]);
 
-  setNewCommentInput('');
+      setNewCommentInput('');
 
-  try {
-    await addDoc(collection(db, 'comments'), {
-      videoId: selectedVideo.id,
-      author: localUsername,
-      avatar: unifiedAvatar,
-      text: textToSend,
-      likes: 0,
-      replyCount: 0,
-      createdAt: new Date().toISOString()
-    });
+      try {
+        await addDoc(collection(db, 'comments'), {
+          videoId: selectedVideo.id,
+          author: localUsername,
+          avatar: unifiedAvatar,
+          text: textToSend,
+          likes: 0,
+          replyCount: 0,
+          createdAt: new Date().toISOString()
+        });
 
-    // Firebase 成功後移除暫存
-    setOptimisticComments(prev =>
-      prev.filter(item => item.id !== tempId)
-    );
-  } catch (error) {
-    console.error("發布評論到 Firebase 失敗：", error);
+        // Firebase 成功後移除暫存
+        setOptimisticComments(prev =>
+          prev.filter(item => item.id !== tempId)
+        );
+      } catch (error) {
+        console.error("發布評論到 Firebase 失敗：", error);
 
-    setOptimisticComments(prev =>
-      prev.filter(item => item.id !== tempId)
-    );
+        setOptimisticComments(prev =>
+          prev.filter(item => item.id !== tempId)
+        );
 
-    showToast("留言發布失敗，請檢查網路連線！", "error");
-  }
-};
+        showToast("留言發布失敗，請檢查網路連線！", "error");
+      }
+    };
+
+    const syncAvatarToFirebase = async (newAvatar) => {
+    if (!currentUserId) return;
+
+    // comments
+    const commentsSnapshot = await getDocs(collection(db, 'comments'));
+
+    for (const docSnap of commentsSnapshot.docs) {
+      const data = docSnap.data();
+
+      if (
+        data.userId === currentUserId ||
+        data.author === localUsername
+      ) {
+        await setDoc(
+          doc(db, 'comments', docSnap.id),
+          {
+            ...data,
+            avatar: newAvatar
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    // replies
+    const repliesSnapshot = await getDocs(collection(db, 'replies'));
+
+    for (const docSnap of repliesSnapshot.docs) {
+      const data = docSnap.data();
+
+      if (
+        data.userId === currentUserId ||
+        data.author === localUsername
+      ) {
+        await setDoc(
+          doc(db, 'replies', docSnap.id),
+          {
+            ...data,
+            avatar: newAvatar
+          },
+          { merge: true }
+        );
+      }
+    }
+  };
 
   const fetchVideoDuration = (ytId) => {
     return new Promise((resolve) => {
