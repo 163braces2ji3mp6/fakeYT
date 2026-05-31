@@ -1225,6 +1225,28 @@ export default function App() {
         );
       }
     }
+    // videos
+    const videosSnapshot = await getDocs(collection(db, 'videos'));
+
+    for (const docSnap of videosSnapshot.docs) {
+      const data = docSnap.data();
+
+      if (
+        data.userId === currentUserId ||
+        data.author === localUsername ||
+        data.channel === localUsername
+      ) {
+        await setDoc(
+          doc(db, 'videos', docSnap.id),
+          {
+            ...data,
+            avatar: newAvatar,
+            creatorAvatar: newAvatar
+          },
+          { merge: true }
+        );
+      }
+    }
   };
 
   const fetchVideoDuration = (ytId) => {
