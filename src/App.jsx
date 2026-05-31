@@ -148,6 +148,33 @@ function formatSubscribers(count) {
 }
 
 export default function App() {
+  const [toast, setToast] = useState({
+    show: false,
+    message: '',
+    type: 'success'
+  });
+
+  const toastTimeoutRef = useRef(null);
+
+  const showToast = (message, type = 'success') => {
+
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+
+    setToast({
+      show: true,
+      message,
+      type
+    });
+
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(prev => ({
+        ...prev,
+        show: false
+      }));
+    }, 3000);
+  };
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   const bufferTimeoutRef = useRef(null); 
   const [currentView, setCurrentView] = useState(() => {
@@ -408,7 +435,7 @@ export default function App() {
       // 同步網頁狀態
       setLocalUsername(newUsername);
       setIsSettingsModalOpen(false);
-      alert('帳號名稱已成功變更，資料庫檔案已同步更新為中文檔名！');
+      showToast('帳號名稱已成功變更，資料庫檔案已同步更新為中文檔名！');
 
     } catch (err) {
       console.error("改名並搬移中文檔案失敗:", err);
@@ -427,7 +454,7 @@ export default function App() {
     localStorage.setItem('device_user_id', randomUser.id);
     
     setIsProfileOpen(false); 
-    alert(`已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`);
+    showToast(`已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`);
   };
 
   useEffect(() => {
@@ -782,7 +809,7 @@ export default function App() {
     } catch (error) {
       console.error("發布回覆失敗:", error);
       setOptimisticReplies(prev => prev.filter(item => item.id !== tempReplyId));
-      alert("回覆雲端儲存失敗！");
+      showToast("回覆雲端儲存失敗！", "error");
     }
   };
 
@@ -819,7 +846,7 @@ export default function App() {
     } catch (error) {
       console.error("發布評論到 Firebase 失敗：", error);
       setOptimisticComments(prev => prev.filter(item => item.id !== temporaryLocalComment.id));
-      alert("留言發布失敗，請檢查網路連線！");
+      showToast("留言發布失敗，請檢查網路連線！", "error");
     }
   };
 
@@ -837,7 +864,7 @@ export default function App() {
     const ytId = extractYoutubeId(newVideoUrl);
 
     if (!newVideoTitle.trim() || !ytId) {
-      alert('請輸入完整資訊！');
+      showToast('請輸入完整資訊！');
       return;
     }
 
@@ -869,10 +896,10 @@ export default function App() {
       setSearchQuery('');
       setActiveCategory('全部');
       setCurrentView('home');
-      alert("上傳成功！");
+      showToast("上傳成功！", "success");
     } catch (error) {
       console.error("上傳失敗：", error);
-      alert("上傳失敗，請稍後再試！");
+      showToast("上傳失敗，請稍後再試！", "error");
     } finally {
       setIsAnalyzing(false); 
     }
@@ -917,7 +944,10 @@ export default function App() {
               if (currentView !== 'watch') setCurrentView('home');
             }}
           />
-          <button className="search-btn" onClick={() => alert(`正在搜尋: ${searchQuery}`)}>
+          <button
+            className="search-btn"
+            onClick={() => showToast(`正在搜尋：${searchQuery}`, 'info')}
+          >
             <svg viewBox="0 0 24 24" className="search-icon-svg">
               <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path>
             </svg>
@@ -1494,6 +1524,18 @@ export default function App() {
               </>
             )
           )}
+          {toast.show && (
+            <div className={`toast-notification ${toast.type}`}>
+              <span className="toast-icon">
+                {toast.type === 'success' && '✓'}
+                {toast.type === 'error' && '✕'}
+                {toast.type === 'warning' && '⚠'}
+                {toast.type === 'info' && 'ℹ'}
+              </span>
+                    
+              <span>{toast.message}</span>
+            </div>
+          )}
         </main>
       </div>
 
@@ -1525,7 +1567,7 @@ export default function App() {
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
                 <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
-                  {isAnalyzing ? '⚡ 正在解析影片結構...' : '確認上傳'}
+                  {isAnalyzing ? '上傳中...' : '確認上傳'}
                 </button>
               </div>
             </form>

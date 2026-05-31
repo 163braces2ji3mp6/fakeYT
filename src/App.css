@@ -1138,3 +1138,70 @@ html, body {
   transform: translateY(-0.5px); 
   margin-right: -1px;
 }
+
+/* =========================
+   Toast 通知系統
+========================= */
+
+.toast-notification {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  min-width: 260px;
+  max-width: 420px;
+
+  padding: 14px 18px;
+
+  background: #ffffff;
+  color: #111111;
+
+  border-radius: 14px;
+
+  box-shadow:
+    0 10px 30px rgba(0,0,0,.18);
+
+  z-index: 999999;
+
+  font-size: 14px;
+  font-weight: 500;
+
+  animation: toastSlideIn .25s ease;
+}
+
+.toast-icon {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.toast-notification.success {
+  border-left: 4px solid #22c55e;
+}
+
+.toast-notification.error {
+  border-left: 4px solid #ef4444;
+}
+
+.toast-notification.warning {
+  border-left: 4px solid #f59e0b;
+}
+
+.toast-notification.info {
+  border-left: 4px solid #3b82f6;
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
