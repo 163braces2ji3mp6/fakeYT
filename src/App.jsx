@@ -157,6 +157,33 @@ export default function App() {
     message: '',
     type: 'success'
   });
+  const migrateChannelAvatars = async () => {
+  try {
+    const snapshot = await getDocs(
+      collection(db, 'Channels')
+    );
+
+    for (const channelDoc of snapshot.docs) {
+      const data = channelDoc.data();
+
+      // 沒有 avatar 才補
+      if (!data.avatar) {
+        await updateDoc(
+          doc(db, 'Channels', channelDoc.id),
+          {
+            avatar: generateRandomAvatar()
+            // 或 GUEST_AVATAR
+          }
+        );
+      }
+    }
+
+    showToast('舊帳號頭貼已補齊');
+  } catch (err) {
+    console.error(err);
+    showToast('補頭貼失敗', 'error');
+  }
+};
 
   const toastTimeoutRef = useRef(null);
 
@@ -1029,6 +1056,7 @@ export default function App() {
   return (
     <div>
       {/* 頂部導覽列 */}
+      
       <nav className="navbar">
         <div className="logo-hub-style" onClick={() => {
           handleHomeNavigation();
@@ -1037,7 +1065,6 @@ export default function App() {
           <span className="logo-text-white">Leaf</span>
           <span className="logo-badge-orange">hub</span>
         </div>
-
         <div className="search-bar">
           <input 
             type="text" 
