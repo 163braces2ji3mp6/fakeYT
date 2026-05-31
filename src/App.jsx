@@ -13,7 +13,7 @@ import {
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論與使用者資料
 import { db } from './firebase'; 
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 
@@ -496,7 +496,7 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 整合版：防閃爍與頻道資料一體化（只讀寫 Channels 集合）
+  // 🟢 整合優化版：支援自動刪除無影片的舊重複頻道
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
@@ -533,10 +533,10 @@ export default function App() {
     try {
       const isMyOwnChannel = (finalName === localUsername);
 
-      // 🎯 核心整合點：如果是自己，直接用 currentUserId 去 Channels 找對應的文件
+      // 🎯 核心整合點：如果是自己，直接用固定不變的 currentUserId 去 Channels 找文件
       if (isMyOwnChannel) {
         const docRef = doc(db, 'Channels', currentUserId);
-        const docSnap = await getDoc(docRef); // 💡 確保頂部有引入 getDoc
+        const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
           const channelData = docSnap.data();
@@ -547,7 +547,7 @@ export default function App() {
             await updateDoc(docRef, { channelName: finalName });
           }
         } else {
-          // 第一次登入建立，直接用 currentUserId 當作文件 ID，資料一次給齊！
+          // 第一次登入建立，用 currentUserId 當 Doc ID
           finalId = currentUserId;
           await setDoc(docRef, {
             channelName: finalName,
@@ -558,16 +558,40 @@ export default function App() {
           });
         }
       } else {
-        // 🔹 點擊別人的頻道：使用 channelName 去搜尋 Channels 集合
+        // 🔹 點擊別人的頻道（或是別人留下的舊名字文件）：使用 channelName 去搜尋
         const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
         const querySnapshot = await getDocs(q);
         
         if (!querySnapshot.empty) {
           const channelDoc = querySnapshot.docs[0];
           const channelData = channelDoc.data();
-          finalId = channelData.userId || channelDoc.id;
+          const channelDocId = channelDoc.id; // 這有可能是舊名字字串
+          finalId = channelData.userId || channelDocId;
+
+          // 🎯 核心加強：檢查這個舊帳號/別人帳號有沒有發過任何影片！
+          // 去 Videos 集合裡，查詢 creatorName 等於這個頻道名稱的影片數量
+          const videoQuery = query(collection(db, 'Videos'), where('creatorName', '==', finalName));
+          const videoSnapshot = await getDocs(videoQuery);
+
+          // 🛑 條件滿足：如果這個頻道不是你本人（channelDocId 不等於你的 currentUserId）
+          // 且它在資料庫裡「完全沒有任何影片」，我們就判定它是改名留下的垃圾空殼，直接刪除！
+          if (channelDocId !== currentUserId && videoSnapshot.empty) {
+            console.log(`🧹 偵測到無影片的舊空殼頻道 [${finalName}]，正在自動執行清理...`);
+            await deleteDoc(doc(db, 'Channels', channelDocId));
+            
+            // 既然舊的刪除了，就當作全新頻道重新初始化，避免網頁壞掉
+            const randomHex = Math.random().toString(16).substring(2, 6); 
+            finalId = `user_${randomHex}`;
+            await setDoc(doc(db, 'Channels', finalName), {
+              channelName: finalName,
+              avatar: finalAvatar,
+              userId: finalId,
+              subscriberCount: 0,
+              createdAt: new Date().toISOString()
+            });
+          }
         } else {
-          // 完全沒有這個人的頻道，幫他建立新文件（用名字當 Doc ID）
+          // 完全沒有這個人的頻道，幫他建立新文件
           const randomHex = Math.random().toString(16).substring(2, 6); 
           finalId = `user_${randomHex}`;
           await setDoc(doc(db, 'Channels', finalName), {
@@ -581,7 +605,7 @@ export default function App() {
       }
 
     } catch (err) {
-      console.error("Firebase Channels 讀取或寫入失敗:", err);
+      console.error("Firebase Channels 讀取、寫入或清理失敗:", err);
       const suffix = finalName.split('_')[1] || 'temp';
       finalId = `user_${suffix}`;
     }
