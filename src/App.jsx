@@ -631,6 +631,65 @@ export default function App() {
       });
     }
   }, [currentUserAvatar]);
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    // 更新首頁影片
+    setVideos(prev =>
+      prev.map(video =>
+        video.userId === currentUserId
+          ? { ...video, avatar: currentUserAvatar }
+          : video
+      )
+    );
+
+    // 更新目前觀看影片
+    setSelectedVideo(prev =>
+      prev && prev.userId === currentUserId
+        ? { ...prev, avatar: currentUserAvatar }
+        : prev
+    );
+
+    // 更新頻道頁
+    setTargetChannel(prev =>
+      prev && prev.name === localUsername
+        ? { ...prev, avatar: currentUserAvatar }
+        : prev
+    );
+
+    // 更新留言
+    setComments(prev =>
+      prev.map(comment =>
+        comment.userId === currentUserId
+          ? { ...comment, avatar: currentUserAvatar }
+          : comment
+      )
+    );
+
+    // 更新回覆
+    setCommentReplies(prev => {
+      const updated = {};
+
+      Object.keys(prev || {}).forEach(key => {
+        updated[key] = prev[key].map(reply =>
+          reply.userId === currentUserId
+            ? { ...reply, avatar: currentUserAvatar }
+            : reply
+        );
+      });
+
+      return updated;
+    });
+
+    // mock 影片也一起更新
+    if (Array.isArray(MOCK_VIDEOS)) {
+      MOCK_VIDEOS.forEach(video => {
+        if (video.userId === currentUserId) {
+          video.avatar = currentUserAvatar;
+        }
+      });
+    }
+  }, [currentUserAvatar, currentUserId, localUsername]);
 
   const forceScrollToTop = () => {
     window.scrollTo(0, 0);
