@@ -519,10 +519,11 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 整合優化版：支援自動刪除無影片的舊重複頻道（修復不刪除問題）
+  // 🟢 終極治本版：內建「全自動空殼清道夫」，只要是無影片的舊殘留文件一律秒殺
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
+    // 1. 秒切換，立刻跑載入轉圈圈
     setIsChannelLoading(true); 
     setCurrentView('channel');
     setChannelTab('videos');
@@ -532,7 +533,7 @@ export default function App() {
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
 
-    // 1. 小葉官方帳號固定設定
+    // 如果是官方帳號小葉，給固定專屬設定
     if (finalName === '小葉') {
       const shiauyeChannel = {
         name: '小葉',
@@ -554,23 +555,45 @@ export default function App() {
     let finalId = '';
 
     try {
+      // 🧹 【第一步：超級全自動清道夫】—— 乾淨度強迫症專用
+      // 先不管我們要去哪，先把 Channels 集合裡「所有文件」都抓出來檢查一次
+      const allChannelsSnap = await getDocs(collection(db, 'Channels'));
+      
+      for (const channelDoc of allChannelsSnap.docs) {
+        const cData = channelDoc.data();
+        const cDocId = channelDoc.id;
+        const cName = cData.channelName;
+
+        // 條件：只要這個文件「不是我目前的固定主鍵 (currentUserId)」
+        // 且「它的名字不是我現在的新名字 (localUsername)」
+        if (cDocId !== currentUserId && cName !== localUsername && cDocId !== '小葉') {
+          // 去查看看這筆舊紀錄有沒有任何影片
+          const checkVideoQ = query(collection(db, 'Videos'), where('creatorName', '==', cName));
+          const checkVideoSnap = await getDocs(checkVideoQ);
+
+          // 🛑 抓到了！這是一個沒有任何影片的過期垃圾空殼（包含你改名以前留下的所有舊名字）
+          if (checkVideoSnap.empty) {
+            console.log(`🧹 [清道夫自動啟動] 拔除無影片舊殘留文件: ${cDocId} (名稱: ${cName})`);
+            await deleteDoc(doc(db, 'Channels', cDocId)); // 💥 連根拔除，絕不留情！
+          }
+        }
+      }
+
+      // 🎯 【第二步：回歸正常頻道定位與建立邏輯】
       const isMyOwnChannel = (finalName === localUsername);
 
-      // 🎯 核心整合點：如果是自己，直接用固定不變的 currentUserId 去 Channels 找文件
       if (isMyOwnChannel) {
+        // 如果是自己，直接用固定不變的 currentUserId 當 Doc ID
         const docRef = doc(db, 'Channels', currentUserId);
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
           const channelData = docSnap.data();
           finalId = channelData.userId || currentUserId;
-          
-          // 如果資料庫內的名字跟現在 local 的不一樣（可能剛改名），自動覆蓋更新
           if (channelData.channelName !== finalName) {
             await updateDoc(docRef, { channelName: finalName });
           }
         } else {
-          // 第一次登入建立，用 currentUserId 當 Doc ID
           finalId = currentUserId;
           await setDoc(docRef, {
             channelName: finalName,
@@ -581,40 +604,16 @@ export default function App() {
           });
         }
       } else {
-        // 🔹 點擊別人的頻道（或是別人留下的舊名字文件）：使用 channelName 去搜尋
+        // 🔹 點擊別人的頻道：用名字去搜尋 Channels 集合
         const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
         const querySnapshot = await getDocs(q);
         
         if (!querySnapshot.empty) {
           const channelDoc = querySnapshot.docs[0];
           const channelData = channelDoc.data();
-          const channelDocId = channelDoc.id; // 這有可能是舊名字字串
-          finalId = channelData.userId || channelDocId;
-
-          // 🎯 核心加強：檢查這個舊帳號/別人帳號有沒有發過任何影片！
-          const videoQuery = query(collection(db, 'Videos'), where('creatorName', '==', finalName));
-          const videoSnapshot = await getDocs(videoQuery);
-
-          // 🛑 條件滿足：如果這個頻道不是你本人（channelDocId 不等於你的 currentUserId）
-          // 且它在資料庫裡「完全沒有任何影片」，我們就判定它是改名留下的垃圾空殼，直接刪除！
-          if (channelDocId !== currentUserId && videoSnapshot.empty) {
-            console.log(`🧹 偵測到無影片的舊空殼頻道 [${finalName}]，正在自動執行清理...`);
-            await deleteDoc(doc(db, 'Channels', channelDocId));
-            
-            // ✨ 核心修正：舊的被刪除了，重新初始化一個完全乾淨的新渠道 ID 分配給它
-            const randomHex = Math.random().toString(16).substring(2, 6); 
-            finalId = `user_${randomHex}`;
-            await setDoc(doc(db, 'Channels', finalName), {
-              channelName: finalName,
-              avatar: finalAvatar,
-              userId: finalId,
-              subscriberCount: 0,
-              createdAt: new Date().toISOString()
-            });
-            console.log(`✨ [清理完成] 舊殼已拔除，新頻道 [${finalName}] 重新綁定 ID: ${finalId}`);
-          }
+          finalId = channelData.userId || channelDoc.id;
         } else {
-          // 完全沒有這個人的頻道，幫他建立新文件
+          // 完全沒有這個人的頻道，幫他建立新文件（分配隨機 ID）
           const randomHex = Math.random().toString(16).substring(2, 6); 
           finalId = `user_${randomHex}`;
           await setDoc(doc(db, 'Channels', finalName), {
@@ -628,7 +627,7 @@ export default function App() {
       }
 
     } catch (err) {
-      console.error("Firebase Channels 讀取、寫入或清理失敗:", err);
+      console.error("Firebase 核心資料處理或清理失敗:", err);
       const suffix = finalName.split('_')[1] || 'temp';
       finalId = `user_${suffix}`;
     }
