@@ -239,6 +239,7 @@ export default function App() {
   const [localUsername, setLocalUsername] = useState('載入中...');
   const [currentUserId, setCurrentUserId] = useState('loading...');
   const [currentUserAvatar, setCurrentUserAvatar] = useState(GUEST_AVATAR);
+  const unifiedAvatar = currentUserAvatar || GUEST_AVATAR;
 
   // 🟢 新增狀態：用來動態儲存「正在瀏覽的頻道主」的真實 Firebase 資料
   const [targetChannelUserId, setTargetChannelUserId] = useState('');
@@ -358,7 +359,7 @@ export default function App() {
 
   useEffect(() => {
     if (localUsername !== '載入中...' && (targetChannel.name === localUsername || !targetChannel.name)) {
-      setTargetChannel(prev => ({ ...prev, name: localUsername, avatar: currentUserAvatar }));
+      setTargetChannel(prev => ({ ...prev, name: localUsername, avatar: unifiedAvatar }));
     }
   }, [localUsername, currentUserAvatar]);
 
@@ -416,7 +417,7 @@ export default function App() {
   const [optimisticReplies, setOptimisticReplies] = useState([]);
   const [previewAvatar, setPreviewAvatar] = useState(currentUserAvatar);
   useEffect(() => {
-  setPreviewAvatar(currentUserAvatar);
+  setPreviewAvatar(unifiedAvatar);
   }, [currentUserAvatar]);
   const checkUsernameExists = async (username) => {
   const channelRef = doc(db, "Channels", username);
@@ -679,7 +680,7 @@ export default function App() {
     if (Array.isArray(MOCK_VIDEOS)) {
       MOCK_VIDEOS.forEach(video => {
         if (!video.avatar) {
-          video.avatar = currentUserAvatar;
+          video.avatar = unifiedAvatar;
         }
       });
     }
@@ -702,7 +703,7 @@ export default function App() {
       Array.isArray(prev)
         ? prev.map(video =>
             isCurrentUserAsset(video)
-              ? { ...video, avatar: currentUserAvatar }
+              ? { ...video, avatar: unifiedAvatar }
               : video
           )
         : prev
@@ -713,7 +714,7 @@ export default function App() {
       Array.isArray(prev)
         ? prev.map(video =>
             isCurrentUserAsset(video)
-              ? { ...video, avatar: currentUserAvatar }
+              ? { ...video, avatar: unifiedAvatar }
               : video
           )
         : prev
@@ -724,7 +725,7 @@ export default function App() {
       prev && isCurrentUserAsset(prev)
         ? {
             ...prev,
-            avatar: currentUserAvatar
+            avatar: unifiedAvatar
           }
         : prev
     );
@@ -734,7 +735,7 @@ export default function App() {
       Array.isArray(prev)
         ? prev.map(comment =>
             isCurrentUserAsset(comment)
-              ? { ...comment, avatar: currentUserAvatar }
+              ? { ...comment, avatar: unifiedAvatar }
               : comment
           )
         : prev
@@ -748,7 +749,7 @@ export default function App() {
         updated[key] = Array.isArray(prev[key])
           ? prev[key].map(reply =>
               isCurrentUserAsset(reply)
-                ? { ...reply, avatar: currentUserAvatar }
+                ? { ...reply, avatar: unifiedAvatar }
                 : reply
             )
           : prev[key];
@@ -761,7 +762,7 @@ export default function App() {
     if (Array.isArray(MOCK_VIDEOS)) {
       MOCK_VIDEOS.forEach(video => {
         if (isCurrentUserAsset(video)) {
-          video.avatar = currentUserAvatar;
+          video.avatar = unifiedAvatar;
         }
       });
     }
@@ -800,7 +801,7 @@ export default function App() {
     setIsChannelLoading(true); 
     setTargetChannel({
       name: localUsername,
-      avatar: currentUserAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
+      avatar: unifiedAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
       bio: getRandomBio() 
     });
     setCurrentView('channel'); 
@@ -1088,7 +1089,7 @@ export default function App() {
       id: tempReplyId,
       commentId: commentId,
       author: localUsername,
-      avatar: currentUserAvatar, 
+      avatar: unifiedAvatar, 
       text: replyText,
       isPending: !isMockComment, 
       createdAt: new Date().toISOString()
@@ -1104,7 +1105,7 @@ export default function App() {
       await addDoc(collection(db, 'replies'), {
         commentId: commentId,
         author: localUsername,
-        avatar: currentUserAvatar, 
+        avatar: unifiedAvatar, 
         text: replyText,
         createdAt: new Date().toISOString()
       });
@@ -1131,7 +1132,7 @@ export default function App() {
       id: tempId,
       videoId: selectedVideo.id,
       author: localUsername,
-      avatar: currentUserAvatar,
+      avatar: unifiedAvatar,
       text: textToSend,
       likes: 0,
       replyCount: 0,
@@ -1147,7 +1148,7 @@ export default function App() {
     await addDoc(collection(db, 'comments'), {
       videoId: selectedVideo.id,
       author: localUsername,
-      avatar: currentUserAvatar,
+      avatar: unifiedAvatar,
       text: textToSend,
       likes: 0,
       replyCount: 0,
@@ -1197,7 +1198,7 @@ export default function App() {
         views: 0,            
         time: "剛剛",            
         duration: finalDuration, 
-        avatar: currentUserAvatar,
+        avatar: unifiedAvatar,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
         category: newVideoCategory, 
@@ -1257,7 +1258,7 @@ export default function App() {
       isSameText(video.username, '小葉');
 
     if (isShiauyeVideo) return avatarImage;
-    if (isOwnVideo) return currentUserAvatar;
+    if (isOwnVideo) return unifiedAvatar;
     return video.avatar || video.creatorAvatar || GUEST_AVATAR;
   };
 
@@ -1360,7 +1361,7 @@ export default function App() {
             ref={profileMenuRef}
           >
             <img
-              src={currentUserAvatar}
+              src={unifiedAvatar}
               alt={localUsername}
               className="avatar"
               onClick={() =>
@@ -1377,7 +1378,7 @@ export default function App() {
               <div className="profile-dropdown-menu">
                 <div className="dropdown-user-info">
                   <img
-                    src={currentUserAvatar}
+                    src={unifiedAvatar}
                     alt="Avatar Large"
                     className="dropdown-avatar-large"
                   />
@@ -1410,7 +1411,7 @@ export default function App() {
                         localUsername
                       );
                       setPreviewAvatar(
-                        currentUserAvatar
+                        unifiedAvatar
                       );
                       setIsSettingsModalOpen(
                         true
@@ -1608,7 +1609,7 @@ export default function App() {
                         <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
                           <img src={
                             targetChannel?.name === localUsername
-                              ? currentUserAvatar
+                              ? unifiedAvatar
                               : targetChannel?.avatar
                           } alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
                           <div style={{ flex: 1 }}>
@@ -2020,7 +2021,7 @@ export default function App() {
                 }}
               >
                 <img
-                  src={currentUserAvatar}
+                  src={unifiedAvatar}
                   alt={localUsername}
                   className="w-9 h-9 rounded-full object-cover cursor-pointer"
                   onClick={() =>
