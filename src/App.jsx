@@ -35,24 +35,29 @@ const generateRandomIdentity = () => {
   return { name: uniqueChineseName, id: uniqueId };
 };
 
+// 🟢 核心修正：優化初始化邏輯，確保 ID 一旦建立就固定保存在 localStorage 
 const getInitialUserInfo = () => {
+  // 1. 優先檢查瀏覽器有沒有存過舊的身份，有的話就「百分之百沿用」，不論是不是在 localhost
   const savedName = localStorage.getItem('device_user_name');
   const savedId = localStorage.getItem('device_user_id');
 
-  const isMyDevelopDevice = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (savedName && savedId) {
+    // 如果原本存的就是小葉，頭貼就給小葉；否則給灰色頭貼
+    const avatar = (savedId === 'shiauye_official') ? avatarImage : GUEST_AVATAR;
+    return { name: savedName, id: savedId, avatar: avatar };
+  }
+
+  // 2. 如果是全新瀏覽器（沒紀錄），且網址特別指定 `?user=小葉`，才手動強制成小葉
   const urlParams = new URLSearchParams(window.location.search);
   const isForcedMe = urlParams.get('user') === '小葉';
 
-  if (isMyDevelopDevice || isForcedMe || savedName === '小葉') {
+  if (isForcedMe) {
     localStorage.setItem('device_user_name', '小葉');
     localStorage.setItem('device_user_id', 'shiauye_official'); 
     return { name: '小葉', id: 'shiauye_official', avatar: avatarImage };
   }
 
-  if (savedName && savedId) {
-    return { name: savedName, id: savedId, avatar: GUEST_AVATAR };
-  }
-
+  // 3. 真正第一次進來的普通使用者，生成終身固定的隨機名字與 ID
   const randomUser = generateRandomIdentity();
   localStorage.setItem('device_user_name', randomUser.name);
   localStorage.setItem('device_user_id', randomUser.id);
@@ -73,21 +78,18 @@ function extractYoutubeId(url) {
   return (match && match[2].length === 11) ? match[2] : '';
 }
 
-// 🟢 調整：修改主留言訂閱器，讓它在回傳留言時，順便一併監聽/撈取該影片下所有的回覆
 export function subscribeToComments(selectedVideo, setCommentsCallback, setCommentRepliesCallback) {
   if (!selectedVideo?.id) return () => {};
 
   const videoId = selectedVideo.id;
   const youtubeId = selectedVideo.youtubeId;
 
-  // 1. 監聽主留言
   const commentsQuery = query(
     collection(db, 'comments'),
     where('videoId', '==', videoId),
     orderBy('createdAt', 'desc')
   );
 
-  // 2. 建立即時同步回覆的獨立監聽器（不再依賴點開動作，直接全量監聽該影片的所有回覆）
   const repliesQuery = query(
     collection(db, 'replies')
   );
@@ -103,7 +105,6 @@ export function subscribeToComments(selectedVideo, setCommentsCallback, setComme
       }
     });
 
-    // 針對每個留言的回覆陣列進行前端時間排序
     Object.keys(allRepliesMap).forEach(cId => {
       allRepliesMap[cId].sort((a, b) => {
         const timeA = a.createdAt ? new Date(a.createdAt).getTime() : Date.now();
@@ -180,10 +181,8 @@ function formatSubscribers(count) {
 }
 
 export default function App() {
-  // 💡 用來記憶「在當前視窗中，剛剛才點擊上傳成功」的新影片物件
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
-  const bufferTimeoutRef = useRef(null); // 用來儲存計時器 ID
-  // 💡 【記憶刷新邏輯 1】：從 localStorage 恢復上次的視圖，沒紀錄則預設為 'home'
+  const bufferTimeoutRef = useRef(null); 
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
@@ -192,22 +191,18 @@ export default function App() {
     if (contentAreaRef.current) {
       contentAreaRef.current.scrollTop = 0;
     }
-  }, [currentView]); // 👈 這裡監聽了頁面變動
+  }, [currentView]); 
 
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // 💡 用於「即時輸入」的 Input 綁定值，避免打字時因直接觸發篩選而卡頓
   const [searchInputStr, setSearchInputStr] = useState('');
 
   const [videos, setVideos] = useState([]); 
   const [rawFirebaseVideos, setRawFirebaseVideos] = useState([]);
   
   const [isPageLoading, setIsPageLoading] = useState(true);
-  // 💡 用來鎖定網頁「第一次打開、且 Firebase 資料還沒回來」的初始化狀態
   const [isFirstInit, setIsFirstInit] = useState(true);
 
-  // 💡 【記憶刷新邏輯 2】：從 localStorage 恢復上次正在看的影片
   const [selectedVideo, setSelectedVideo] = useState(() => {
     const savedVideo = localStorage.getItem('leafhub_selectedVideo');
     return savedVideo ? JSON.parse(savedVideo) : null;
@@ -216,6 +211,7 @@ export default function App() {
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [isChannelLoading, setIsChannelLoading] = useState(false);
 
+  // 🟢 狀態同步：確保 React State 初始值精確綁定 userInfo 的設定
   const [localUsername, setLocalUsername] = useState(CHANNEL_NAME);
   const [currentUserId, setCurrentUserId] = useState(CHANNEL_ID);
   const [currentUserAvatar, setCurrentUserAvatar] = useState(CHANNEL_AVATAR);
@@ -225,7 +221,6 @@ export default function App() {
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
-  // 💡 【記憶刷新邏輯 3】：從 localStorage 恢復上一次點進去的頻道資料
   const [targetChannel, setTargetChannel] = useState(() => {
     const savedTarget = localStorage.getItem('leafhub_targetChannel');
     return savedTarget ? JSON.parse(savedTarget) : {
@@ -235,7 +230,6 @@ export default function App() {
     };
   });
 
-  // 💡 【記憶刷新邏輯 4】：當 currentView, selectedVideo 或 targetChannel 改變時，即時同步到 localStorage
   useEffect(() => {
     localStorage.setItem('leafhub_currentView', currentView);
   }, [currentView]);
@@ -301,24 +295,18 @@ export default function App() {
   const [optimisticComments, setOptimisticComments] = useState([]);
   const [optimisticReplies, setOptimisticReplies] = useState([]);
 
-  // 💡 【核心邏輯 1】：搜尋輸入字串的防抖 (Debounce) 機制 + BUFFER 效果
   useEffect(() => {
     if (currentView !== 'home') return;
-
-    // 只有在真的有輸入內容時，才在打字時拉起骨架屏 BUFFER，清空時則跳過
     if (searchInputStr.trim()) {
       setIsPageLoading(true);
     }
-
     const delayDebounceFn = setTimeout(() => {
       setSearchQuery(searchInputStr);
       setIsPageLoading(false);
     }, 350); 
-
     return () => clearTimeout(delayDebounceFn);
   }, [searchInputStr, currentView]);
 
-  // 💡 【核心邏輯 2】：點擊類別篩選按鈕時觸發 BUFFER 效果（選到「全部」時不用 BUFFER）
   const handleCategoryChange = (category) => {
     if (category === '全部') {
       setActiveCategory(category);
@@ -326,7 +314,6 @@ export default function App() {
     } else {
       setIsPageLoading(true);
       setActiveCategory(category);
-      
       setTimeout(() => {
         setIsPageLoading(false);
       }, 400);
@@ -367,6 +354,7 @@ export default function App() {
     alert(`帳號名稱已成功修改為：${inputUsername}`);
   };
 
+  // 🟢 核心修正：當點擊隨機換帳號時，同步更新 localStorage，確保新 ID 也是固定的
   const handleRandomizeUser = () => {
     const randomUser = generateRandomIdentity();
     setLocalUsername(randomUser.name);
@@ -378,7 +366,7 @@ export default function App() {
     localStorage.setItem('device_user_id', randomUser.id);
     
     setIsProfileOpen(false); 
-    alert(`已為您切換隨機新身份：${randomUser.name}`);
+    alert(`已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`);
   };
 
   useEffect(() => {
@@ -401,11 +389,7 @@ export default function App() {
     setSearchInputStr('');
     setSearchQuery('');
     setActiveCategory('全部');
-    
-    // 🟢 新增這行：讓畫面在點擊 LOGO 返回首頁時強制滾動回最上方
     window.scrollTo(0, 0); 
-    
-    // 💡 點擊 Logo 重整首頁時，清除剛上傳影片的特權，回復全部 Shuffle
     setJustUploadedVideo(null);
 
     const totallyShuffled = shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]);
@@ -455,7 +439,12 @@ export default function App() {
     }
   }, [currentView, selectedVideo]);
 
-  // 📢 🟢 調整：因為回覆已經在進入影片時由 subscribeToComments 提前一併同步載入，此處只需保留清理樂觀更新快取的輔助邏輯即可
+  const toggleReplySection = (commentId) => {
+    setExpandedReplyComments(prev => {
+      return { ...prev, [commentId]: !prev[commentId] };
+    });
+  };
+
   useEffect(() => {
     const activeCommentIds = Object.keys(expandedReplyComments).filter(id => expandedReplyComments[id]);
     if (activeCommentIds.length === 0) return;
@@ -472,19 +461,15 @@ export default function App() {
     });
   }, [expandedReplyComments, commentReplies]);
 
-  // 📢 即時監聽主留言（同時也會一併把所有回覆提前載入好）
   useEffect(() => {
     if (!selectedVideo?.id) {
       setIsCommentsLoading(false);
       return;
     }
-
-    setIsCommentsLoading(true); // 切換影片時重新亮起讀取狀態
-
-    // 🟢 這裡傳入了 setCommentReplies，讓主留言跟回覆可以同步提前加載完成
+    setIsCommentsLoading(true); 
     const unsubscribe = subscribeToComments(selectedVideo, (fetchedComments) => {
       setComments(fetchedComments);
-      setIsCommentsLoading(false); // 資料回來後，成功將留言讀取圈圈關閉！
+      setIsCommentsLoading(false); 
     }, setCommentReplies);
 
     return () => unsubscribe();
@@ -496,12 +481,10 @@ export default function App() {
       setRawFirebaseVideos(validFirebaseVideos);
       
       let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
-      
       if (justUploadedVideo) {
         shuffledAll = shuffledAll.filter(v => v.id !== justUploadedVideo.id);
         shuffledAll = [justUploadedVideo, ...shuffledAll];
       }
-      
       setVideos(shuffledAll);
       setIsPageLoading(false);
       setIsFirstInit(false); 
@@ -574,13 +557,6 @@ export default function App() {
     } catch (error) {
       console.error("更新留言按讚失敗:", error);
     }
-  };
-
-  const toggleReplySection = (commentId) => {
-    setExpandedReplyComments(prev => {
-      // 🟢 僅切換展開/收起狀態，完全移除會導致畫面跳動的 focus() 聚焦邏輯
-      return { ...prev, [commentId]: !prev[commentId] };
-    });
   };
 
   const handleAddReplySubmit = async (e, commentId) => {
@@ -698,14 +674,12 @@ export default function App() {
       };
       
       await uploadVideoToFirebase(dataToUpload);
-
       setJustUploadedVideo(dataToUpload); 
     
       setNewVideoTitle('');
       setNewVideoUrl('');
       setNewVideoCategory('未分類'); 
       setIsUploadModalOpen(false); 
-      
       setSearchInputStr('');
       setSearchQuery('');
       setActiveCategory('全部');
@@ -737,7 +711,7 @@ export default function App() {
 
   return (
     <div>
-      {/* 🟢 頂部導覽列 */}
+      {/* 頂部導覽列 */}
       <nav className="navbar">
         <div className="logo-hub-style" onClick={() => {
           handleHomeNavigation();
@@ -819,7 +793,6 @@ export default function App() {
         )}
 
         <main className="content-area" ref={contentAreaRef}>
-          {/* 1️⃣ 首頁視圖 */}
           {currentView === 'home' && (
             <>
               <div className="category-bar">
@@ -905,7 +878,6 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* 2️⃣ 訂閱頻道視圖 */}
                 {currentView === 'subscriptions' && (
                   <div>
                     <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
@@ -934,7 +906,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 3️⃣ 觀看紀錄視圖 */}
                 {currentView === 'history' && (
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -968,7 +939,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 4️⃣ 喜歡的影片視圖 */}
                 {currentView === 'liked' && (
                   <div>
                     <h2 className="view-page-title">🔥 我按讚的影片</h2>
@@ -997,7 +967,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 5️⃣ 動態頻道專屬頁面 */}
                 {currentView === 'channel' && (
                   <div className="channel-page-wrapper">
                     {isChannelLoading ? (
@@ -1027,7 +996,7 @@ export default function App() {
                               )}
                             </div>
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel?.name === localUsername ? currentUserId : 'user_' + Math.floor(Math.random() * 10000)} •&nbsp;
+                              @{targetChannel?.name === localUsername ? currentUserId : 'user_' + currentUserId.split('_')[1]} •&nbsp;
                               {formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
@@ -1069,7 +1038,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 6️⃣ 影片內頁播放視圖 */}
                 {currentView === 'watch' && selectedVideo && (
                   <div className="watch-layout">
                     <div className="watch-main-content">
@@ -1123,7 +1091,7 @@ export default function App() {
                           <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
                             {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
                           </button>
-                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
+                          <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 一般發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
                         </div>
                       </div>
 
@@ -1139,6 +1107,7 @@ export default function App() {
                           {isCommentsLoading ? (
                             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px 0', gap: '12px', color: '#888' }}>
                               <div className="yt-buffering-spinner" style={{ width: '32px', height: '32px' }}></div>
+                              <span style={{ fontSize: '14px', letterSpacing: '1px' }}>正在讀取社群留言...</span>
                             </div>
                           ) : (
                             allDisplayedComments.map((comment, idx) => {
@@ -1186,11 +1155,9 @@ export default function App() {
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                   <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
-                                                  
                                                   <span style={{ color: '#666', fontSize: '11px' }}>
                                                     {reply.createdAt ? formatTimeAgo(reply.createdAt) : '剛剛'}
                                                   </span>
-                                                  
                                                   {reply.isPending && <span style={{ color: '#666', fontSize: '11px' }}>(傳送中...)</span>}
                                                 </div>
                                                 <p style={{ color: '#ccc', margin: '2px 0 0 0', lineHeight: '1.4' }}>{reply.text}</p>
@@ -1213,7 +1180,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* 推薦區 */}
                     <div className="watch-sidebar-recommendations">
                       <h3 style={{ color: '#ff6a00', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
                       {videos.filter(v => v.id !== selectedVideo.id).map((video, idx) => (
