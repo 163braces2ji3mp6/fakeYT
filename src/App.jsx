@@ -703,7 +703,11 @@ export default function App() {
       Array.isArray(prev)
         ? prev.map(video =>
             isCurrentUserAsset(video)
-              ? { ...video, avatar: unifiedAvatar }
+              ? {
+                  ...video,
+                  avatar: unifiedAvatar,
+                  creatorAvatar: unifiedAvatar
+                }
               : video
           )
         : prev
@@ -714,7 +718,7 @@ export default function App() {
       Array.isArray(prev)
         ? prev.map(video =>
             isCurrentUserAsset(video)
-              ? { ...video, avatar: unifiedAvatar }
+              ? { ...video, avatar: unifiedAvatar, creatorAvatar: unifiedAvatar }
               : video
           )
         : prev
@@ -874,6 +878,36 @@ export default function App() {
           finalId = currentUserId; // 自己的話維持你原本的 currentUserId 確保前後一致
         } else {
           finalId = `user_${Math.random().toString(16).substring(2, 6)}`;
+        }
+
+        // ✅ 順便把舊影片頭貼同步
+        const videosSnapshot = await getDocs(
+          collection(db, 'videos')
+        );
+
+        for (const videoDoc of videosSnapshot.docs) {
+          const videoData = videoDoc.data();
+
+          const isSameChannel =
+            videoData.userId === finalId ||
+            videoData.author === finalName ||
+            videoData.channel === finalName;
+
+          const avatarMismatch =
+            videoData.avatar !== resolvedAvatar ||
+            videoData.creatorAvatar !== resolvedAvatar;
+
+          if (isSameChannel && avatarMismatch) {
+            await setDoc(
+              doc(db, 'videos', videoDoc.id),
+              {
+                ...videoData,
+                avatar: resolvedAvatar,
+                creatorAvatar: resolvedAvatar
+              },
+              { merge: true }
+            );
+          }
         }
 
         await setDoc(docRef, {
