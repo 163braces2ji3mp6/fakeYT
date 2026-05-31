@@ -75,3 +75,19 @@ const BIO_TEMPLATES = [
 export const getRandomBio = () => {
   return BIO_TEMPLATES[Math.floor(Math.random() * BIO_TEMPLATES.length)];
 };
+
+// =========================================================================
+// 🎨 獨立新增：隨機用戶名稱產生器
+// =========================================================================
+const adjectives = ["熱心的", "潛水的", "路過的", "機智的", "佛系的", "神祕的", "愛看片的", "吃飽的", "打瞌睡的", "隨和的"];
+const nouns = ["小柴犬", "貓咪君", "水豚拉", "小企鵝", "太空人", "大熊貓", "珍奶控", "魔法師", "乾飯人", "小樹懶"];
+
+/**
+ * 隨機生成一個有趣的中文用戶名稱
+ * @returns {string} 例如："熱心的珍奶控"、"潛水的水豚拉"
+ */
+export const getRandomUsername = () => {
+  const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+  return `${randomAdj}${randomNoun}`;
+};

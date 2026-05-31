@@ -10,7 +10,7 @@ import {
   formatTimeAgo
 } from './firebaseService';
 // 🟢 從你的 mockShite 同時引入留言、影片，以及隨機簡介產生器
-import { mockComments, MOCK_VIDEOS, getRandomBio } from './mockShite';
+import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername } from './mockShite';
 // 💡 引入 Firebase Firestore 核心元件來處理評論與使用者資料
 import { db } from './firebase'; 
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc } from 'firebase/firestore';
@@ -21,9 +21,6 @@ import avatarImage from './assets/163braces.jpg'
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
 const generateRandomIdentity = () => {
-  const adjectives = ["熱心的", "潛水的", "路過的", "機智的", "佛系的", "神祕的", "愛看片的", "吃飽的", "打瞌睡的", "隨和的"];
-  const nouns = ["小柴犬", "貓咪君", "水豚拉", "小企鵝", "太空人", "大熊貓", "珍奶控", "魔法師", "乾飯人", "小樹懶"];
-  
   const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
   const randomNum = Math.floor(1000 + Math.random() * 9000);
