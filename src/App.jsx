@@ -502,38 +502,51 @@ export default function App() {
 
   // 🟢 當點擊隨機換帳號登出時，同步建立一組全新的資料庫對應關係
   const handleRandomizeUser = async () => {
-    const randomUser = generateRandomIdentity();
+  const randomUser = generateRandomIdentity();
+  const avatarUrl = generateRandomAvatar();
 
-    const avatarUrl = generateRandomAvatar();
+  setLocalUsername(randomUser.name);
+  setInputUsername(randomUser.name);
+  setCurrentUserId(randomUser.id);
+  setCurrentUserAvatar(avatarUrl);
 
-    setLocalUsername(randomUser.name);
-    setInputUsername(randomUser.name);
+  localStorage.setItem(
+    'device_user_avatar',
+    avatarUrl
+  );
 
-    setCurrentUserId(randomUser.id);
+  localStorage.setItem(
+    'device_user_name',
+    randomUser.name
+  );
 
-    setCurrentUserAvatar(avatarUrl);
+  localStorage.setItem(
+    'device_user_id',
+    randomUser.id
+  );
 
-    localStorage.setItem(
-      'device_user_avatar',
-      avatarUrl
+  // ⭐ 同步建立 Firebase Channels 資料
+  try {
+    await setDoc(
+      doc(db, 'Channels', randomUser.name),
+      {
+        name: randomUser.name,
+        avatar: avatarUrl,
+        userId: randomUser.id,
+        subscriberCount: 0,
+        createdAt: new Date().toISOString()
+      }
     );
+  } catch (err) {
+    console.error('建立頻道失敗:', err);
+  }
 
-    localStorage.setItem(
-      'device_user_name',
-      randomUser.name
-    );
+  setIsProfileOpen(false);
 
-    localStorage.setItem(
-      'device_user_id',
-      randomUser.id
-    );
-
-    setIsProfileOpen(false);
-
-    showToast(
-      `已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`
-    );
-  };
+  showToast(
+    `已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`
+  );
+};
 
   useEffect(() => {
     if (Array.isArray(MOCK_VIDEOS)) {
