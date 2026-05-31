@@ -297,56 +297,70 @@ export default function App() {
   const handleRandomAvatar = async () => {
     const avatarUrl = generateRandomAvatar();
 
-    // 更新畫面
+    // 先更新自己畫面右上角
     setPreviewAvatar(avatarUrl);
     setCurrentUserAvatar(avatarUrl);
 
     // 存本機
-    localStorage.setItem(
-      'device_user_avatar',
-      avatarUrl
-    );
+    localStorage.setItem('device_user_avatar', avatarUrl);
 
-    // ⭐同步 Firebase
     try {
-      const q = query(
-        collection(db, 'Channels'),
-        where(
-          'channelName',
-          '==',
-          localUsername
+      // ⭐ 更新 users 集合（頻道頁會讀這裡）
+      await setDoc(
+        doc(db, 'users', currentUserId),
+        {
+          userId: currentUserId,
+          name: currentUsername,
+          avatar: avatarUrl,
+        },
+        { merge: true }
+      );
+
+      // ⭐ 更新自己發的影片
+      const videosSnapshot = await getDocs(
+        query(
+          collection(db, 'videos'),
+          where('userId', '==', currentUserId)
         )
       );
 
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
-        const channelRef =
-          snapshot.docs[0].ref;
-
-        await updateDoc(channelRef, {
-          avatar: avatarUrl
+      for (const videoDoc of videosSnapshot.docs) {
+        await updateDoc(doc(db, 'videos', videoDoc.id), {
+          avatar: avatarUrl,
         });
       }
-    } catch (err) {
-      console.error(
-        '更新 avatar 失敗:',
-        err
+
+      // ⭐ 更新自己留過的留言
+      const commentsSnapshot = await getDocs(
+        query(
+          collection(db, 'comments'),
+          where('userId', '==', currentUserId)
+        )
       );
-    }
 
-    // 如果正在看自己的頻道
-    if (
-      targetChannel?.name ===
-      localUsername
-    ) {
-      setTargetChannel(prev => ({
-        ...prev,
-        avatar: avatarUrl
-      }));
-    }
+      for (const commentDoc of commentsSnapshot.docs) {
+        await updateDoc(doc(db, 'comments', commentDoc.id), {
+          avatar: avatarUrl,
+        });
+      }
 
-    showToast('已更換隨機頭貼');
+      // ⭐ 更新自己回覆過的留言
+      const repliesSnapshot = await getDocs(
+        query(
+          collection(db, 'replies'),
+          where('userId', '==', currentUserId)
+        )
+      );
+
+      for (const replyDoc of repliesSnapshot.docs) {
+        await updateDoc(doc(db, 'replies', replyDoc.id), {
+          avatar: avatarUrl,
+        });
+      }
+
+    } catch (err) {
+      console.error('更新頭貼失敗:', err);
+    }
   };
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
