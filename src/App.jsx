@@ -822,6 +822,7 @@ export default function App() {
     const startTime = Date.now();
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
+    let resolvedAvatar = finalAvatar;
     const getUnifiedAvatar = (channelName, avatar, isCurrentUser = false) => {
       if (isCurrentUser) return avatar;
       if (channelName === '小葉') return avatarImage;
@@ -856,9 +857,17 @@ export default function App() {
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
-        // 👍 如果文件已經存在，直接讀取裡面的資料
         const channelData = docSnap.data();
-        finalId = channelData.userId || `user_${Math.random().toString(16).substring(2, 6)}`;
+
+        finalId =
+          channelData.userId ||
+          `user_${Math.random().toString(16).substring(2, 6)}`;
+
+        // ✅ 用 Firebase 最新頭貼
+        resolvedAvatar =
+          channelData.avatar ||
+          finalAvatar ||
+          GUEST_AVATAR;
       } else {
         // 🆕 如果不存在（全新帳號或別人新頻道），直接用中文名字建立文件，配給他一組背景識別 ID
         if (isMyOwnChannel) {
@@ -874,6 +883,8 @@ export default function App() {
           subscriberCount: 0,
           createdAt: new Date().toISOString()
         });
+
+        resolvedAvatar = finalAvatar;
         console.log(`✨ [新建成功] 已成功建立中文文件名檔案：Channels/${finalName}`);
       }
 
@@ -887,7 +898,7 @@ export default function App() {
     setTargetChannelUserId(finalId);
     const updatedChannelData = {
       name: finalName,
-      avatar: finalAvatar,
+      avatar: resolvedAvatar,
       bio: initialBio,
       userId: finalId
     };
@@ -1549,14 +1560,26 @@ export default function App() {
                             alt={video.channel || video.author} 
                             className="channel-avatar channel-avatar-clickable" 
                             // 💡 點擊事件維持你原本的，但名字傳送多做幾層保險
-                            onClick={(e) => handleChannelNavigation(video.channel || video.author || video.creatorName || '小葉', video.avatar || video.creatorAvatar || GUEST_AVATAR, e)}
+                            onClick={(e) =>
+                              handleChannelNavigation(
+                                video.channel || video.author,
+                                null,
+                                e
+                              )
+                            }
                             style={{ cursor: 'pointer' }}
                           />
                           <div>
                             <h3 className="video-title">{video.title}</h3>
                             <p 
                               className="channel-name channel-name-clickable"
-                              onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)}
+                              onClick={(e) =>
+                                handleChannelNavigation(
+                                  video.channel,
+                                  null,
+                                  e
+                                )
+                              }
                               style={{ cursor: 'pointer', display: 'inline-block' }}
                             >
                               {video.channel}
