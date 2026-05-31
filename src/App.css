@@ -1224,3 +1224,75 @@ html, body {
 .random-avatar-btn:hover {
   background: #e5e7eb;
 }
+/* =========================
+   FIX: 訂閱頻道頁恢復正常
+========================= */
+
+/* 訂閱頁不要吃到頻道頁 wrapper */
+.content-area > div:has(.view-page-title) {
+  width: 100%;
+  display: block;
+}
+
+/* 訂閱頁標題 */
+.view-page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 24px;
+  padding-left: 4px;
+}
+
+/* 訂閱影片 grid */
+.view-page-title + .video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  width: 100%;
+  align-items: start;
+}
+
+/* 卡片恢復 */
+.view-page-title + .video-grid .video-card {
+  width: 100%;
+  display: block;
+}
+
+/* 資訊區 */
+.view-page-title + .video-grid .video-info-section {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+
+/* 頭貼 */
+.view-page-title + .video-grid .channel-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* 訂閱按鈕只作用在頻道頁 */
+.channel-page-wrapper .sub-action-btn {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+}
+
+/* 頻道 header 不影響其他頁 */
+.channel-page-wrapper .channel-header-info {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+/* 手機 */
+@media (max-width: 768px) {
+  .view-page-title + .video-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}

@@ -294,74 +294,35 @@ export default function App() {
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
+
   const handleRandomAvatar = async () => {
     const avatarUrl = generateRandomAvatar();
 
-    // 先更新自己畫面右上角
     setPreviewAvatar(avatarUrl);
     setCurrentUserAvatar(avatarUrl);
-
-    // 存本機
     localStorage.setItem('device_user_avatar', avatarUrl);
 
     try {
-      // ⭐ 更新 users 集合（頻道頁會讀這裡）
-      await setDoc(
-        doc(db, 'users', currentUserId),
-        {
-          userId: currentUserId,
-          name: currentUsername,
-          avatar: avatarUrl,
-        },
-        { merge: true }
+      await syncCurrentUserProfileEverywhere({
+        avatarUrl,
+        fromName: localUsername,
+        fromUserId: currentUserId,
+        toName: localUsername,
+        toUserId: currentUserId,
+        subscriberCount: null,
+        rename: false
+      });
+
+      setTargetChannel(prev =>
+        prev && (prev.name === localUsername || prev.userId === currentUserId)
+          ? { ...prev, avatar: avatarUrl }
+          : prev
       );
-
-      // ⭐ 更新自己發的影片
-      const videosSnapshot = await getDocs(
-        query(
-          collection(db, 'videos'),
-          where('userId', '==', currentUserId)
-        )
-      );
-
-      for (const videoDoc of videosSnapshot.docs) {
-        await updateDoc(doc(db, 'videos', videoDoc.id), {
-          avatar: avatarUrl,
-        });
-      }
-
-      // ⭐ 更新自己留過的留言
-      const commentsSnapshot = await getDocs(
-        query(
-          collection(db, 'comments'),
-          where('userId', '==', currentUserId)
-        )
-      );
-
-      for (const commentDoc of commentsSnapshot.docs) {
-        await updateDoc(doc(db, 'comments', commentDoc.id), {
-          avatar: avatarUrl,
-        });
-      }
-
-      // ⭐ 更新自己回覆過的留言
-      const repliesSnapshot = await getDocs(
-        query(
-          collection(db, 'replies'),
-          where('userId', '==', currentUserId)
-        )
-      );
-
-      for (const replyDoc of repliesSnapshot.docs) {
-        await updateDoc(doc(db, 'replies', replyDoc.id), {
-          avatar: avatarUrl,
-        });
-      }
-
     } catch (err) {
       console.error('更新頭貼失敗:', err);
     }
   };
+
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
@@ -510,117 +471,209 @@ export default function App() {
     return () => unsubscribe();
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
+
+  const syncCurrentUserProfileEverywhere = async ({
+    avatarUrl,
+    fromName = localUsername,
+    fromUserId = currentUserId,
+    toName = localUsername,
+    toUserId = currentUserId,
+    subscriberCount = null,
+    rename = false
+  }) => {
+    const sameString = (a, b) => String(a ?? '') === String(b ?? '');
+
+    const matchesCurrentIdentity = (data = {}) => {
+      const nameFields = [
+        data.channel,
+        data.author,
+        data.username,
+        data.creatorName,
+        data.name,
+        data.channelName
+      ];
+
+      const idFields = [
+        data.userId,
+        data.uid,
+        data.ownerId,
+        data.authorId,
+        data.channelId
+      ];
+
+      return (
+        nameFields.some(value => sameString(value, fromName)) ||
+        idFields.some(value => sameString(value, fromUserId))
+      );
+    };
+
+    const updateMatchingDocs = async (collectionName, buildUpdates) => {
+      const snapshot = await getDocs(collection(db, collectionName));
+
+      for (const item of snapshot.docs) {
+        const data = item.data();
+        if (!matchesCurrentIdentity(data)) continue;
+
+        const updates = buildUpdates(data);
+        if (updates && Object.keys(updates).length > 0) {
+          await updateDoc(doc(db, collectionName, item.id), updates);
+        }
+      }
+    };
+
+    const channelPayload = {
+      channelName: toName,
+      avatar: avatarUrl,
+      userId: toUserId,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (subscriberCount !== null) {
+      channelPayload.subscriberCount = subscriberCount;
+    }
+
+    await setDoc(
+      doc(db, 'Channels', toName),
+      channelPayload,
+      { merge: true }
+    );
+
+    await updateMatchingDocs('videos', () => {
+      const updates = { avatar: avatarUrl };
+
+      if (rename) {
+        updates.channel = toName;
+        updates.author = toName;
+        updates.creatorName = toName;
+        updates.username = toName;
+      }
+
+      return updates;
+    });
+
+    await updateMatchingDocs('comments', () => {
+      const updates = { avatar: avatarUrl };
+
+      if (rename) {
+        updates.author = toName;
+        updates.username = toName;
+      }
+
+      return updates;
+    });
+
+    await updateMatchingDocs('replies', () => {
+      const updates = { avatar: avatarUrl };
+
+      if (rename) {
+        updates.author = toName;
+        updates.username = toName;
+      }
+
+      return updates;
+    });
+  };
+
+
   const handleUpdateUsernameSubmit = async (e) => {
-  e.preventDefault();
+    e.preventDefault();
 
-  if (!inputUsername.trim()) {
-    showToast('請輸入名稱', 'warning');
-    return;
-  }
+    if (!inputUsername.trim()) {
+      showToast('請輸入名稱', 'warning');
+      return;
+    }
 
-  const oldUsername = localUsername;
-  const newUsername = inputUsername.trim();
+    const oldUsername = localUsername;
+    const newUsername = inputUsername.trim();
+    const isSameUsername = oldUsername === newUsername;
 
-  if (
-    oldUsername === newUsername &&
-    previewAvatar === currentUserAvatar
-  ) {
-    setIsSettingsModalOpen(false);
-    return;
-  }
+    if (isSameUsername && previewAvatar === currentUserAvatar) {
+      setIsSettingsModalOpen(false);
+      return;
+    }
 
-  // ⭐ 新增這段
-  const usernameExists = await checkUsernameExists(newUsername);
+    if (!isSameUsername) {
+      const usernameExists = await checkUsernameExists(newUsername);
 
-  if (usernameExists) {
-    showToast('此名稱已被使用', 'error');
-    return;
-  }
+      if (usernameExists) {
+        showToast('此名稱已被使用', 'error');
+        return;
+      }
+    }
 
-  try {
-      // 1. 先抓出舊中文檔案裡的資料（例如訂閱數等等）
+    try {
       const oldDocRef = doc(db, 'Channels', oldUsername);
       const oldDocSnap = await getDoc(oldDocRef);
-      let currentSubCount = 0;
+      const currentSubCount = oldDocSnap.exists()
+        ? (oldDocSnap.data().subscriberCount || 0)
+        : 0;
 
-      if (oldDocSnap.exists()) {
-        currentSubCount = oldDocSnap.data().subscriberCount || 0;
-        // 2. 刪除舊的中文檔名檔案
+      if (!isSameUsername && oldDocSnap.exists()) {
         await deleteDoc(oldDocRef);
       }
 
-      // 3. 用「新中文名字」當作文件 ID，建立全新的漂亮檔案，並把舊訂閱數無縫搬過來！
-      const newDocRef = doc(db, 'Channels', newUsername);
-      await setDoc(newDocRef, {
-        channelName: newUsername,
-        avatar: previewAvatar,
-        userId: currentUserId,
-        subscriberCount: currentSubCount, // 訂閱數完美繼承！
-        createdAt: new Date().toISOString()
+      await syncCurrentUserProfileEverywhere({
+        avatarUrl: previewAvatar,
+        fromName: oldUsername,
+        fromUserId: currentUserId,
+        toName: newUsername,
+        toUserId: currentUserId,
+        subscriberCount: isSameUsername ? null : currentSubCount,
+        rename: !isSameUsername
       });
+
       setCurrentUserAvatar(previewAvatar);
-
-      localStorage.setItem(
-        'device_user_avatar',
-        previewAvatar
-      );
-      // 同步網頁狀態
       setLocalUsername(newUsername);
-      setIsSettingsModalOpen(false);
-      showToast('帳號名稱已成功變更，資料庫檔案已同步更新為中文檔名！');
+      setInputUsername(newUsername);
 
+      localStorage.setItem('device_user_name', newUsername);
+      localStorage.setItem('device_user_avatar', previewAvatar);
+      localStorage.setItem('device_user_id', currentUserId);
+
+      setIsSettingsModalOpen(false);
+      showToast('帳號名稱/頭貼已同步更新到 Firebase！');
     } catch (err) {
       console.error("改名並搬移中文檔案失敗:", err);
     }
   };
 
+
   // 🟢 當點擊隨機換帳號登出時，同步建立一組全新的資料庫對應關係
   const handleRandomizeUser = async () => {
-  const randomUser = generateRandomIdentity();
-  const avatarUrl = generateRandomAvatar();
+    const randomUser = generateRandomIdentity();
+    const avatarUrl = generateRandomAvatar();
 
-  setLocalUsername(randomUser.name);
-  setInputUsername(randomUser.name);
-  setCurrentUserId(randomUser.id);
-  setCurrentUserAvatar(avatarUrl);
+    setLocalUsername(randomUser.name);
+    setInputUsername(randomUser.name);
+    setCurrentUserId(randomUser.id);
+    setCurrentUserAvatar(avatarUrl);
 
-  localStorage.setItem(
-    'device_user_avatar',
-    avatarUrl
-  );
+    localStorage.setItem('device_user_avatar', avatarUrl);
+    localStorage.setItem('device_user_name', randomUser.name);
+    localStorage.setItem('device_user_id', randomUser.id);
 
-  localStorage.setItem(
-    'device_user_name',
-    randomUser.name
-  );
+    try {
+      await setDoc(
+        doc(db, 'Channels', randomUser.name),
+        {
+          channelName: randomUser.name,
+          avatar: avatarUrl,
+          userId: randomUser.id,
+          subscriberCount: 0,
+          createdAt: new Date().toISOString()
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.error('建立頻道失敗:', err);
+    }
 
-  localStorage.setItem(
-    'device_user_id',
-    randomUser.id
-  );
+    setIsProfileOpen(false);
 
-  // ⭐ 同步建立 Firebase Channels 資料
-  try {
-    await setDoc(
-      doc(db, 'Channels', randomUser.name),
-      {
-        name: randomUser.name,
-        avatar: avatarUrl,
-        userId: randomUser.id,
-        subscriberCount: 0,
-        createdAt: new Date().toISOString()
-      }
+    showToast(
+      `已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`
     );
-  } catch (err) {
-    console.error('建立頻道失敗:', err);
-  }
-
-  setIsProfileOpen(false);
-
-  showToast(
-    `已為您切換並固定新身份：\n名稱：${randomUser.name}\nID：${randomUser.id}`
-  );
-};
+  };
 
   useEffect(() => {
     if (Array.isArray(MOCK_VIDEOS)) {
@@ -631,57 +684,89 @@ export default function App() {
       });
     }
   }, [currentUserAvatar]);
+
   useEffect(() => {
-  if (!currentUserId) return;
+    if (!currentUserId) return;
 
-  // 更新首頁影片
-  setVideos(prev =>
-    Array.isArray(prev)
-      ? prev.map(video =>
-          video.userId === currentUserId ||
-          video.channel === localUsername
-            ? { ...video, avatar: currentUserAvatar }
-            : video
-        )
-      : prev
-  );
+    const isCurrentUserAsset = (item = {}) => (
+      String(item.userId ?? '') === String(currentUserId ?? '') ||
+      String(item.channel ?? '') === String(localUsername ?? '') ||
+      String(item.author ?? '') === String(localUsername ?? '') ||
+      String(item.creatorName ?? '') === String(localUsername ?? '') ||
+      String(item.username ?? '') === String(localUsername ?? '') ||
+      String(item.name ?? '') === String(localUsername ?? '')
+    );
 
-  // 更新 Firebase 原始影片
-  setRawFirebaseVideos(prev =>
-    Array.isArray(prev)
-      ? prev.map(video =>
-          video.userId === currentUserId ||
-          video.channel === localUsername
-            ? { ...video, avatar: currentUserAvatar }
-            : video
-        )
-      : prev
-  );
+    // 更新首頁影片
+    setVideos(prev =>
+      Array.isArray(prev)
+        ? prev.map(video =>
+            isCurrentUserAsset(video)
+              ? { ...video, avatar: currentUserAvatar }
+              : video
+          )
+        : prev
+    );
 
-  // 如果目前開的是自己的頻道，同步更新頻道頁頭像
-  setTargetChannel(prev =>
-    prev &&
-    (prev.userId === currentUserId ||
-      prev.name === localUsername)
-      ? {
-          ...prev,
-          avatar: currentUserAvatar
-        }
-      : prev
-  );
+    // 更新 Firebase 原始影片
+    setRawFirebaseVideos(prev =>
+      Array.isArray(prev)
+        ? prev.map(video =>
+            isCurrentUserAsset(video)
+              ? { ...video, avatar: currentUserAvatar }
+              : video
+          )
+        : prev
+    );
 
-  // mock 資料同步
-  if (Array.isArray(MOCK_VIDEOS)) {
-    MOCK_VIDEOS.forEach(video => {
-      if (
-        video.userId === currentUserId ||
-        video.channel === localUsername
-      ) {
-        video.avatar = currentUserAvatar;
-      }
+    // 如果目前開的是自己的頻道，同步更新頻道頁頭像
+    setTargetChannel(prev =>
+      prev && isCurrentUserAsset(prev)
+        ? {
+            ...prev,
+            avatar: currentUserAvatar
+          }
+        : prev
+    );
+
+    // 更新留言
+    setComments(prev =>
+      Array.isArray(prev)
+        ? prev.map(comment =>
+            isCurrentUserAsset(comment)
+              ? { ...comment, avatar: currentUserAvatar }
+              : comment
+          )
+        : prev
+    );
+
+    // 更新回覆
+    setCommentReplies(prev => {
+      const updated = {};
+
+      Object.keys(prev || {}).forEach(key => {
+        updated[key] = Array.isArray(prev[key])
+          ? prev[key].map(reply =>
+              isCurrentUserAsset(reply)
+                ? { ...reply, avatar: currentUserAvatar }
+                : reply
+            )
+          : prev[key];
+      });
+
+      return updated;
     });
-  }
-}, [currentUserAvatar, currentUserId, localUsername]);
+
+    // mock 資料同步
+    if (Array.isArray(MOCK_VIDEOS)) {
+      MOCK_VIDEOS.forEach(video => {
+        if (isCurrentUserAsset(video)) {
+          video.avatar = currentUserAvatar;
+        }
+      });
+    }
+  }, [currentUserAvatar, currentUserId, localUsername]);
+
 
   const forceScrollToTop = () => {
     window.scrollTo(0, 0);
@@ -1153,6 +1238,83 @@ export default function App() {
     });
   };
 
+  const isSameText = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
+
+  const getVideoDisplayName = (video = {}) => {
+    return video.channel || video.author || video.creatorName || video.username || localUsername || '小葉';
+  };
+
+  const getVideoAvatarSrc = (video = {}) => {
+    const displayName = getVideoDisplayName(video);
+    const isOwnVideo =
+      isSameText(video.userId, currentUserId) ||
+      isSameText(displayName, localUsername);
+
+    const isShiauyeVideo =
+      isSameText(video.author, '小葉') ||
+      isSameText(video.channel, '小葉') ||
+      isSameText(video.creatorName, '小葉') ||
+      isSameText(video.username, '小葉');
+
+    if (isShiauyeVideo) return avatarImage;
+    if (isOwnVideo) return currentUserAvatar;
+    return video.avatar || video.creatorAvatar || GUEST_AVATAR;
+  };
+
+  const renderVideoCard = (video) => {
+    const displayName = getVideoDisplayName(video);
+    const avatarSrc = getVideoAvatarSrc(video);
+
+    return (
+      <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+        <div className="thumbnail-wrapper">
+          <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+          <span className="video-duration">{video.duration}</span>
+        </div>
+        <div className="video-info-section">
+          <img
+            src={avatarSrc}
+            alt={displayName}
+            className="channel-avatar channel-avatar-clickable"
+            onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e)}
+            style={{ cursor: 'pointer' }}
+            onError={(e) => {
+              e.currentTarget.src = GUEST_AVATAR;
+            }}
+          />
+          <div>
+            <h3 className="video-title">{video.title}</h3>
+            <p
+              className="channel-name channel-name-clickable"
+              onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e)}
+              style={{ cursor: 'pointer', display: 'inline-block' }}
+            >
+              {displayName}
+            </p>
+            <p className="video-meta">
+              {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const getChannelVideos = (channelName) => {
+    if (!channelName) return [];
+
+    return videos.filter(video =>
+      channelName === '小葉'
+        ? (
+            String(video.channel) === '小葉' ||
+            String(video.author) === '小葉' ||
+            String(video.creatorName) === '小葉' ||
+            String(video.username) === '小葉'
+          )
+        : String(video.channel) === String(channelName)
+    );
+  };
+
   const allDisplayedComments = [...optimisticComments, ...comments];
 
   return (
@@ -1387,30 +1549,7 @@ export default function App() {
                     <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
                     <div className="video-grid">
                       {videos.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
-                        videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => (
-                          <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                            <div className="thumbnail-wrapper">
-                              <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                              <span className="video-duration">{video.duration}</span>
-                            </div>
-                            <div className="video-info-section">
-                                <img
-                                  src={
-                                    video.userId === currentUserId ||
-                                    video.channel === localUsername
-                                      ? currentUserAvatar
-                                      : (video.avatar || GUEST_AVATAR)
-                                  }
-                                  className="w-9 h-9 rounded-full"
-                                  alt=""
-                                />                              <div>
-                                <h3 className="video-title">{video.title}</h3>
-                                <p className="channel-name channel-name-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer', display: 'inline-block' }}>{video.channel}</p>
-                                <p className="video-meta">{formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))
+                        videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => renderVideoCard(video))
                       ) : (
                         <div className="empty-state">目前訂閱的頻道還沒有發布影片。</div>
                       )}
@@ -1428,22 +1567,7 @@ export default function App() {
                     </div>
                     <div className="video-grid">
                       {watchHistory.length > 0 ? (
-                        watchHistory.map((video, idx) => (
-                          <div key={`history-${video.id}-${idx}`} className="video-card" onClick={() => handleVideoClick(video)}>
-                            <div className="thumbnail-wrapper">
-                              <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                              <span className="video-duration">{video.duration}</span>
-                            </div>
-                            <div className="video-info-section">
-                              <img src={video.avatar} alt={video.channel} className="channel-avatar channel-avatar-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer' }} />
-                              <div>
-                                <h3 className="video-title">{video.title}</h3>
-                                <p className="channel-name channel-name-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer', display: 'inline-block' }}>{video.channel}</p>
-                                <p className="video-meta">上次觀看過</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))
+                        watchHistory.map((video) => renderVideoCard(video))
                       ) : (
                         <div className="empty-state">沒有觀看紀錄。</div>
                       )}
@@ -1456,22 +1580,7 @@ export default function App() {
                     <h2 className="view-page-title">🔥 我按讚的影片</h2>
                     <div className="video-grid">
                       {videos.filter(v => likedVideoIds.includes(v.id)).length > 0 ? (
-                        videos.filter(v => likedVideoIds.includes(v.id)).map((video) => (
-                          <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                            <div className="thumbnail-wrapper">
-                              <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                              <span className="video-duration">{video.duration}</span>
-                            </div>
-                            <div className="video-info-section">
-                              <img src={video.avatar} alt={video.channel} className="channel-avatar channel-avatar-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer' }} />
-                              <div>
-                                <h3 className="video-title">{video.title}</h3>
-                                <p className="channel-name channel-name-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer', display: 'inline-block' }}>{video.channel}</p>
-                                <p className="video-meta">{formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))
+                        videos.filter(v => likedVideoIds.includes(v.id)).map((video) => renderVideoCard(video))
                       ) : (
                         <div className="empty-state">還沒有按讚的影片。</div>
                       )}
@@ -1497,7 +1606,11 @@ export default function App() {
                       <>
                         <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
                         <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
-                          <img src={targetChannel?.avatar} alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                          <img src={
+                            targetChannel?.name === localUsername
+                              ? currentUserAvatar
+                              : targetChannel?.avatar
+                          } alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
                           <div style={{ flex: 1 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                               <h1 style={{ fontSize: '32px', margin: '0 -20px 0 0', color: '#fff' }}>{targetChannel?.name}</h1>
@@ -1510,7 +1623,7 @@ export default function App() {
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
                               @{targetChannel?.userId || targetChannelUserId} •&nbsp;
-                              {formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
+                              {formatSubscribers(liveSubscriberCount)}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
                           </div>
@@ -1525,37 +1638,7 @@ export default function App() {
 
                     {channelTab === 'videos' ? (
                       <div className="video-grid">
-                        {videos.filter(video => 
-                          // 💡 1. 多重過濾防線：如果當前在看小葉頻道，只要影片任何欄位有寫小葉，就全部抓出來！
-                          targetChannel?.name === '小葉' 
-                            ? (String(video.channel) === '小葉' || String(video.author) === '小葉' || String(video.creatorName) === '小葉' || String(video.username) === '小葉')
-                            : (video.channel === targetChannel?.name)
-                        ).map((video) => (
-                          <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                            <div className="thumbnail-wrapper">
-                              <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                              <span className="video-duration">{video.duration}</span>
-                            </div>
-                            <div className="video-info-section">
-                              {/* 💡 2. 大頭貼防線：當前是小葉頻道，或者影片作者是小葉，百分之百強制亮出小葉精美頭貼 */}
-                              <img 
-                                src={
-                                  targetChannel?.name === '小葉' || String(video.author) === '小葉' || String(video.channel) === '小葉' || String(video.creatorName) === '小葉'
-                                    ? avatarImage 
-                                    : (video.avatar || video.creatorAvatar || GUEST_AVATAR)
-                                } 
-                                alt={video.channel} 
-                                className="channel-avatar" 
-                              />
-                              <div>
-                                <h3 className="video-title">{video.title}</h3>
-                                {/* 💡 3. 名稱欄位防錯修正 */}
-                                <p className="channel-name">{video.channel || video.author || '小葉'}</p>
-                                <p className="video-meta">{formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                        {getChannelVideos(targetChannel?.name).map((video) => renderVideoCard(video))}
                       </div>
                     ) : (
                       <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
