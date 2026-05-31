@@ -135,16 +135,18 @@ function formatViews(views) {
 
 // 🟢 修正後的精準換算
 function formatSubscribers(count) {
-  if (!count) return '0';
-  const num = Number(count);
-  
-  if (num >= 100000000) { // 破億
-    return `${(num / 100000000).toFixed(1)}億`;
-  } else if (num >= 10000) { // 破萬 (包含千萬、百萬、十萬)
-    return `${(num / 10000).toFixed(1)}萬`.replace('.0', ''); // 順便去掉無意義的 .0，例如 3000.0萬 變成 3000萬
+  if (count >= 1000000) {
+    // 🟢 條件 1：超過或等於 100 萬 (1,000,000)
+    // 除以 10000 後，使用 Math.round() 或 .toFixed(0) 直接取整數
+    return Math.round(count / 10000) + '萬';
+  } else if (count >= 10000) {
+    // 🟡 條件 2：在一萬到百萬之間（例如 15.4 萬）
+    // 保留一位小數
+    return (count / 10000).toFixed(1) + '萬';
   }
   
-  return num.toLocaleString();
+  // ⚪ 條件 3：未滿一萬，直接顯示原本的數字
+  return count.toString();
 }
 
 export default function App() {
@@ -252,7 +254,8 @@ export default function App() {
     return savedTarget ? JSON.parse(savedTarget) : {
       name: '',
       avatar: GUEST_AVATAR,
-      bio: '' 
+      bio: '' ,
+      userId: ''
     };
   });
 
@@ -282,31 +285,17 @@ export default function App() {
     }
   }, [localUsername, currentUserAvatar]);
 
-  // 🟢 當切換到某人的頻道時，動態去 Firebase 抓取那個人的真實 ID
+  // 🟢 修正版：只處理自己（localUsername）的同步，絕對不亂用 'member' 覆蓋 ID！
   useEffect(() => {
     if (currentView === 'channel' && targetChannel?.name) {
+      // 如果點擊的是自己，同步用當前的 currentUserId
       if (targetChannel.name === localUsername) {
         setTargetChannelUserId(currentUserId);
         return;
       }
       
-      const fetchTargetUserId = async () => {
-        try {
-          const userQuery = query(collection(db, 'users'), where('username', '==', targetChannel.name));
-          const querySnapshot = await getDocs(userQuery);
-          if (!querySnapshot.empty) {
-            const userData = querySnapshot.docs[0].data();
-            setTargetChannelUserId(userData.userId);
-          } else {
-            // 如果資料庫還沒有這個人（例如舊的 Mock 影片主），則用名稱後綴保持唯一性
-            const suffix = targetChannel.name.split('_')[1] || 'member';
-            setTargetChannelUserId(`user_${suffix}`);
-          }
-        } catch (err) {
-          setTargetChannelUserId('user_unknown');
-        }
-      };
-      fetchTargetUserId();
+      // 💡 重點：如果是別人，handleChannelNavigation 已經在點擊時處理完 Firebase 的寫入與讀取了，
+      // 這裡絕對不要再去 fetch 覆蓋它！直接保持原樣即可。
     }
   }, [currentView, targetChannel?.name, localUsername, currentUserId]);
 
@@ -500,87 +489,97 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 究極精準對位版：自動在 Firebase 的 channels 中更新並丟入產生的 userId 欄位
+  // 🟢 防閃爍大寫版：加入了最低轉圈時間（600ms），確保資料載入完畢才優雅開門
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
+    
+    // 1. 🌟 秒切換，立刻跑 Buffer 轉圈圈
     setIsChannelLoading(true); 
+    setCurrentView('channel');
+    setChannelTab('videos');
+    forceScrollToTop();
 
-    // 1. 處理基礎的名字與頭貼防錯
+    // ⏱️ 紀錄開始轉圈的時間點
+    const startTime = Date.now();
+
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
 
-    // 🔥【最高權限】：如果去名字叫「小葉」的頻道，直接給固定最完美的專屬設定
+    // 如果是小葉，給固定專屬設定，並秒關載入
     if (finalName === '小葉') {
       setTargetChannel({
         name: '小葉',
         avatar: avatarImage,
         bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！'
       });
-      // 🎯 直接把狀態同步丟給您畫面上正在使用的 targetChannelUserId 變數
       setTargetChannelUserId('shiauye_official'); 
-      
-      setCurrentView('channel');
-      setChannelTab('videos');
-      forceScrollToTop();
-      setIsChannelLoading(false); 
+      setIsChannelLoading(false);
       return; 
     }
 
-    // --- 👤 2. 直接對準你的 channels 資料集合，處理 userId 的 Firebase 自動補增欄位 ---
-    let finalId = '';
-
-    try {
-      // 🎯 核心精準對齊：把舊查詢改成比對您 Firebase 裡真正的欄位名稱 'channelName'
-      const q = query(collection(db, 'channels'), where('channelName', '==', finalName));
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
-        // 抓到了這個頻道在 Firebase 的 Document
-        const channelDoc = querySnapshot.docs[0];
-        const channelData = channelDoc.data();
-
-        // 💡 如果 Firebase 裡本來就已經有 userId 這個欄位了，直接拿來用
-        if (channelData.userId) {
-          finalId = channelData.userId;
-        } else {
-          // 💾 第一次點進來：Firebase 有這筆資料但「沒有 userId 欄位」
-          const randomHex = Math.random().toString(16).substring(2, 6); 
-          const generatedId = `user_${randomHex}`; // 生成要丟過去的 ID
-          finalId = generatedId;
-
-          // 🔥【就是這行把 ID 丟過去！】：立刻將生成的 userId 欄位，用 updateDoc 寫入加進 Firebase 中！
-          await updateDoc(doc(db, 'channels', channelDoc.id), {
-            userId: generatedId
-          });
-          console.log(`成功在 Firebase 的 channels 中為 ${finalName} 補上並丟入新欄位 userId: ${generatedId}`);
-        }
-      } else {
-        // 防呆：萬一 channels 表裡完全沒這筆頻道名稱，前端直接生一個確保不壞軌
-        const randomHex = Math.random().toString(16).substring(2, 6); 
-        finalId = `user_${randomHex}`;
-      }
-    } catch (err) {
-      console.error("Firebase channels 資料表讀取或更新 userId 失敗:", err);
-      finalId = `user_temp`;
-    }
-
-    // 💡 3. 設定頻道的基本資料
     setTargetChannel({
       name: finalName,
       avatar: finalAvatar,
       bio: getRandomBio()
     });
 
-    // 🎯 4. 將最終不論是「撈出來的」還是「剛生成丟進 Firebase 的」ID，同步給您畫面上綁定的變數！
+    let finalId = '';
+
+    try {
+      // 🎯 使用大寫 'Channels'
+      const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
+      const querySnapshot = await getDocs(q);
+      
+      const randomHex = Math.random().toString(16).substring(2, 6); 
+      const generatedId = `user_${randomHex}`;
+
+      if (!querySnapshot.empty) {
+        const channelDoc = querySnapshot.docs[0];
+        const channelData = channelDoc.data();
+
+        if (channelData.userId) {
+          finalId = channelData.userId;
+        } else {
+          finalId = generatedId;
+          await updateDoc(doc(db, 'Channels', channelDoc.id), {
+            userId: generatedId
+          });
+        }
+      } else {
+        // Firebase 完全沒有這個頻道，幫他建立
+        finalId = generatedId;
+        await setDoc(doc(db, 'Channels', finalName), {
+          channelName: finalName,
+          avatar: finalAvatar,
+          userId: generatedId,
+          subscriberCount: 0,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+    } catch (err) {
+      console.error("Firebase Channels 讀取或寫入失敗:", err);
+      const suffix = finalName.split('_')[1] || 'temp';
+      finalId = `user_${suffix}`;
+    }
+
+    // 🎯 同步更新 ID
     setTargetChannelUserId(finalId);
 
-    // 💡 5. 切換畫面視圖
-    setCurrentView('channel');
-    setChannelTab('videos');
-    forceScrollToTop();
+    // 2. 🌟【核心修正：防閃爍時間計算】
+    const minimumDelay = 600; // 最少要轉 600 毫秒（可以自己改成 800 或 1000）
+    const elapsedTime = Date.now() - startTime; // 計算 Firebase 耗費了多少時間
+    const remainingTime = minimumDelay - elapsedTime; // 計算還差多少時間才滿 minimumDelay
 
-    // 💡 6. 關閉載入圈圈
-    setIsChannelLoading(false); 
+    if (remainingTime > 0) {
+      // 如果 Firebase 跑太快，我們就用 setTimeout 補足剩下的時間，再關閉動畫
+      setTimeout(() => {
+        setIsChannelLoading(false);
+      }, remainingTime);
+    } else {
+      // 如果 Firebase 本身就讀很久（超過600ms），那就直接關閉
+      setIsChannelLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -1200,9 +1199,9 @@ export default function App() {
                                 </button>
                               )}
                             </div>
-                            {/* 🟢 核心修正：這裡綁定的是從資料庫動態查出來的 targetChannelUserId */}
+                            {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannelUserId} •&nbsp;
+                              @{targetChannel?.userId || targetChannelUserId} •&nbsp;
                               {formatSubscribers(liveSubscriberCount)}位訂閱者 • {videos.filter(v => v.channel === targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
