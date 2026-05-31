@@ -504,21 +504,31 @@ export default function App() {
 
     // 如果是小葉，給固定專屬設定，並秒關載入
     if (finalName === '小葉') {
-      setTargetChannel({
+      const shiauyeChannel = {
         name: '小葉',
         avatar: avatarImage,
-        bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！'
-      });
+        bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！',
+        userId: 'shiauye_official' // 👈 核心修正：將固定專屬 ID 包進快取物件
+      };
+      setTargetChannel(shiauyeChannel);
       setTargetChannelUserId('shiauye_official'); 
+      
+      // 💾 同步寫入本地儲存，防重新整理不見
+      localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
+      
       setIsChannelLoading(false);
       return; 
     }
 
-    setTargetChannel({
+    // 先設定初步狀態物件（先放空字串 ID），稍後查到 Firebase 再更新進快取
+    const initialBio = getRandomBio();
+    const initialChannelData = {
       name: finalName,
       avatar: finalAvatar,
-      bio: getRandomBio()
-    });
+      bio: initialBio,
+      userId: '' 
+    };
+    setTargetChannel(initialChannelData);
 
     let finalId = '';
 
@@ -560,11 +570,21 @@ export default function App() {
       finalId = `user_${suffix}`;
     }
 
-    // 🎯 同步更新 ID
+    // 🎯 核心同步修正：將成功的 finalId 同步更新到狀態中
     setTargetChannelUserId(finalId);
 
+    // 🎯 核心同步修正：打包帶有最新 ID 的完整物件，寫入 React 狀態與 localStorage
+    const updatedChannelData = {
+      name: finalName,
+      avatar: finalAvatar,
+      bio: initialBio,
+      userId: finalId // 👈 補上剛查到的最新 ID
+    };
+    setTargetChannel(updatedChannelData);
+    localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
+
     // 2. 🌟【核心修正：防閃爍時間計算】
-    const minimumDelay = 600; // 最少要轉 600 毫秒（可以自己改成 800 或 1000）
+    const minimumDelay = 650; // 最少要轉 800 毫秒
     const elapsedTime = Date.now() - startTime; // 計算 Firebase 耗費了多少時間
     const remainingTime = minimumDelay - elapsedTime; // 計算還差多少時間才滿 minimumDelay
 
