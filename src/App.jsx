@@ -15,6 +15,17 @@ import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, 
 import avatarImage from './assets/163braces.jpg' 
 
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
+const isShiauyeAsset = (item) => {
+  if (!item) return false;
+
+  return (
+    item.author === '小葉' ||
+    item.channel === '小葉' ||
+    item.creatorName === '小葉' ||
+    item.username === '小葉'
+  );
+};
+
 const isCurrentUserAsset = (item) => {
   if (!item) return false;
 
@@ -1632,9 +1643,11 @@ export default function App() {
                           <div className="video-info-section">
                           <img
                             src={
-                              isCurrentUserAsset(video)
+                              isShiauyeAsset(video)
+                                ? avatarImage
+                                : isCurrentUserAsset(video)
                                 ? unifiedAvatar
-                                : (video.creatorAvatar || video.avatar || GUEST_AVATAR)
+                                : (video.avatar || video.creatorAvatar || GUEST_AVATAR)
                             }
                             alt={video.channel || video.author}
                             className="channel-avatar channel-avatar-clickable"
