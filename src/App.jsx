@@ -19,7 +19,11 @@ import avatarImage from './assets/163braces.jpg'
 
 // 1. 定義標準訪客的預設灰色頭貼
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
+const generateRandomAvatar = () => {
+  const seed = crypto.randomUUID();
 
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}`;
+};
 // 🟢 整合版：建立新訪客識別碼（統一用 ID 做為唯一綁定）
   const generateRandomIdentity = () => {
     const randomChineseName = getRandomUsername();
@@ -219,8 +223,11 @@ export default function App() {
     const initUserIdentity = async () => {
       let savedName = localStorage.getItem('device_user_name');
       let savedId = localStorage.getItem('device_user_id');
-      let savedAvatar = localStorage.getItem('device_user_avatar'); 
-      let avatar = savedAvatar || GUEST_AVATAR;
+      let savedAvatar = localStorage.getItem('device_user_avatar');
+
+      let avatar =
+        savedAvatar ||
+        generateRandomAvatar();
 
       const urlParams = new URLSearchParams(window.location.search);
       const isForcedMe = urlParams.get('user') === '小葉';
@@ -231,9 +238,11 @@ export default function App() {
         avatar = avatarImage;
       } else if (!savedName || !savedId) {
         const randomUser = generateRandomIdentity();
+
         savedName = randomUser.name;
         savedId = randomUser.id;
-        avatar = GUEST_AVATAR; 
+
+        avatar = generateRandomAvatar();
       }
 
       // 🔥【關鍵移動】：把小葉的安全檢查移到這裡！
@@ -259,6 +268,26 @@ export default function App() {
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
+  const handleRandomAvatar = () => {
+    const avatarUrl = generateRandomAvatar();
+    setPreviewAvatar(avatarUrl);
+
+    // 更新目前登入者
+    setCurrentUserAvatar(avatarUrl);
+
+    // 存進 localStorage，重新整理也不會變回去
+    localStorage.setItem('device_user_avatar', avatarUrl);
+
+    // 如果正在看自己的頻道，同步更新頻道頭貼
+    if (targetChannel?.name === localUsername) {
+      setTargetChannel(prev => ({
+        ...prev,
+        avatar: avatarUrl
+      }));
+    }
+
+    showToast('已更換隨機頭貼');
+    };
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
@@ -350,6 +379,10 @@ export default function App() {
 
   const [optimisticComments, setOptimisticComments] = useState([]);
   const [optimisticReplies, setOptimisticReplies] = useState([]);
+  const [previewAvatar, setPreviewAvatar] = useState(currentUserAvatar);
+  useEffect(() => {
+  setPreviewAvatar(currentUserAvatar);
+  }, [currentUserAvatar]);
   const checkUsernameExists = async (username) => {
   const channelRef = doc(db, "Channels", username);
   const channelSnap = await getDoc(channelRef);
@@ -978,7 +1011,7 @@ export default function App() {
 
           <div className="avatar-container" ref={profileMenuRef}>
             <img 
-              src={currentUserAvatar} alt="Avatar" className="avatar" 
+              src={previewAvatar} alt="Avatar" className="avatar" 
               onClick={() => setIsProfileOpen(!isProfileOpen)} style={{ cursor: 'pointer' }}
             />
             {isProfileOpen && (
@@ -995,6 +1028,7 @@ export default function App() {
                   <button className="dropdown-item-btn" onClick={handleMyChannelClick}>👤 我的頻道</button>
                   <button className="dropdown-item-btn" onClick={() => {
                     setInputUsername(localUsername);
+                    setPreviewAvatar(currentUserAvatar);
                     setIsSettingsModalOpen(true);
                     setIsProfileOpen(false);
                   }}>
@@ -1567,47 +1601,186 @@ export default function App() {
             <form onSubmit={handleUploadVideo} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ color: '#aaa', fontSize: '14px' }}>影片標題</label>
-                <input className="comment-text-input" type="text" placeholder="請輸入吸引人的影片標題..." value={newVideoTitle} onChange={(e) => setNewVideoTitle(e.target.value)} disabled={isAnalyzing} required />
+                <input
+                  className="comment-text-input"
+                  type="text"
+                  placeholder="請輸入吸引人的影片標題..."
+                  value={newVideoTitle}
+                  onChange={(e) => setNewVideoTitle(e.target.value)}
+                  disabled={isAnalyzing}
+                  required
+                />
               </div>
+                  
               <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ color: '#aaa', fontSize: '14px' }}>YouTube 影片網址</label>
-                <input className="comment-text-input" type="url" placeholder="https://www.youtube.com/watch?v=..." value={newVideoUrl} onChange={(e) => setNewVideoUrl(e.target.value)} disabled={isAnalyzing} required />
+                <input
+                  className="comment-text-input"
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={newVideoUrl}
+                  onChange={(e) => setNewVideoUrl(e.target.value)}
+                  disabled={isAnalyzing}
+                  required
+                />
               </div>
+                  
               <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ color: '#aaa', fontSize: '14px' }}>影片類別</label>
-                <select value={newVideoCategory} onChange={(e) => setNewVideoCategory(e.target.value)} disabled={isAnalyzing} style={{ background: '#111', border: '1px solid #333', color: '#fff', padding: '10px 14px', borderRadius: '8px', fontSize: '14px', outline: 'none', cursor: 'pointer' }}>
+                  
+                <select
+                  value={newVideoCategory}
+                  onChange={(e) => setNewVideoCategory(e.target.value)}
+                  disabled={isAnalyzing}
+                  style={{
+                    background: '#111',
+                    border: '1px solid #333',
+                    color: '#fff',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                >
                   {UPLOAD_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
                   ))}
                 </select>
               </div>
+                
               <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
-                <button type="button" className="clear-btn" onClick={() => setIsUploadModalOpen(false)} disabled={isAnalyzing}>取消</button>
-                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }} disabled={isAnalyzing}>
+                <button
+                  type="button"
+                  className="clear-btn"
+                  onClick={() => setIsUploadModalOpen(false)}
+                  disabled={isAnalyzing}
+                >
+                  取消
+                </button>
+                
+                <button
+                  type="submit"
+                  className="comment-submit-btn"
+                  style={{ height: '36px' }}
+                  disabled={isAnalyzing}
+                >
                   {isAnalyzing ? '上傳中...' : '確認上傳'}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+                      </div>
+                    </div>
+                  )}
 
-      {/* 設定 Modal */}
-      {isSettingsModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
-          <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
-            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>⚙️ 帳號設定</h2>
-              <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
-            </div>
-            <form onSubmit={handleUpdateUsernameSubmit} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ color: '#aaa', fontSize: '14px' }}>自訂帳號名稱</label>
-                <input className="comment-text-input" type="text" placeholder="請輸入您的新名稱..." value={inputUsername} onChange={(e) => setInputUsername(e.target.value)} required />
+                  {/* 設定 Modal */}
+                  {isSettingsModalOpen && (
+                    <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
+                      <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
+                        <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                          <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>⚙️ 帳號設定</h2>
+                          <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                        </div>
+                        <form
+              onSubmit={handleUpdateUsernameSubmit}
+              className="modal-body-form"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}
+            >
+            
+              {/* 頭像設定 */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '12px'
+                }}
+              >
+                <img
+                  src={currentUserAvatar}
+                  alt="使用者頭像"
+                  style={{
+                    width: '90px',
+                    height: '90px',
+                    borderRadius: '50%',
+                    border: '2px solid #333',
+                    background: '#222'
+                  }}
+                />
+
+                <button
+                  type="button"
+                  onClick={handleRandomAvatar}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: '#272727',
+                    color: '#fff',
+                    fontSize: '14px'
+                  }}
+                >
+                  🎲 隨機頭像
+                </button>
               </div>
-              <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
-                <button type="button" className="clear-btn" onClick={() => setIsSettingsModalOpen(false)}>取消</button>
-                <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認儲存</button>
+                
+              {/* 名稱設定 */}
+              <div
+                className="form-group"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <label
+                  style={{
+                    color: '#aaa',
+                    fontSize: '14px'
+                  }}
+                >
+                  自訂帳號名稱
+                </label>
+                
+                <input
+                  className="comment-text-input"
+                  type="text"
+                  placeholder="請輸入您的新名稱..."
+                  value={inputUsername}
+                  onChange={(e) => setInputUsername(e.target.value)}
+                  required
+                />
+              </div>
+                
+              <div
+                className="modal-footer-actions"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: '12px',
+                  marginTop: '12px'
+                }}
+              >
+                <button
+                  type="button"
+                  className="clear-btn"
+                  onClick={() => setIsSettingsModalOpen(false)}
+                >
+                  取消
+                </button>
+              
+                <button
+                  type="submit"
+                  className="comment-submit-btn"
+                  style={{ height: '36px' }}
+                >
+                  確認儲存
+                </button>
               </div>
             </form>
           </div>

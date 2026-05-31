@@ -1205,3 +1205,22 @@ html, body {
     transform: translateY(0);
   }
 }
+
+.random-avatar-btn {
+  width: 100%;
+  margin-top: 12px;
+
+  padding: 10px;
+
+  border: none;
+  border-radius: 10px;
+
+  background: #f3f4f6;
+  cursor: pointer;
+
+  transition: .2s;
+}
+
+.random-avatar-btn:hover {
+  background: #e5e7eb;
+}
