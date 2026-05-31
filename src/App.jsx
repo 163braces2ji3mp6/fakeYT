@@ -500,30 +500,87 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 修正後的頻道導航函式（完美支援小葉頭貼與 Firebase 帳號查詢）
-  const handleChannelNavigation = (channelName, channelAvatar, e) => {
+  // 🟢 究極精準對位版：自動在 Firebase 的 channels 中更新並丟入產生的 userId 欄位
+  const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     setIsChannelLoading(true); 
 
-    // 💡 核心保險修正：如果去名字叫「小葉」的頻道，強制給最完整正確的資訊
-    if (channelName === '小葉') {
+    // 1. 處理基礎的名字與頭貼防錯
+    const finalName = channelName || localUsername;
+    const finalAvatar = channelAvatar || GUEST_AVATAR;
+
+    // 🔥【最高權限】：如果去名字叫「小葉」的頻道，直接給固定最完美的專屬設定
+    if (finalName === '小葉') {
       setTargetChannel({
         name: '小葉',
-        avatar: avatarImage, // 強制使用精美的小葉大頭貼
+        avatar: avatarImage,
         bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！'
       });
-    } else {
-      // 👤 以下是你原本處理其他所有影片或訪客的程式碼（完全不變動）
-      setTargetChannel({
-        name: channelName || localUsername,
-        avatar: channelAvatar || GUEST_AVATAR,
-        bio: getRandomBio() 
-      });
+      // 🎯 直接把狀態同步丟給您畫面上正在使用的 targetChannelUserId 變數
+      setTargetChannelUserId('shiauye_official'); 
+      
+      setCurrentView('channel');
+      setChannelTab('videos');
+      forceScrollToTop();
+      setIsChannelLoading(false); 
+      return; 
     }
 
+    // --- 👤 2. 直接對準你的 channels 資料集合，處理 userId 的 Firebase 自動補增欄位 ---
+    let finalId = '';
+
+    try {
+      // 🎯 核心精準對齊：把舊查詢改成比對您 Firebase 裡真正的欄位名稱 'channelName'
+      const q = query(collection(db, 'channels'), where('channelName', '==', finalName));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        // 抓到了這個頻道在 Firebase 的 Document
+        const channelDoc = querySnapshot.docs[0];
+        const channelData = channelDoc.data();
+
+        // 💡 如果 Firebase 裡本來就已經有 userId 這個欄位了，直接拿來用
+        if (channelData.userId) {
+          finalId = channelData.userId;
+        } else {
+          // 💾 第一次點進來：Firebase 有這筆資料但「沒有 userId 欄位」
+          const randomHex = Math.random().toString(16).substring(2, 6); 
+          const generatedId = `user_${randomHex}`; // 生成要丟過去的 ID
+          finalId = generatedId;
+
+          // 🔥【就是這行把 ID 丟過去！】：立刻將生成的 userId 欄位，用 updateDoc 寫入加進 Firebase 中！
+          await updateDoc(doc(db, 'channels', channelDoc.id), {
+            userId: generatedId
+          });
+          console.log(`成功在 Firebase 的 channels 中為 ${finalName} 補上並丟入新欄位 userId: ${generatedId}`);
+        }
+      } else {
+        // 防呆：萬一 channels 表裡完全沒這筆頻道名稱，前端直接生一個確保不壞軌
+        const randomHex = Math.random().toString(16).substring(2, 6); 
+        finalId = `user_${randomHex}`;
+      }
+    } catch (err) {
+      console.error("Firebase channels 資料表讀取或更新 userId 失敗:", err);
+      finalId = `user_temp`;
+    }
+
+    // 💡 3. 設定頻道的基本資料
+    setTargetChannel({
+      name: finalName,
+      avatar: finalAvatar,
+      bio: getRandomBio()
+    });
+
+    // 🎯 4. 將最終不論是「撈出來的」還是「剛生成丟進 Firebase 的」ID，同步給您畫面上綁定的變數！
+    setTargetChannelUserId(finalId);
+
+    // 💡 5. 切換畫面視圖
     setCurrentView('channel');
     setChannelTab('videos');
     forceScrollToTop();
+
+    // 💡 6. 關閉載入圈圈
+    setIsChannelLoading(false); 
   };
 
   useEffect(() => {
