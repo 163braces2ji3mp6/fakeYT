@@ -310,18 +310,37 @@ export default function App() {
 
     // ⭐同步 Firebase
     try {
-      await updateDoc(
-        doc(db, 'Channels', localUsername),
-        {
-          avatar: avatarUrl
-        }
+      const q = query(
+        collection(db, 'Channels'),
+        where(
+          'channelName',
+          '==',
+          localUsername
+        )
       );
+
+      const snapshot = await getDocs(q);
+
+      if (!snapshot.empty) {
+        const channelRef =
+          snapshot.docs[0].ref;
+
+        await updateDoc(channelRef, {
+          avatar: avatarUrl
+        });
+      }
     } catch (err) {
-      console.error('更新 avatar 失敗:', err);
+      console.error(
+        '更新 avatar 失敗:',
+        err
+      );
     }
 
     // 如果正在看自己的頻道
-    if (targetChannel?.name === localUsername) {
+    if (
+      targetChannel?.name ===
+      localUsername
+    ) {
       setTargetChannel(prev => ({
         ...prev,
         avatar: avatarUrl
