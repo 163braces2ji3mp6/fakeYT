@@ -632,64 +632,56 @@ export default function App() {
     }
   }, [currentUserAvatar]);
   useEffect(() => {
-    if (!currentUserId) return;
+  if (!currentUserId) return;
 
-    // 更新首頁影片
-    setVideos(prev =>
-      prev.map(video =>
-        video.userId === currentUserId
-          ? { ...video, avatar: currentUserAvatar }
-          : video
-      )
-    );
+  // 更新首頁影片
+  setVideos(prev =>
+    Array.isArray(prev)
+      ? prev.map(video =>
+          video.userId === currentUserId ||
+          video.channel === localUsername
+            ? { ...video, avatar: currentUserAvatar }
+            : video
+        )
+      : prev
+  );
 
-    // 更新目前觀看影片
-    setSelectedVideo(prev =>
-      prev && prev.userId === currentUserId
-        ? { ...prev, avatar: currentUserAvatar }
-        : prev
-    );
+  // 更新 Firebase 原始影片
+  setRawFirebaseVideos(prev =>
+    Array.isArray(prev)
+      ? prev.map(video =>
+          video.userId === currentUserId ||
+          video.channel === localUsername
+            ? { ...video, avatar: currentUserAvatar }
+            : video
+        )
+      : prev
+  );
 
-    // 更新頻道頁
-    setTargetChannel(prev =>
-      prev && prev.name === localUsername
-        ? { ...prev, avatar: currentUserAvatar }
-        : prev
-    );
-
-    // 更新留言
-    setComments(prev =>
-      prev.map(comment =>
-        comment.userId === currentUserId
-          ? { ...comment, avatar: currentUserAvatar }
-          : comment
-      )
-    );
-
-    // 更新回覆
-    setCommentReplies(prev => {
-      const updated = {};
-
-      Object.keys(prev || {}).forEach(key => {
-        updated[key] = prev[key].map(reply =>
-          reply.userId === currentUserId
-            ? { ...reply, avatar: currentUserAvatar }
-            : reply
-        );
-      });
-
-      return updated;
-    });
-
-    // mock 影片也一起更新
-    if (Array.isArray(MOCK_VIDEOS)) {
-      MOCK_VIDEOS.forEach(video => {
-        if (video.userId === currentUserId) {
-          video.avatar = currentUserAvatar;
+  // 如果目前開的是自己的頻道，同步更新頻道頁頭像
+  setTargetChannel(prev =>
+    prev &&
+    (prev.userId === currentUserId ||
+      prev.name === localUsername)
+      ? {
+          ...prev,
+          avatar: currentUserAvatar
         }
-      });
-    }
-  }, [currentUserAvatar, currentUserId, localUsername]);
+      : prev
+  );
+
+  // mock 資料同步
+  if (Array.isArray(MOCK_VIDEOS)) {
+    MOCK_VIDEOS.forEach(video => {
+      if (
+        video.userId === currentUserId ||
+        video.channel === localUsername
+      ) {
+        video.avatar = currentUserAvatar;
+      }
+    });
+  }
+}, [currentUserAvatar, currentUserId, localUsername]);
 
   const forceScrollToTop = () => {
     window.scrollTo(0, 0);
@@ -1402,8 +1394,16 @@ export default function App() {
                               <span className="video-duration">{video.duration}</span>
                             </div>
                             <div className="video-info-section">
-                              <img src={video.avatar} alt={video.channel} className="channel-avatar channel-avatar-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer' }} />
-                              <div>
+                                <img
+                                  src={
+                                    video.userId === currentUserId ||
+                                    video.channel === localUsername
+                                      ? currentUserAvatar
+                                      : (video.avatar || GUEST_AVATAR)
+                                  }
+                                  className="w-9 h-9 rounded-full"
+                                  alt=""
+                                />                              <div>
                                 <h3 className="video-title">{video.title}</h3>
                                 <p className="channel-name channel-name-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer', display: 'inline-block' }}>{video.channel}</p>
                                 <p className="video-meta">{formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}</p>
