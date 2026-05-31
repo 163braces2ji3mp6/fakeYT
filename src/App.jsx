@@ -487,7 +487,7 @@ export default function App() {
     forceScrollToTop(); 
   };
 
-  // 🟢 防閃爍大寫版：加入了最低轉圈時間（600ms），確保資料載入完畢才優雅開門
+  // 🟢 防閃爍大寫版 + 核心修正：綁定固定用戶 ID（解決改名變新帳號問題）
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
     if (e) e.stopPropagation(); 
     
@@ -509,7 +509,7 @@ export default function App() {
         name: '小葉',
         avatar: avatarImage,
         bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！',
-        userId: 'shiauye_official' // 👈 核心修正：將固定專屬 ID 包進快取物件
+        userId: 'shiauye_official'
       };
       setTargetChannel(shiauyeChannel);
       setTargetChannelUserId('shiauye_official'); 
@@ -534,35 +534,57 @@ export default function App() {
     let finalId = '';
 
     try {
-      // 🎯 使用大寫 'Channels'
-      const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
-      const querySnapshot = await getDocs(q);
-      
-      const randomHex = Math.random().toString(16).substring(2, 6); 
-      const generatedId = `user_${randomHex}`;
+      // 🟢 核心修正：判斷是不是自己的頻道
+      const isMyOwnChannel = (finalName === localUsername);
 
-      if (!querySnapshot.empty) {
-        const channelDoc = querySnapshot.docs[0];
-        const channelData = channelDoc.data();
+      // 如果是自己的頻道，不再盲目用名字查，而是直接用固定不變的 currentUserId 當作文件 ID 去讀取！
+      // 如果是別人的頻道，才用名字去搜尋 Channels 集合
+      if (isMyOwnChannel) {
+        const docRef = doc(db, 'Channels', currentUserId);
+        const docSnap = await getDoc(docRef); // 💡 注意：如果頂部沒有引入 getDoc，請在 import 補上
 
-        if (channelData.userId) {
-          finalId = channelData.userId;
+        if (docSnap.exists()) {
+          const channelData = docSnap.data();
+          finalId = channelData.userId || currentUserId;
+          
+          // 順便檢查如果資料庫內的名字跟現在不一樣（代表剛改完名），自動幫忙更新同步資料庫
+          if (channelData.channelName !== finalName) {
+            await updateDoc(docRef, { channelName: finalName });
+          }
         } else {
-          finalId = generatedId;
-          await updateDoc(doc(db, 'Channels', channelDoc.id), {
-            userId: generatedId
+          // 自己是全新帳號，第一次登入建立，直接用 currentUserId 作為文件名稱
+          finalId = currentUserId;
+          await setDoc(docRef, {
+            channelName: finalName,
+            avatar: finalAvatar,
+            userId: finalId,
+            subscriberCount: 0,
+            createdAt: new Date().toISOString()
           });
         }
       } else {
-        // Firebase 完全沒有這個頻道，幫他建立
-        finalId = generatedId;
-        await setDoc(doc(db, 'Channels', finalName), {
-          channelName: finalName,
-          avatar: finalAvatar,
-          userId: generatedId,
-          subscriberCount: 0,
-          createdAt: new Date().toISOString()
-        });
+        // 🔹 點擊別人的頻道：維持原本的 query 邏輯
+        const q = query(collection(db, 'Channels'), where('channelName', '==', finalName));
+        const querySnapshot = await getDocs(q);
+        
+        const randomHex = Math.random().toString(16).substring(2, 6); 
+        const generatedId = `user_${randomHex}`;
+
+        if (!querySnapshot.empty) {
+          const channelDoc = querySnapshot.docs[0];
+          const channelData = channelDoc.data();
+          finalId = channelData.userId || channelDoc.id;
+        } else {
+          // 完全沒有這個別人的頻道，幫他建立
+          finalId = generatedId;
+          await setDoc(doc(db, 'Channels', finalName), {
+            channelName: finalName,
+            avatar: finalAvatar,
+            userId: generatedId,
+            subscriberCount: 0,
+            createdAt: new Date().toISOString()
+          });
+        }
       }
 
     } catch (err) {
@@ -579,23 +601,21 @@ export default function App() {
       name: finalName,
       avatar: finalAvatar,
       bio: initialBio,
-      userId: finalId // 👈 補上剛查到的最新 ID
+      userId: finalId
     };
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
     // 2. 🌟【核心修正：防閃爍時間計算】
-    const minimumDelay = 650; // 最少要轉 800 毫秒
+    const minimumDelay = 650; // 最少要轉 650 毫秒
     const elapsedTime = Date.now() - startTime; // 計算 Firebase 耗費了多少時間
     const remainingTime = minimumDelay - elapsedTime; // 計算還差多少時間才滿 minimumDelay
 
     if (remainingTime > 0) {
-      // 如果 Firebase 跑太快，我們就用 setTimeout 補足剩下的時間，再關閉動畫
       setTimeout(() => {
         setIsChannelLoading(false);
       }, remainingTime);
     } else {
-      // 如果 Firebase 本身就讀很久（超過600ms），那就直接關閉
       setIsChannelLoading(false);
     }
   };
