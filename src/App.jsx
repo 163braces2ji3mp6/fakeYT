@@ -295,17 +295,32 @@ export default function App() {
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
-  const handleRandomAvatar = () => {
+  const handleRandomAvatar = async () => {
     const avatarUrl = generateRandomAvatar();
-    setPreviewAvatar(avatarUrl);
 
-    // 更新目前登入者
+    // 更新畫面
+    setPreviewAvatar(avatarUrl);
     setCurrentUserAvatar(avatarUrl);
 
-    // 存進 localStorage，重新整理也不會變回去
-    localStorage.setItem('device_user_avatar', avatarUrl);
+    // 存本機
+    localStorage.setItem(
+      'device_user_avatar',
+      avatarUrl
+    );
 
-    // 如果正在看自己的頻道，同步更新頻道頭貼
+    // ⭐同步 Firebase
+    try {
+      await updateDoc(
+        doc(db, 'Channels', localUsername),
+        {
+          avatar: avatarUrl
+        }
+      );
+    } catch (err) {
+      console.error('更新 avatar 失敗:', err);
+    }
+
+    // 如果正在看自己的頻道
     if (targetChannel?.name === localUsername) {
       setTargetChannel(prev => ({
         ...prev,
@@ -314,7 +329,7 @@ export default function App() {
     }
 
     showToast('已更換隨機頭貼');
-    };
+  };
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
