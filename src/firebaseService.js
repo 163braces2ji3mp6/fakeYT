@@ -148,7 +148,7 @@ export function subscribeToChannelData(channelName, callback) {
       callback(docSnapshot.data());
     } else {
       // 💡 如果雲端尚未存在這個帳號，自動建立，並給予一個隨機的「基礎訂閱人數」充場面（1000 ~ 50000）
-      const baseSubs = Math.floor(1000 + Math.random() * 9000);
+      const baseSubs = 0;
       const initialData = {
         name: channelName,
         subscriberCount: baseSubs,
