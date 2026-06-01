@@ -316,41 +316,17 @@ export default function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
 
-  const handleRandomAvatar = async () => {
+  const handleRandomAvatar = () => {
     const avatarUrl = generateRandomAvatar();
 
     setPreviewAvatar(avatarUrl);
-    setCurrentUserAvatar(avatarUrl);
-    localStorage.setItem('device_user_avatar', avatarUrl);
 
-    try {
-      await syncCurrentUserProfileEverywhere({
-        avatarUrl,
-        fromName: localUsername,
-        fromUserId: currentUserId,
-        toName: localUsername,
-        toUserId: currentUserId,
-        subscriberCount: null,
-        rename: false
-      });
-
-      await syncAvatarToFirebase(avatarUrl);
-
-      await repairMyVideos({
-        channelName: localUsername,
-        avatarUrl
-      });
-
-      setTargetChannel(prev =>
-        prev && (prev.name === localUsername || prev.userId === currentUserId)
-          ? { ...prev, avatar: avatarUrl }
-          : prev
-      );
-    } catch (err) {
-      console.error('更新頭貼失敗:', err);
-    }
+    setTargetChannel(prev =>
+      prev && (prev.name === localUsername || prev.userId === currentUserId)
+        ? { ...prev, avatar: avatarUrl }
+        : prev
+    );
   };
-
 
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
@@ -684,6 +660,45 @@ export default function App() {
       showToast('帳號名稱/頭貼已同步更新到 Firebase！');
     } catch (err) {
       console.error("改名並搬移中文檔案失敗:", err);
+    }
+    const avatarUrl = previewAvatar;
+
+    if (!avatarUrl) return;
+
+    if (avatarUrl === currentUserAvatar) {
+      showToast('頭像沒有變更');
+      return;
+    }
+    setCurrentUserAvatar(avatarUrl);
+    localStorage.setItem('device_user_avatar', avatarUrl);
+
+    try {
+      await syncCurrentUserProfileEverywhere({
+        avatarUrl,
+        fromName: localUsername,
+        fromUserId: currentUserId,
+        toName: localUsername,
+        toUserId: currentUserId,
+        subscriberCount: null,
+        rename: false
+      });
+
+      await syncAvatarToFirebase(avatarUrl);
+
+      await repairMyVideos({
+        channelName: localUsername,
+        avatarUrl
+      });
+
+      setTargetChannel(prev =>
+        prev && (prev.name === localUsername || prev.userId === currentUserId)
+          ? { ...prev, avatar: avatarUrl }
+          : prev
+      );
+
+      showToast('頭像已更新', 'success');
+    } catch (err) {
+      console.error('更新頭貼失敗:', err);
     }
   };
 
