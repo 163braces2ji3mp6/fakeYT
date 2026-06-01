@@ -1355,6 +1355,9 @@ export default function App() {
     channelName = localUsername,
     avatarUrl = currentUserAvatar
   } = {}) => {
+    console.log("channelName =", channelName);
+
+    console.log("currentUserId =", currentUserId);
     try {
       if (!channelName) return;
 
@@ -1366,6 +1369,15 @@ export default function App() {
 
       for (const videoDoc of snapshot.docs) {
         const data = videoDoc.data();
+
+        console.log(
+          "影片ID:",
+          videoDoc.id,
+          "影片channel:",
+          data.channel,
+          "目前channel:",
+          channelName
+        );
 
         const videoChannel = String(
           data.channel ?? ''
