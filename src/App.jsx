@@ -942,7 +942,7 @@ export default function App() {
 
         // ✅ 順便把舊影片頭貼同步
         const videosSnapshot = await getDocs(
-          collection(db, 'videos')
+          collection(db, 'Videos')
         );
 
         for (const videoDoc of videosSnapshot.docs) {
@@ -959,7 +959,7 @@ export default function App() {
 
           if (isSameChannel && needsUpdate) {
             await setDoc(
-              doc(db, 'videos', videoDoc.id),
+              doc(db, 'Videos', videoDoc.id),
               {
                 ...videoData,
                 userId: videoData.userId || finalId,
@@ -1321,7 +1321,7 @@ export default function App() {
       }
     }
     // videos
-    const videosSnapshot = await getDocs(collection(db, 'videos'));
+    const videosSnapshot = await getDocs(collection(db, 'Videos'));
 
     for (const docSnap of videosSnapshot.docs) {
       const data = docSnap.data();
@@ -1339,7 +1339,7 @@ export default function App() {
       }
 
       await setDoc(
-        doc(db, 'videos', docSnap.id),
+        doc(db, 'Videos', docSnap.id),
         {
           ...data,
           userId: currentUserId,
@@ -1362,7 +1362,7 @@ export default function App() {
       if (!channelName) return;
 
       const snapshot = await getDocs(
-        collection(db, 'videos')
+        collection(db, 'Videos')
       );
 
       let updateCount = 0;
@@ -1401,7 +1401,7 @@ export default function App() {
         }
 
         await updateDoc(
-          doc(db, 'videos', videoDoc.id),
+          doc(db, 'Videos', videoDoc.id),
           updates
         );
 
