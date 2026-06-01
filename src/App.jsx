@@ -564,7 +564,11 @@ export default function App() {
         data.avatar !== avatarUrl ||
         data.creatorAvatar !== avatarUrl;
 
-      if (!needsAvatarUpdate && !rename) return null;
+      const needsIdentityBackfill =
+        String(data.userId ?? '') !== String(toUserId) ||
+        String(data.author ?? '') !== String(toName);
+
+      if (!needsAvatarUpdate && !needsIdentityBackfill && !rename) return null;
 
       const updates = {};
 
@@ -573,9 +577,13 @@ export default function App() {
         updates.creatorAvatar = avatarUrl;
       }
 
+      if (needsIdentityBackfill || rename) {
+        updates.userId = toUserId;
+        updates.author = toName;
+      }
+
       if (rename) {
         updates.channel = toName;
-        updates.author = toName;
         updates.creatorName = toName;
         updates.username = toName;
       }
@@ -945,7 +953,9 @@ export default function App() {
               {
                 ...videoData,
                 avatar: resolvedAvatar,
-                creatorAvatar: resolvedAvatar
+                creatorAvatar: resolvedAvatar,
+                userId: finalId,
+                author: finalName
               },
               { merge: true }
             );
@@ -1312,7 +1322,12 @@ export default function App() {
         data.author === localUsername ||
         data.channel === localUsername
       ) {
-        if (data.avatar === newAvatar && data.creatorAvatar === newAvatar) {
+        if (
+          data.avatar === newAvatar &&
+          data.creatorAvatar === newAvatar &&
+          String(data.userId ?? '') === String(currentUserId) &&
+          String(data.author ?? '') === String(localUsername)
+        ) {
           continue;
         }
 
@@ -1321,7 +1336,9 @@ export default function App() {
           {
             ...data,
             avatar: newAvatar,
-            creatorAvatar: newAvatar
+            creatorAvatar: newAvatar,
+            userId: currentUserId,
+            author: localUsername
           },
           { merge: true }
         );
@@ -1354,6 +1371,8 @@ export default function App() {
       const dataToUpload = {
         title: newVideoTitle,
         channel: localUsername, 
+        author: localUsername,
+        userId: currentUserId,
         views: 0,            
         time: "剛剛",            
         duration: finalDuration, 
