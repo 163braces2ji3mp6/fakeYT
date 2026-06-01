@@ -206,8 +206,8 @@ export default function App() {
 
   const toastTimeoutRef = useRef(null);
 
-  const showToast = (message, type = 'success') => {
-
+  // 加上第三個參數 onCloseCallback
+  const showToast = (message, type = 'success', onCloseCallback = null) => {
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
     }
@@ -223,6 +223,10 @@ export default function App() {
         ...prev,
         show: false
       }));
+      // 🟢 如果有傳入 Callback，就在 Toast 關閉時執行它
+      if (onCloseCallback) {
+        onCloseCallback();
+      }
     }, 3000);
   };
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
@@ -724,15 +728,13 @@ export default function App() {
       );
 
       showToast(
-        isSameUsername
-          ? '頭貼已更新！'
-          : '帳號名稱與頭貼已同步更新！',
-        'success'
+        isSameUsername ? '頭貼已更新！' : '帳號名稱與頭貼已同步更新！',
+        'success',
+        () => {
+          // 🟢 當 Toast 消失時，才把 Buffer 關掉
+          setIsPageLoading(false);
+        }
       );
-
-      setTimeout(() => {
-        setIsPageLoading(false);
-      }, 800);
 
     } catch (err) {
       console.error(
