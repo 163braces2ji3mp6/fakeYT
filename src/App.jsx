@@ -607,8 +607,9 @@ export default function App() {
     const oldUsername = localUsername;
     const newUsername = inputUsername.trim();
     const isSameUsername = oldUsername === newUsername;
+    const avatarUrl = previewAvatar || currentUserAvatar;
 
-    if (isSameUsername && previewAvatar === currentUserAvatar) {
+    if (isSameUsername && avatarUrl === currentUserAvatar) {
       setIsSettingsModalOpen(false);
       return;
     }
@@ -622,9 +623,12 @@ export default function App() {
       }
     }
 
+    setIsPageLoading(true);
+
     try {
       const oldDocRef = doc(db, 'Channels', oldUsername);
       const oldDocSnap = await getDoc(oldDocRef);
+
       const currentSubCount = oldDocSnap.exists()
         ? (oldDocSnap.data().subscriberCount || 0)
         : 0;
@@ -634,7 +638,7 @@ export default function App() {
       }
 
       await syncCurrentUserProfileEverywhere({
-        avatarUrl: previewAvatar,
+        avatarUrl,
         fromName: oldUsername,
         fromUserId: currentUserId,
         toName: newUsername,
@@ -643,62 +647,66 @@ export default function App() {
         rename: !isSameUsername
       });
 
-      await repairMyVideos({
-        channelName: newUsername,
-        avatarUrl: previewAvatar
-      });
-
-      setCurrentUserAvatar(previewAvatar);
-      setLocalUsername(newUsername);
-      setInputUsername(newUsername);
-
-      localStorage.setItem('device_user_name', newUsername);
-      localStorage.setItem('device_user_avatar', previewAvatar);
-      localStorage.setItem('device_user_id', currentUserId);
-
-      setIsSettingsModalOpen(false);
-      showToast('帳號名稱/頭貼已同步更新到 Firebase！');
-    } catch (err) {
-      console.error("改名並搬移中文檔案失敗:", err);
-    }
-    const avatarUrl = previewAvatar;
-
-    if (!avatarUrl) return;
-
-    if (avatarUrl === currentUserAvatar) {
-      showToast('頭像沒有變更');
-      return;
-    }
-    setCurrentUserAvatar(avatarUrl);
-    localStorage.setItem('device_user_avatar', avatarUrl);
-
-    try {
-      await syncCurrentUserProfileEverywhere({
-        avatarUrl,
-        fromName: localUsername,
-        fromUserId: currentUserId,
-        toName: localUsername,
-        toUserId: currentUserId,
-        subscriberCount: null,
-        rename: false
-      });
-
       await syncAvatarToFirebase(avatarUrl);
 
       await repairMyVideos({
-        channelName: localUsername,
+        channelName: newUsername,
         avatarUrl
       });
 
+      setCurrentUserAvatar(avatarUrl);
+
       setTargetChannel(prev =>
-        prev && (prev.name === localUsername || prev.userId === currentUserId)
-          ? { ...prev, avatar: avatarUrl }
+        prev && (
+          prev.name === oldUsername ||
+          prev.userId === currentUserId
+        )
+          ? {
+              ...prev,
+              name: newUsername,
+              avatar: avatarUrl
+            }
           : prev
       );
 
-      showToast('頭像已更新', 'success');
+      setLocalUsername(newUsername);
+      setInputUsername(newUsername);
+
+      localStorage.setItem(
+        'device_user_name',
+        newUsername
+      );
+
+      localStorage.setItem(
+        'device_user_avatar',
+        avatarUrl
+      );
+
+      localStorage.setItem(
+        'device_user_id',
+        currentUserId
+      );
+
+      setIsSettingsModalOpen(false);
+
+      showToast(
+        isSameUsername
+          ? '頭貼已更新！'
+          : '帳號名稱與頭貼已同步更新！',
+        'success'
+      );
     } catch (err) {
-      console.error('更新頭貼失敗:', err);
+      console.error(
+        '改名並搬移中文檔案失敗:',
+        err
+      );
+
+      showToast(
+        '更新失敗，請稍後再試',
+        'error'
+      );
+    } finally {
+      setIsPageLoading(false);
     }
   };
 
