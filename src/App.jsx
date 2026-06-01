@@ -2340,111 +2340,111 @@ export default function App() {
                           <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                         </div>
                         <form
-              onSubmit={handleUpdateUsernameSubmit}
-              className="modal-body-form"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '16px'
-              }}
-            >
-            
-              {/* 頭像設定 */}
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '12px'
-                }}
-              >
-                <img
-                  src={previewAvatar || unifiedAvatar}
-                  alt={localUsername}
-                  className="w-9 h-9 rounded-full object-cover cursor-pointer"
-                  onClick={() =>
-                    setIsProfileOpen(prev => !prev)
-                  }
-                  onError={e => {
-                    e.currentTarget.src =
-                      GUEST_AVATAR;
-                  }}
-                />
+                    onSubmit={handleUpdateUsernameSubmit}
+                    className="modal-body-form"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '16px'
+                    }}
+                  >
+                  
+                    {/* 頭像設定 */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}
+                    >
+                      <img
+                        src={previewAvatar || unifiedAvatar}
+                        alt={localUsername}
+                        className="avatar-preview"
+                        onClick={() =>
+                          setIsProfileOpen(prev => !prev)
+                        }
+                        onError={e => {
+                          e.currentTarget.src =
+                            GUEST_AVATAR;
+                        }}
+                      />
 
-                <button
-                  type="button"
-                  onClick={handleRandomAvatar}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: '#272727',
-                    color: '#fff',
-                    fontSize: '14px'
-                  }}
-                >
-                  🎲 隨機頭像
-                </button>
+                      <button
+                        type="button"
+                        onClick={handleRandomAvatar}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: '#272727',
+                          color: '#fff',
+                          fontSize: '14px'
+                        }}
+                      >
+                        🎲 隨機頭像
+                      </button>
+                    </div>
+                      
+                    {/* 名稱設定 */}
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: '#aaa',
+                          fontSize: '14px'
+                        }}
+                      >
+                        自訂帳號名稱
+                      </label>
+                      
+                      <input
+                        className="comment-text-input"
+                        type="text"
+                        placeholder="請輸入您的新名稱..."
+                        value={inputUsername}
+                        onChange={(e) => setInputUsername(e.target.value)}
+                        required
+                      />
+                    </div>
+                      
+                    <div
+                      className="modal-footer-actions"
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => setIsSettingsModalOpen(false)}
+                      >
+                        取消
+                      </button>
+                    
+                      <button
+                        type="submit"
+                        className="comment-submit-btn"
+                        style={{ height: '36px' }}
+                      >
+                        確認儲存
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </div>
-                
-              {/* 名稱設定 */}
-              <div
-                className="form-group"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px'
-                }}
-              >
-                <label
-                  style={{
-                    color: '#aaa',
-                    fontSize: '14px'
-                  }}
-                >
-                  自訂帳號名稱
-                </label>
-                
-                <input
-                  className="comment-text-input"
-                  type="text"
-                  placeholder="請輸入您的新名稱..."
-                  value={inputUsername}
-                  onChange={(e) => setInputUsername(e.target.value)}
-                  required
-                />
-              </div>
-                
-              <div
-                className="modal-footer-actions"
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: '12px',
-                  marginTop: '12px'
-                }}
-              >
-                <button
-                  type="button"
-                  className="clear-btn"
-                  onClick={() => setIsSettingsModalOpen(false)}
-                >
-                  取消
-                </button>
-              
-                <button
-                  type="submit"
-                  className="comment-submit-btn"
-                  style={{ height: '36px' }}
-                >
-                  確認儲存
-                </button>
-              </div>
-            </form>
+            )}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        );
+      }

@@ -1605,3 +1605,12 @@ html, body, #root {
 .upload-video-btn .upload-btn-text {
   line-height: 1 !important;
 }
+
+.avatar-preview {
+  width: 100px !important;       /* 💡 加上 !important 確保不被其他全域 img 樣式覆蓋 */
+  height: 100px !important;      /* 💡 鎖死高度 */
+  border-radius: 50% !important;  /* 💡 確保一定是完美正圓 */
+  object-fit: cover !important;   /* 💡 防止圖片被壓扁或拉長變形 */
+  margin: 0 auto 15px auto !important; /* 💡 確保在視窗中線絕對置中，並跟下方留出距離 */
+  display: block !important;
+}
