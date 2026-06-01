@@ -334,7 +334,10 @@ export default function App() {
         rename: false
       });
 
-      await repairMyVideos();
+      await repairMyVideos({
+        channelName: localUsername,
+        avatarUrl
+      });
 
       setTargetChannel(prev =>
         prev && (prev.name === localUsername || prev.userId === currentUserId)
@@ -566,23 +569,20 @@ export default function App() {
         data.avatar !== avatarUrl ||
         data.creatorAvatar !== avatarUrl;
 
-      const needsIdentityUpdate =
-        rename ||
-        data.userId !== toUserId ||
-        data.author !== toName;
+      const needsUserIdUpdate =
+        data.userId !== toUserId || !data.userId;
 
-      if (!needsAvatarUpdate && !needsIdentityUpdate) return null;
+      if (!needsAvatarUpdate && !needsUserIdUpdate && !rename) return null;
 
       const updates = {};
 
-      if (needsAvatarUpdate) {
+      if (needsAvatarUpdate || rename) {
         updates.avatar = avatarUrl;
         updates.creatorAvatar = avatarUrl;
       }
 
-      if (needsIdentityUpdate) {
+      if (needsUserIdUpdate || rename) {
         updates.userId = toUserId;
-        updates.author = toName;
       }
 
       if (rename) {
@@ -665,7 +665,10 @@ export default function App() {
         rename: !isSameUsername
       });
 
-      await repairMyVideos();
+      await repairMyVideos({
+        channelName: newUsername,
+        avatarUrl: previewAvatar
+      });
 
       setCurrentUserAvatar(previewAvatar);
       setLocalUsername(newUsername);
@@ -944,19 +947,20 @@ export default function App() {
           const videoData = videoDoc.data();
 
           const isSameChannel =
-            videoData.userId === finalId ||
-            videoData.author === finalName ||
-            videoData.channel === finalName;
+            String(videoData.channel ?? '') === String(finalName) ||
+            String(videoData.userId ?? '') === String(finalId);
 
-          const avatarMismatch =
+          const needsUpdate =
             videoData.avatar !== resolvedAvatar ||
-            videoData.creatorAvatar !== resolvedAvatar;
+            videoData.creatorAvatar !== resolvedAvatar ||
+            !videoData.userId;
 
-          if (isSameChannel && avatarMismatch) {
+          if (isSameChannel && needsUpdate) {
             await setDoc(
               doc(db, 'videos', videoDoc.id),
               {
                 ...videoData,
+                userId: videoData.userId || finalId,
                 avatar: resolvedAvatar,
                 creatorAvatar: resolvedAvatar
               },
@@ -1320,63 +1324,67 @@ export default function App() {
     for (const docSnap of videosSnapshot.docs) {
       const data = docSnap.data();
 
-      if (
-        data.userId === currentUserId ||
-        data.author === localUsername ||
-        data.channel === localUsername
-      ) {
-        if (
-          data.avatar === newAvatar &&
-          data.creatorAvatar === newAvatar &&
-          data.userId === currentUserId &&
-          data.author === localUsername
-        ) {
-          continue;
-        }
-
-        await setDoc(
-          doc(db, 'videos', docSnap.id),
-          {
-            ...data,
-            userId: currentUserId,
-            author: localUsername,
-            avatar: newAvatar,
-            creatorAvatar: newAvatar
-          },
-          { merge: true }
-        );
+      if (String(data.channel ?? '') !== String(localUsername)) {
+        continue;
       }
+
+      if (
+        data.avatar === newAvatar &&
+        data.creatorAvatar === newAvatar &&
+        data.userId === currentUserId
+      ) {
+        continue;
+      }
+
+      await setDoc(
+        doc(db, 'videos', docSnap.id),
+        {
+          ...data,
+          userId: currentUserId,
+          avatar: newAvatar,
+          creatorAvatar: newAvatar
+        },
+        { merge: true }
+      );
     }
   };
 
-  const repairMyVideos = async () => {
+  const repairMyVideos = async ({
+    channelName = localUsername,
+    avatarUrl = previewAvatar || currentUserAvatar || unifiedAvatar
+  } = {}) => {
     try {
-      if (!currentUserId || localUsername === '載入中...') return;
+      if (!currentUserId || !channelName) return;
 
       const snapshot = await getDocs(collection(db, 'videos'));
       const batch = writeBatch(db);
-      const avatarToUse = currentUserAvatar || previewAvatar || unifiedAvatar;
 
       snapshot.docs.forEach((videoDoc) => {
         const data = videoDoc.data();
 
         const belongsToMe =
-          String(data.channel ?? '') === String(localUsername) ||
-          String(data.author ?? '') === String(localUsername) ||
-          String(data.userId ?? '') === String(currentUserId);
+          String(data.channel ?? '') === String(channelName);
 
         if (!belongsToMe) return;
 
-        batch.set(
-          doc(db, 'videos', videoDoc.id),
-          {
-            userId: currentUserId,
-            author: localUsername,
-            avatar: avatarToUse,
-            creatorAvatar: avatarToUse
-          },
-          { merge: true }
-        );
+        const updates = {};
+
+        if (data.avatar !== avatarUrl || data.creatorAvatar !== avatarUrl) {
+          updates.avatar = avatarUrl;
+          updates.creatorAvatar = avatarUrl;
+        }
+
+        if (data.userId !== currentUserId || !data.userId) {
+          updates.userId = currentUserId;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          batch.set(
+            doc(db, 'videos', videoDoc.id),
+            updates,
+            { merge: true }
+          );
+        }
       });
 
       await batch.commit();
@@ -1409,8 +1417,7 @@ export default function App() {
     try {
       const dataToUpload = {
         title: newVideoTitle,
-        channel: localUsername, 
-        author: localUsername,
+        channel: localUsername,
         userId: currentUserId,
         views: 0,            
         time: "剛剛",            
