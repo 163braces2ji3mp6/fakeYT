@@ -2303,7 +2303,7 @@ export default function App() {
                 }}
               >
                 <img
-                  src={unifiedAvatar}
+                  src={previewAvatar || unifiedAvatar}
                   alt={localUsername}
                   className="w-9 h-9 rounded-full object-cover cursor-pointer"
                   onClick={() =>
