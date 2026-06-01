@@ -511,16 +511,31 @@ export default function App() {
       );
     };
 
-    const updateMatchingDocs = async (collectionName, buildUpdates) => {
-      const snapshot = await getDocs(collection(db, collectionName));
+    const updateMatchingDocs = async (
+      collectionName,
+      buildUpdates
+    ) => {
+      const snapshot = await getDocs(
+        collection(db, collectionName)
+      );
 
       for (const item of snapshot.docs) {
         const data = item.data();
-        if (!matchesCurrentIdentity(data)) continue;
+
+        if (!matchesCurrentIdentity(data)) {
+          continue;
+        }
 
         const updates = buildUpdates(data);
-        if (updates && Object.keys(updates).length > 0) {
-          await updateDoc(doc(db, collectionName, item.id), updates);
+
+        if (
+          updates &&
+          Object.keys(updates).length > 0
+        ) {
+          await updateDoc(
+            doc(db, collectionName, item.id),
+            updates
+          );
         }
       }
     };
@@ -533,7 +548,8 @@ export default function App() {
     };
 
     if (subscriberCount !== null) {
-      channelPayload.subscriberCount = subscriberCount;
+      channelPayload.subscriberCount =
+        subscriberCount;
     }
 
     await setDoc(
@@ -542,15 +558,27 @@ export default function App() {
       { merge: true }
     );
 
-    await updateMatchingDocs('videos', (data) => {
+    // 讓 Buffer 有機會先 render 出來
+    await new Promise(resolve =>
+      setTimeout(resolve, 50)
+    );
+
+    await updateMatchingDocs('Videos', (data) => {
       const needsAvatarUpdate =
         data.avatar !== avatarUrl ||
         data.creatorAvatar !== avatarUrl;
 
       const needsUserIdUpdate =
-        data.userId !== toUserId || !data.userId;
+        data.userId !== toUserId ||
+        !data.userId;
 
-      if (!needsAvatarUpdate && !needsUserIdUpdate && !rename) return null;
+      if (
+        !needsAvatarUpdate &&
+        !needsUserIdUpdate &&
+        !rename
+      ) {
+        return null;
+      }
 
       const updates = {};
 
@@ -573,7 +601,9 @@ export default function App() {
     });
 
     await updateMatchingDocs('comments', () => {
-      const updates = { avatar: avatarUrl };
+      const updates = {
+        avatar: avatarUrl
+      };
 
       if (rename) {
         updates.author = toName;
@@ -584,7 +614,9 @@ export default function App() {
     });
 
     await updateMatchingDocs('replies', () => {
-      const updates = { avatar: avatarUrl };
+      const updates = {
+        avatar: avatarUrl
+      };
 
       if (rename) {
         updates.author = toName;
@@ -622,8 +654,12 @@ export default function App() {
         return;
       }
     }
-
+    setIsSettingsModalOpen(false);
     setIsPageLoading(true);
+
+    await new Promise(resolve =>
+      setTimeout(resolve, 50)
+    );
 
     try {
       const oldDocRef = doc(db, 'Channels', oldUsername);
@@ -686,8 +722,6 @@ export default function App() {
         'device_user_id',
         currentUserId
       );
-
-      setIsSettingsModalOpen(false);
 
       showToast(
         isSameUsername
