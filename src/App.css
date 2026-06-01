@@ -1120,40 +1120,83 @@ html, body {
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(255, 106, 0, 0.4);
   
-  /* 🟢 優化：將 transition 改為 all，讓所有變形與顏色、Padding 縮小都有 0.2 秒的絲滑漸變 */
-  transition: all 0.2s ease-in-out;
-  white-space: nowrap;     /* 🟢 關鍵設定：強制文字絕對不換行，避免在過渡期擠到下一行 */
+  white-space: nowrap;     /* 🟢 關鍵設定：強制文字絕對不換行 */
+
+  /* 🚀 同步關鍵 1：
+     只對整體外觀形變（transform）、背景與陰影做 0.15 秒的極速過渡，
+     這個時間長度最接近原生 App，不會有拖泥帶水的漂移感 */
+  transition: background-color 0.15s ease-out, box-shadow 0.15s ease-out, transform 0.15s ease-out;
+  
+  /* 鎖定硬體加速 */
+  transform-origin: center center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 /* 完美優化：升級後的 Hover 懸停動效 */
 .upload-video-btn:hover {
   background-color: #e65f00; /* 變成稍微飽和、更有質感的深橘色 */
   color: #ffffff;             /* 確保文字維持清晰的白色 */
-  transform: scale(1.03) translateY(-1.5px); 
-  box-shadow: 0 0 20px rgba(255, 106, 0, 0.55); /* 加上精緻的橘色發光光暈 */
+  
+  /* 🚀 同步關鍵 2：
+     整體按鈕向上微浮 1.5 像素。因為我們拿掉了子元素的形變動畫，
+     所以裡面的字和圖標此時會像釘死在按鈕上一樣，跟著按鈕 100% 絕對同步往上，絕不提前或延後位移！ */
+  transform: translateY(-1.5px); 
+  box-shadow: 0 0px 20px rgba(255, 106, 0, 0.55); /* 加上精緻的橘色發光光暈 */
 }
 
 /* 完美優化：新增 Active 點擊按下的物理回饋 */
 .upload-video-btn:active {
-  transform: scale(0.98) translateY(0px); /* 按下去時有微幅縮小沉回原位的真實按鍵感 */
+  transform: translateY(0px); /* 按下去時貼回平面 */
   box-shadow: 0 2px 8px rgba(255, 106, 0, 0.3);  /* 陰影隨之縮小 */
 }
 
 .upload-video-btn .plus-icon {
-  font-size: 20px;         /* 💡 微調：將原本 25px 稍微縮小到 20px，跟 14px 的字體更配 */
-  line-height: 1;
-  display: inline-flex;    /* 💡 改用 inline-flex，讓圖標自己也能完美置中 */
+  font-size: 20px;         
+  line-height: 0;          /* 鎖定基線不被系統字體行高干擾 */
+  display: inline-flex;    
   align-items: center;
+  justify-content: center;
   font-weight: 500;
-  margin-right: -1px;
+  margin-right: -2px;
   
-  /* 確保內部的 + 號在變色時也能同步平滑過渡 */
-  transition: all 0.2s ease-in-out;
+  /* 🚀 同步關鍵 3：
+     圖標只准針對「顏色（color）」做動畫過渡，完全移除 transform 等位置動畫。
+     這能阻斷它自己想提前位移的任何小動作！ */
+  transition: color 0.15s ease-out;
 }
 
-/* 確保滑鼠移上去時，內部的 + 號百分之百保持亮白色，絕不隱形 */
+/* 🚀 同步關鍵 4：強制按鈕內的所有文字元素都不要有獨立的 transform 過渡動畫 */
+.upload-video-btn *,
+.upload-video-btn::before,
+.upload-video-btn::after {
+  transition: color 0.15s ease-out !important; /* 只允許顏色漸變 */
+  transform: none !important;                  /* 拒絕獨立位移，必須無條件服從父層按鈕 */
+}
+
+/* 確保滑鼠移上去時，內部的 + 號百分之百保持亮白色 */
 .upload-video-btn:hover .plus-icon {
   color: #ffffff !important;
+}
+
+
+/* ==========================================================================
+   📱 響應式部分
+   ========================================================================== */
+@media (max-width: 1024px) {
+  .upload-video-btn {
+    padding: 0 !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 50% !important;
+    gap: 0 !important;
+    font-size: 0 !important;
+    transform: none !important; /* 行動端圓形按鈕不需要懸停位移 */
+  }
+  .upload-video-btn .plus-icon {
+    margin-right: 0 !important;
+    font-size: 22px !important;
+  }
 }
 
 
