@@ -1134,10 +1134,9 @@ export default function App() {
       if (isFirstInit) {
         setIsFirstInit(false); // 💡 立即防重，避免這段時間內 Firebase 重複觸發
         
-        // 讓第一次打開主頁時，Buffer 圈圈至少轉個 1 秒鐘，畫面載入才會滑順、不閃爍
         setTimeout(() => {
           setIsPageLoading(false);
-        }, 1000); // ⏳ 1000 毫秒 = 1 秒（也可以依喜好改成 800）
+        }, 1); // ⏳ 1000 毫秒 = 1 秒（也可以依喜好改成 800）
       }
     });
     return () => unsubscribe();
