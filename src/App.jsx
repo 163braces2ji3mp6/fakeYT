@@ -1,3 +1,6 @@
+/* ==============================
+  01. Imports / 樣式與 Firebase 依賴
+============================== */
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import { 
@@ -13,7 +16,15 @@ import { db } from './firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
+
+/* ==============================
+  02. Constants / 共用常數
+============================== */
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
+
+/* ==============================
+  03. Asset Helpers / 頭貼與身份判斷工具
+============================== */
 const isShiauyeAsset = (item) => {
   if (!item) return false;
 
@@ -55,6 +66,10 @@ const generateRandomIdentity = () => {
     return { name: uniqueChineseName, id: uniqueId };
 };
 
+
+/* ==============================
+  04. YouTube Helpers / 影片網址解析
+============================== */
 function extractYoutubeId(url) {
   if (!url) return '';
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
@@ -62,6 +77,10 @@ function extractYoutubeId(url) {
   return (match && match[2].length === 11) ? match[2] : '';
 }
 
+
+/* ==============================
+  05. Firebase Comment Subscription / 留言與回覆即時監聽
+============================== */
 export function subscribeToComments(selectedVideo, setCommentsCallback, setCommentRepliesCallback) {
   if (!selectedVideo?.id) return () => {};
 
@@ -131,6 +150,10 @@ export function subscribeToComments(selectedVideo, setCommentsCallback, setComme
   };
 }
 
+
+/* ==============================
+  06. UI Data Helpers / 排序、分類、格式化
+============================== */
 const shuffleArray = (array) => {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -169,7 +192,15 @@ function formatSubscribers(count) {
   return count.toString();
 }
 
+
+/* =========================================================
+  07. Main App Component / 主元件
+========================================================= */
 export default function App() {
+
+  /* ------------------------------
+    07-1. Toast State / 全域通知狀態
+  ------------------------------ */
   const [toast, setToast] = useState({
     show: false,
     message: '',
@@ -228,6 +259,10 @@ export default function App() {
       }
     }, 3000);
   };
+
+  /* ------------------------------
+    07-2. Page / Video / Search State
+  ------------------------------ */
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   const bufferTimeoutRef = useRef(null); 
   const [currentView, setCurrentView] = useState(() => {
@@ -258,6 +293,10 @@ export default function App() {
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [isChannelLoading, setIsChannelLoading] = useState(false);
 
+
+  /* ------------------------------
+    07-3. Current User State / 本機身份與頭貼
+  ------------------------------ */
   // 🟢 狀態同步：設定目前登入的使用者帳號狀態
   const [localUsername, setLocalUsername] = useState('載入中...');
   const [currentUserId, setCurrentUserId] = useState('loading...');
@@ -316,6 +355,10 @@ export default function App() {
     initUserIdentity();
   }, []);
 
+
+  /* ------------------------------
+    07-4. Modal / Channel State
+  ------------------------------ */
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
 
@@ -383,6 +426,10 @@ export default function App() {
     }
   }, [currentView, targetChannel?.name, localUsername, currentUserId]);
 
+
+  /* ------------------------------
+    07-5. Library State / 喜歡、訂閱、觀看紀錄
+  ------------------------------ */
   const [likedVideoIds, setLikedVideoIds] = useState(() => {
     const savedLikes = localStorage.getItem('leafhub_likedVideos');
     return savedLikes ? JSON.parse(savedLikes) : [];
@@ -398,6 +445,10 @@ export default function App() {
     return savedHistory ? JSON.parse(savedHistory) : [];
   });
 
+
+  /* ------------------------------
+    07-6. UI Refs / Upload / Comment State
+  ------------------------------ */
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
   const contentAreaRef = useRef(null);
@@ -425,6 +476,10 @@ export default function App() {
   useEffect(() => {
   setPreviewAvatar(unifiedAvatar);
   }, [currentUserAvatar]);
+
+  /* ------------------------------
+    08. Account Helpers / 帳號與名稱檢查
+  ------------------------------ */
   const checkUsernameExists = async (username) => {
   const channelRef = doc(db, "Channels", username);
   const channelSnap = await getDoc(channelRef);
@@ -449,6 +504,10 @@ export default function App() {
     return () => clearTimeout(delayDebounceFn);
   }, [searchInputStr, currentView]);
 
+
+  /* ------------------------------
+    09. Home / Search / Category Actions
+  ------------------------------ */
   const handleCategoryChange = (category) => {
     if (category === '全部') {
       setActiveCategory(category);
@@ -485,6 +544,10 @@ export default function App() {
   }, [currentView, targetChannel?.name, selectedVideo?.channel]);
 
 
+
+  /* ------------------------------
+    10. Profile Sync / 改名與頭貼同步 Firebase
+  ------------------------------ */
   const syncCurrentUserProfileEverywhere = async ({
     avatarUrl,
     fromName = localUsername,
@@ -637,6 +700,10 @@ export default function App() {
   };
 
 
+
+  /* ------------------------------
+    11. Account Actions / 設定與隨機身份
+  ------------------------------ */
   const handleUpdateUsernameSubmit = async (e) => {
     e.preventDefault();
 
@@ -896,6 +963,10 @@ export default function App() {
   }, [currentUserAvatar, currentUserId, localUsername]);
 
 
+
+  /* ------------------------------
+    12. Navigation Actions / 頁面切換與頻道導覽
+  ------------------------------ */
   const forceScrollToTop = () => {
     window.scrollTo(0, 0);
     if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
@@ -1081,6 +1152,10 @@ export default function App() {
     }
   }, [currentView, selectedVideo]);
 
+
+  /* ------------------------------
+    13. Comment / Reply Actions
+  ------------------------------ */
   const toggleReplySection = (commentId) => {
     setExpandedReplyComments(prev => {
       return { ...prev, [commentId]: !prev[commentId] };
@@ -1163,6 +1238,10 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+
+  /* ------------------------------
+    14. Video Actions / 觀看、按讚、訂閱
+  ------------------------------ */
   const handleVideoClick = async (video) => {
     setIsVideoLoading(true); 
     setSelectedVideo(video);
@@ -1207,6 +1286,12 @@ export default function App() {
     await toggleChannelSubscription(channelName, !isCurrentlySubbed);
   };
 
+
+  /* ------------------------------
+    15. Comment Like Logic / 留言按讚
+    注意：下方 mock 分支目前呼叫 setMockCommentsState，
+    若專案沒有宣告此 state，點 mock 留言讚會發生 ReferenceError。
+  ------------------------------ */
   // 🟢 修正後的防重複點讚邏輯
   const handleCommentLike = async (commentId, isMock) => {
     // 如果沒有目前使用者的 ID，就不允許按讚
@@ -1358,7 +1443,12 @@ export default function App() {
       }
     };
 
-    const syncAvatarToFirebase = async (newAvatar) => {
+  
+  /* ------------------------------
+    16. Maintenance Helpers / 維護用同步工具
+    注意：這些函式目前看起來未直接被 UI 呼叫，保留作維修使用。
+  ------------------------------ */
+  const syncAvatarToFirebase = async (newAvatar) => {
       if (!currentUserId) return;
 
       // comments
@@ -1501,6 +1591,10 @@ export default function App() {
     }
   };
 
+
+  /* ------------------------------
+    17. Upload Helpers / 上傳影片
+  ------------------------------ */
   const fetchVideoDuration = (ytId) => {
     return new Promise((resolve) => {
       const randMin = Math.floor(Math.random() * 8) + 1; 
@@ -1558,6 +1652,10 @@ export default function App() {
     }
   };
 
+
+  /* ------------------------------
+    18. Render Helpers / 篩選、頭貼、影片卡片
+  ------------------------------ */
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
     return currentVideos.filter(video => {
@@ -1656,10 +1754,17 @@ export default function App() {
     );
   };
 
+
+  /* ------------------------------
+    19. Render Entry / JSX 主畫面
+  ------------------------------ */
   const allDisplayedComments = [...optimisticComments, ...comments];
 
   return (
     <div>
+      {/* ==============================
+        Navbar / 頂部導覽列
+      ============================== */}
       {/* 頂部導覽列 */}
       <nav className="navbar">
         <div className="logo-hub-style" onClick={() => {
@@ -2343,7 +2448,10 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 設定 Modal */}
+                {/* ==============================
+        Settings Modal / 帳號設定彈窗
+      ============================== */}
+        {/* 設定 Modal */}
                   {isSettingsModalOpen && (
                     <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
                       <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>

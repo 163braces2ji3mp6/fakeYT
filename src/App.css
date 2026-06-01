@@ -1,25 +1,46 @@
+/* =========================================================
+  App.css — 整理版（僅排版與註解整理）
+  ---------------------------------------------------------
+  ✅ 保留原本 selector / className / media query
+  ✅ 保留原本順序，避免 CSS cascade 被破壞
+  ✅ 不刪除任何現有規則，只提升可讀性
+
+  對應 App.jsx 的主要區塊：
+  1. Navbar / Logo / Avatar
+  2. 主版面 Layout / Sidebar / Content
+  3. Home Video Grid / Video Card
+  4. Watch Page / Recommendations
+  5. Comments / Modal / Toast
+  6. Channel Page / Profile Dropdown
+  7. Upload Button / Skeleton / RWD
+========================================================= */
+
 /* ==========================================================================
-   🟢 頂部導覽列 (Navbar) - 💡 全面放大調整
-   ========================================================================== */
+🟢 頂部導覽列 (Navbar) - 💡 全面放大調整
+========================================================================== */
 .navbar {
-  height: 72px;             /* 💡 從 64px 放大到 72px，讓上下不擁擠 */
+  height: 72px;
+  /* 💡 從 64px 放大到 72px，讓上下不擁擠 */
   background-color: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 28px;          /* 左右維持舒適內縮 */
+  padding: 0 28px;
+  /* 左右維持舒適內縮 */
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   z-index: 100;
   border-bottom: 1px solid #1f1f1f;
-  box-sizing: border-box;   /* 確保高度計算包含 border */
+  box-sizing: border-box;
+  /* 確保高度計算包含 border */
 }
 
 .logo {
   color: #ff6a00;
-  font-size: 24px; /* 💡 LOGO 字體放大 */
+  font-size: 24px;
+  /* 💡 LOGO 字體放大 */
   font-weight: 900;
   cursor: pointer;
   display: flex;
@@ -31,13 +52,16 @@
 .logo-badge {
   background-color: #ff6a00;
   color: #050505;
-  padding: 3px 8px; /* 💡 標籤放大 */
+  padding: 3px 8px;
+  /* 💡 標籤放大 */
   border-radius: 6px;
-  font-size: 13px; /* 💡 標籤字體放大 */
+  font-size: 13px;
+  /* 💡 標籤字體放大 */
 }
 
 .avatar {
-  width: 38px; /* 💡 頭像從 32px 放大到 38px */
+  width: 38px;
+  /* 💡 頭像從 32px 放大到 38px */
   height: 38px;
   border-radius: 50%;
   object-fit: cover;
@@ -45,34 +69,37 @@
 }
 
 /* ==========================================================================
-   🏢 基礎排版主架構 (Layout) - ✨ 修正高度溢出黑影 Bug
-   ========================================================================== */
+🏢 基礎排版主架構 (Layout) - ✨ 修正高度溢出黑影 Bug
+========================================================================== */
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  overflow: hidden; 
+  overflow: hidden;
   background-color: #050505;
 }
 
 .main-wrapper {
   display: flex;
-  margin-top: 72px;          /* 💡 改用 margin-top，不要用 padding-top！ */
+  margin-top: 72px;
+  /* 💡 改用 margin-top，不要用 padding-top！ */
   background-color: #050505;
   width: 100%;
-  height: calc(100vh - 72px); /* 完美貼齊剩餘的可視視窗高度 */
+  height: calc(100vh - 72px);
+  /* 完美貼齊剩餘的可視視窗高度 */
   box-sizing: border-box;
 }
 
 /* 🔵 左側固定導覽欄 */
 .sidebar {
-  width: 260px; 
+  width: 260px;
   background-color: #0a0a0a;
   border-right: 1px solid #1f1f1f;
-  padding: 16px 12px; 
-  height: 100%;               /* 完美繼承 main-wrapper 的正確滿高 */
+  padding: 16px 12px;
+  height: 100%;
+  /* 完美繼承 main-wrapper 的正確滿高 */
   position: fixed;
-  top: 72px;                 
+  top: 72px;
   left: 0;
   z-index: 90;
   box-sizing: border-box;
@@ -81,11 +108,12 @@ html, body {
 /* 🟡 右側工作內容區 */
 .content-area {
   flex: 1;
-  margin-left: 260px; 
+  margin-left: 260px;
   padding: 24px 40px;
   background-color: #050505;
-  height: 100%;               /* 完美對齊，再也不會把底部內容擠出螢幕了 */
-  overflow-y: auto;          
+  height: 100%;
+  /* 完美對齊，再也不會把底部內容擠出螢幕了 */
+  overflow-y: auto;
   box-sizing: border-box;
   transition: margin-left 0.2s ease, padding 0.2s ease;
 }
@@ -93,20 +121,24 @@ html, body {
 .sidebar-menu {
   display: flex;
   flex-direction: column;
-  gap: 6px; /* 💡 按鈕之間的間距稍微加大 */
+  gap: 6px;
+  /* 💡 按鈕之間的間距稍微加大 */
 }
 
 .sidebar-btn {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 18px; /* 💡 圖標與文字的間距加大 */
-  padding: 14px 18px; /* 💡 按鈕上下左右內襯放大，更好點擊 */
+  gap: 18px;
+  /* 💡 圖標與文字的間距加大 */
+  padding: 14px 18px;
+  /* 💡 按鈕上下左右內襯放大，更好點擊 */
   background-color: transparent;
   color: #aaa;
   border: none;
   border-radius: 12px;
-  font-size: 15px; /* 💡 側邊欄按鈕字體從 14px 放大到 15px */
+  font-size: 15px;
+  /* 💡 側邊欄按鈕字體從 14px 放大到 15px */
   text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -124,7 +156,8 @@ html, body {
 }
 
 .sidebar-section-title {
-  font-size: 12px; /* 💡 小標題字體微調放大 */
+  font-size: 12px;
+  /* 💡 小標題字體微調放大 */
   color: #555;
   font-weight: bold;
   padding-left: 18px;
@@ -136,7 +169,8 @@ html, body {
 /* 💡 當看影片、左邊欄隱藏時，主內容區塊貼左、縮排歸零，讓播放器靠左 */
 .content-area:has(.watch-layout) {
   margin-left: 0;
-  padding: 24px 20px; /* 💡 稍微縮減左右 padding，騰出更多空間給超大推薦欄 */
+  padding: 24px 20px;
+  /* 💡 稍微縮減左右 padding，騰出更多空間給超大推薦欄 */
 }
 
 .view-page-title {
@@ -149,8 +183,8 @@ html, body {
 }
 
 /* ==========================================================================
-   🎬 首頁 / 分類頁元件樣式 (Home Components)
-   ========================================================================== */
+🎬 首頁 / 分類頁元件樣式 (Home Components)
+========================================================================== */
 .category-bar {
   display: flex;
   gap: 12px;
@@ -164,6 +198,7 @@ html, body {
 .category-bar::-webkit-scrollbar {
   height: 4px;
 }
+
 .category-bar::-webkit-scrollbar-thumb {
   background: #222;
   border-radius: 4px;
@@ -190,13 +225,15 @@ html, body {
 .category-btn.active {
   background-color: #ff6a00 !important;
   color: #000 !important;
-  border-color: #ff6a00 !important; /* 💡 這裡只改變邊框顏色，字體就不會抖動了 */
+  border-color: #ff6a00 !important;
+  /* 💡 這裡只改變邊框顏色，字體就不會抖動了 */
 }
 
 /* 影片響應式網格 */
 .video-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr); /* 💡 強制固定一行三個影片 */
+  grid-template-columns: repeat(3, 1fr);
+  /* 💡 強制固定一行三個影片 */
   gap: 32px 24px;
   width: 100%;
 }
@@ -204,7 +241,8 @@ html, body {
 .video-card {
   display: flex;
   flex-direction: column;
-  gap: 12px; /* 💡 稍微拉開圖片與文字間距 */
+  gap: 12px;
+  /* 💡 稍微拉開圖片與文字間距 */
   cursor: pointer;
 }
 
@@ -241,7 +279,8 @@ html, body {
   right: 8px;
   background-color: rgba(0, 0, 0, 0.85);
   color: #ff6a00;
-  font-size: 12px; /* 💡 微調加大 */
+  font-size: 12px;
+  /* 💡 微調加大 */
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: bold;
@@ -254,14 +293,16 @@ html, body {
 }
 
 .channel-avatar {
-  width: 38px; /* 💡 從 36px 稍微放大到 38px 配合文字平衡 */
+  width: 38px;
+  /* 💡 從 36px 稍微放大到 38px 配合文字平衡 */
   height: 38px;
   border-radius: 50%;
   object-fit: cover;
 }
 
 .video-title {
-  font-size: 16px; /* 💡 關鍵放大：從 14px 放大到 16px，更具大氣感 */
+  font-size: 16px;
+  /* 💡 關鍵放大：從 14px 放大到 16px，更具大氣感 */
   font-weight: 600;
   color: #eee;
   margin: 0;
@@ -279,8 +320,10 @@ html, body {
 }
 
 .channel-name {
-  font-size: 14px; /* 💡 關鍵放大：從 12px 放大到 14px */
-  color: #888; /* 💡 稍微調亮一點 */
+  font-size: 14px;
+  /* 💡 關鍵放大：從 12px 放大到 14px */
+  color: #888;
+  /* 💡 稍微調亮一點 */
   margin: 6px 0 2px 0;
   transition: color 0.2s ease;
 }
@@ -290,17 +333,20 @@ html, body {
 }
 
 .video-meta {
-  font-size: 13px; /* 💡 關鍵放大：從 12px 放大到 13px */
-  color: #666; /* 💡 增加高階質感灰色 */
+  font-size: 13px;
+  /* 💡 關鍵放大：從 12px 放大到 13px */
+  color: #666;
+  /* 💡 增加高階質感灰色 */
   margin: 2px 0 0 0;
 }
 
 /* ==========================================================================
-   🎞️ 影片播放內頁專屬樣式 (Watch View Setup)
-   ========================================================================== */
+🎞️ 影片播放內頁專屬樣式 (Watch View Setup)
+========================================================================== */
 .watch-layout {
   display: flex;
-  gap: 36px; /* 💡 稍微再加大主區域與大推薦欄的間距 */
+  gap: 36px;
+  /* 💡 稍微再加大主區域與大推薦欄的間距 */
   width: 100%;
   align-items: flex-start;
 }
@@ -368,7 +414,8 @@ html, body {
 }
 
 .watch-video-title {
-  font-size: 22px; /* 💡 影片內頁大標題也稍微增厚放大 */
+  font-size: 22px;
+  /* 💡 影片內頁大標題也稍微增厚放大 */
   font-weight: bold;
   margin: 18px 0;
   color: #fff;
@@ -401,7 +448,8 @@ html, body {
 }
 
 .channel-name-large {
-  font-size: 17px; /* 💡 內頁頻道名微調大 */
+  font-size: 17px;
+  /* 💡 內頁頻道名微調大 */
   font-weight: bold;
   color: #fff;
 }
@@ -477,13 +525,14 @@ html, body {
 }
 
 .views-date-text {
-  font-size: 14px; /* 💡 放大到 14px */
+  font-size: 14px;
+  /* 💡 放大到 14px */
   color: #777;
 }
 
 /* ==========================================================================
-   💬 留言區樣式 (Comments Area)
-   ========================================================================== */
+💬 留言區樣式 (Comments Area)
+========================================================================== */
 .comments-section-wrapper {
   background-color: #0a0a0a;
   border: 1px solid #141414;
@@ -571,16 +620,18 @@ html, body {
 .comment-content-body {
   flex: 1;
   display: flex;
-  flex-direction: column !important; 
-  align-items: flex-start !important; /* 確保內容不會亂拉伸 */
-  gap: 2px; /* 縮小名字與內文的上下間距 */
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  /* 確保內容不會亂拉伸 */
+  gap: 2px;
+  /* 縮小名字與內文的上下間距 */
 }
 
 /* 💡 名字與時間的橫向列結構 */
 .comment-user-meta {
   display: flex !important;
   flex-direction: row !important;
-  align-items: center !important;  
+  align-items: center !important;
   gap: 8px !important;
   width: 100%;
 }
@@ -598,7 +649,8 @@ html, body {
   color: #ddd;
   margin: 2px 0 4px 0 !important;
   line-height: 1.4;
-  display: block !important; /* 強制獨佔一行 */
+  display: block !important;
+  /* 強制獨佔一行 */
   text-align: left;
 }
 
@@ -613,7 +665,8 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 999; /* 💡 確保 z-index 比 Navbar 的 100 還大 */
+  z-index: 999;
+  /* 💡 確保 z-index 比 Navbar 的 100 還大 */
 }
 
 .no-comments-prompt {
@@ -624,83 +677,96 @@ html, body {
 }
 
 /* ==========================================================================
-   👉 右側推薦欄元件樣式 (Watch Right Sidebar Recommendations) - 🚀 巨大化升級版
-   ========================================================================== */
+👉 右側推薦欄元件樣式 (Watch Right Sidebar Recommendations) - 🚀 巨大化升級版
+========================================================================== */
 .watch-sidebar-recommendations {
-  width: 580px;         /* 💡 總寬度從 540px 再升級到 580px */
+  width: 580px;
+  /* 💡 總寬度從 540px 再升級到 580px */
   flex-shrink: 0;
   box-sizing: border-box;
 }
 
 .recommend-mini-card {
   display: flex;
-  gap: 18px;            /* 💡 放大縮圖與右側文字之間的間距 */
-  margin-bottom: 12px;  /* 💡 稍微縮減卡片外距，改由內部 padding 撐開 */
+  gap: 18px;
+  /* 💡 放大縮圖與右側文字之間的間距 */
+  margin-bottom: 12px;
+  /* 💡 稍微縮減卡片外距，改由內部 padding 撐開 */
   cursor: pointer;
   border-radius: 12px;
-  padding: 12px;        /* 💡 保持大內襯滑動質感 */
+  padding: 12px;
+  /* 💡 保持大內襯滑動質感 */
   background-color: transparent;
   transition: background-color 0.2s ease;
-  width: 100%;          /* ⚡ 確保吃滿 580px 寬度，解決右邊有一片沒東西 */
+  width: 100%;
+  /* ⚡ 確保吃滿 580px 寬度，解決右邊有一片沒東西 */
   box-sizing: border-box;
 }
 
 .recommend-mini-card:hover {
-  background-color: #141414; 
+  background-color: #141414;
 }
 
 .mini-card-thumb {
-  width: 240px;         /* ⚡ 稍微微調至 240px，釋放更多彈性空間給文字區 */
+  width: 240px;
+  /* ⚡ 稍微微調至 240px，釋放更多彈性空間給文字區 */
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: 10px;  
+  border-radius: 10px;
   background-color: #222;
   border: 1px solid #1a1a1a;
-  flex-shrink: 0;       /* ⚡ 核心關鍵：強制圖片守住固定寬度，絕對不會被長文字壓扁 */
+  flex-shrink: 0;
+  /* ⚡ 核心關鍵：強制圖片守住固定寬度，絕對不會被長文字壓扁 */
 }
 
 .mini-card-info {
-  flex: 1;              /* ⚡ 核心關鍵：自動吃滿縮圖右邊剩下的所有剩餘空間 */
-  min-width: 0;         /* ⚡ 核心關鍵：配合 Flexbox 防止子文字過長將容器硬撐出去 */
+  flex: 1;
+  /* ⚡ 核心關鍵：自動吃滿縮圖右邊剩下的所有剩餘空間 */
+  min-width: 0;
+  /* ⚡ 核心關鍵：配合 Flexbox 防止子文字過長將容器硬撐出去 */
   display: flex;
   flex-direction: column;
-  justify-content: flex-start; /* 💡 改為靠上對齊，當多行文字出現時排版才漂亮 */
+  justify-content: flex-start;
+  /* 💡 改為靠上對齊，當多行文字出現時排版才漂亮 */
 }
 
 .mini-card-title {
-  font-size: 16px;      /* 💡 考慮到多行換行，字體改為 16px 視覺比例最完美大方 */
-  font-weight: 700;     
-  color: #ffffff;       
+  font-size: 16px;
+  /* 💡 考慮到多行換行，字體改為 16px 視覺比例最完美大方 */
+  font-weight: 700;
+  color: #ffffff;
   line-height: 1.4;
-  margin: 0 0 6px 0;    
-  
+  margin: 0 0 6px 0;
   /* ⚡ 核心修正：允許標題長文字自動換行，但最多限制顯示 2 行（超過自動顯示...） */
-  display: -webkit-box; 
+  display: -webkit-box;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-word; /* 避免遇到網址或超長英文字串不換行 */
+  word-break: break-word;
+  /* 避免遇到網址或超長英文字串不換行 */
 }
 
 .recommend-mini-card:hover .mini-card-title {
-  color: #ff6a00;       
+  color: #ff6a00;
 }
 
 .mini-card-channel {
-  font-size: 14px;      /* 💡 配合寬度，頻道名稱維持 14px */
-  color: #aaa;          
+  font-size: 14px;
+  /* 💡 配合寬度，頻道名稱維持 14px */
+  color: #aaa;
   margin: 0 0 4px 0;
 }
 
 .mini-card-views {
-  font-size: 13px;      /* 💡 觀看次數微調到 13px */
-  color: #777;          
+  font-size: 13px;
+  /* 💡 觀看次數微調到 13px */
+  color: #777;
   margin: 0;
 }
 
 /* ==========================================================================
-   📭 其他通用狀態樣式 (Global Sub-States)
-   ========================================================================== */
+📭 其他通用狀態樣式 (Global Sub-States)
+========================================================================== */
 .empty-state {
   grid-column: 1 / -1;
   text-align: center;
@@ -727,8 +793,8 @@ html, body {
 }
 
 /* ==========================================================================
-   📱 RWD 斷點微調 (針對巨大化後的寬度防擠壓優化)
-   ========================================================================== */
+📱 RWD 斷點微調 (針對巨大化後的寬度防擠壓優化)
+========================================================================== */
 @media (max-width: 1400px) {
   /* 當螢幕中等時，稍微縮小推薦欄，防左側播放器被壓縮得太嚴重 */
   .watch-sidebar-recommendations {
@@ -740,6 +806,7 @@ html, body {
   .mini-card-title {
     font-size: 15px;
   }
+
 }
 
 @media (max-width: 1080px) {
@@ -757,17 +824,19 @@ html, body {
   .mini-card-title {
     font-size: 16px;
   }
+
 }
 
 @media (max-width: 768px) {
   .video-grid {
-    grid-template-columns: repeat(1, 1fr); 
+    grid-template-columns: repeat(1, 1fr);
   }
+
 }
 
 /* ==========================================================================
-   🔔 新增：頭貼選單專屬樣式 (Profile Dropdown Menu)
-   ========================================================================== */
+🔔 新增：頭貼選單專屬樣式 (Profile Dropdown Menu)
+========================================================================== */
 .avatar-container {
   position: relative;
   display: inline-block;
@@ -775,7 +844,8 @@ html, body {
 
 .profile-dropdown-menu {
   position: absolute;
-  top: 60px; /* 💡 從 54px 修正到 60px，完美對齊 72px 的 Navbar */
+  top: 60px;
+  /* 💡 從 54px 修正到 60px，完美對齊 72px 的 Navbar */
   right: 0;
   width: 260px;
   background-color: #1c1c1c;
@@ -788,8 +858,15 @@ html, body {
 }
 
 @keyframes fadeInDropdown {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
 }
 
 .dropdown-user-info {
@@ -848,16 +925,23 @@ html, body {
 }
 
 /* ==========================================================================
-   ⚙️ 👤 我的頻道專屬頁面樣式 (My Channel Page Setup)
-   ========================================================================== */
+⚙️ 👤 我的頻道專屬頁面樣式 (My Channel Page Setup)
+========================================================================== */
 .channel-page-wrapper {
   animation: fadeInChannel 0.3s ease-out;
   width: 100%;
 }
 
 @keyframes fadeInChannel {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
 }
 
 .channel-banner {
@@ -910,8 +994,13 @@ html, body {
 }
 
 @keyframes fadeInTabContent {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+
 }
 
 .channel-about-section h3 {
@@ -946,21 +1035,22 @@ html, body {
     justify-content: center;
     padding-left: 0 !important;
   }
+
 }
 
 /* ==========================================================================
-   🔥 經典黑橘風格 LOGO 樣式 (Hub Style Logo)
-   ========================================================================== */
+🔥 經典黑橘風格 LOGO 樣式 (Hub Style Logo)
+========================================================================== */
 .logo-hub-style {
   display: flex;
   align-items: center;
-  gap: 4px;                  
+  gap: 4px;
   cursor: pointer;
   user-select: none;
-  font-family: Arial, Helvetica, sans-serif; 
-  font-weight: 700;          
-  font-size: 35px;           
-  letter-spacing: -0.5px;    
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  font-size: 35px;
+  letter-spacing: -0.5px;
   margin: 0 0px 0 15px;
 }
 
@@ -971,50 +1061,51 @@ html, body {
 }
 
 .logo-badge-orange {
-  color: #000000;            
-  background-color: #ff9900; 
-  padding: 4px 8px;          
-  border-radius: 6px;        
+  color: #000000;
+  background-color: #ff9900;
+  padding: 4px 8px;
+  border-radius: 6px;
   display: inline-block;
   transition: background-color 0.2s ease;
 }
 
 .logo-hub-style:hover .logo-badge-orange {
-  background-color: #ffa51f; 
+  background-color: #ffa51f;
 }
 
 /* ==========================================================================
-   🔍 擬真 YouTube 膠囊型搜尋欄 - ✨ 移除重複，完美整併
-   ========================================================================== */
+🔍 擬真 YouTube 膠囊型搜尋欄 - ✨ 移除重複，完美整併
+========================================================================== */
 .search-bar {
   display: flex;
   align-items: center;
   width: 100%;
-  max-width: 600px;         
-  height: 40px;             
-  background-color: #121212; 
-  border: 1px solid #303030; 
-  border-radius: 40px;       
+  max-width: 600px;
+  height: 40px;
+  background-color: #121212;
+  border: 1px solid #303030;
+  border-radius: 40px;
   padding: 0;
-  overflow: hidden;          
+  overflow: hidden;
   box-sizing: border-box;
   transition: border-color 0.15s ease;
-  margin-left: 50px;       /* 保留你想要的特殊偏移 */
+  margin-left: 50px;
+  /* 保留你想要的特殊偏移 */
 }
 
 .search-bar:focus-within {
-  border-color: #ff6a00;     
+  border-color: #ff6a00;
 }
 
 .search-input {
   flex: 1;
   height: 100%;
-  background: transparent;   
-  border: none;              
-  outline: none;             
+  background: transparent;
+  border: none;
+  outline: none;
   color: #ffffff;
   font-size: 16px;
-  padding: 0 4px 0 16px;     
+  padding: 0 4px 0 16px;
 }
 
 .search-input::placeholder {
@@ -1025,9 +1116,9 @@ html, body {
 .search-btn {
   width: 64px;
   height: 100%;
-  background-color: #222222; 
+  background-color: #222222;
   border: none;
-  border-left: 1px solid #303030; 
+  border-left: 1px solid #303030;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1042,7 +1133,7 @@ html, body {
 .search-icon-svg {
   width: 20px;
   height: 20px;
-  fill: #ff6a00;             
+  fill: #ff6a00;
 }
 
 /* 緩衝與骨架屏 */
@@ -1050,36 +1141,75 @@ html, body {
   width: 64px;
   height: 64px;
   border: 6px solid rgba(255, 255, 255, 0.2);
-  border-left-color: #ff6a00; 
+  border-left-color: #ff6a00;
   border-radius: 50%;
   animation: yt-spin 0.8s linear infinite;
 }
 
 @keyframes yt-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+
 }
 
 .skeleton-btn, .skeleton-thumb, .skeleton-avatar, .skeleton-text {
   background: #272727;
   animation: pulse 1.5s infinite ease-in-out;
 }
-.skeleton-btn { width: 60px; height: 32px; border-radius: 8px; }
-.skeleton-thumb { width: 100%; aspect-ratio: 16/9; border-radius: 12px; }
-.skeleton-avatar { width: 36px; height: 36px; border-radius: 50%; }
-.skeleton-text { border-radius: 4px; margin-bottom: 6px; }
-.skeleton-text.title { width: 80%; height: 16px; }
-.skeleton-text.meta { width: 50%; height: 12px; }
+
+.skeleton-btn {
+  width: 60px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.skeleton-thumb {
+  width: 100%;
+  aspect-ratio: 16/9;
+  border-radius: 12px;
+}
+
+.skeleton-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+}
+
+.skeleton-text {
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+.skeleton-text.title {
+  width: 80%;
+  height: 16px;
+}
+
+.skeleton-text.meta {
+  width: 50%;
+  height: 12px;
+}
 
 @keyframes pulse {
-  0% { background-color: #272727; }
-  50% { background-color: #3f3f3f; }
-  100% { background-color: #272727; }
+  0% {
+    background-color: #272727;
+  }
+  50% {
+    background-color: #3f3f3f;
+  }
+  100% {
+    background-color: #272727;
+  }
+
 }
 
 /* ==========================================================================
-   ➕ 獨立新增：頻道頭貼與名稱 點擊 Hover 特效 (游標反饋)
-   ========================================================================== */
+➕ 獨立新增：頻道頭貼與名稱 點擊 Hover 特效 (游標反饋)
+========================================================================== */
 .channel-avatar-clickable {
   transition: opacity 0.2s ease, transform 0.2s ease;
   cursor: pointer;
@@ -1096,11 +1226,11 @@ html, body {
 }
 
 .channel-name-clickable:hover {
-  color: #ff6a00 !important;   /* 懸停時點亮為招牌橘色 */
+  color: #ff6a00 !important;
+  /* 懸停時點亮為招牌橘色 */
 }
 
 /* 添加到 App.css 文件的底部或相關部分 */
-
 .upload-video-btn {
   background: #ff6a00;
   color: #fff;
@@ -1109,24 +1239,21 @@ html, body {
   border-radius: 20px;
   font-weight: bold;
   cursor: pointer;
-  
   /* 💡 核心修正 1：確保用 Flexbox 完美垂直居中 */
   display: inline-flex;
-  align-items: center;    
+  align-items: center;
   justify-content: center;
-  line-height: 1;          /* 💡 核心修正 2：將按鈕本身的行高設為 1，防止字體被行高往下擠 */
-  
+  line-height: 1;
+  /* 💡 核心修正 2：將按鈕本身的行高設為 1，防止字體被行高往下擠 */
   gap: 6px;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(255, 106, 0, 0.4);
-  
-  white-space: nowrap;     /* 🟢 關鍵設定：強制文字絕對不換行 */
-
+  white-space: nowrap;
+  /* 🟢 關鍵設定：強制文字絕對不換行 */
   /* 🚀 同步關鍵 1：
-     只對整體外觀形變（transform）、背景與陰影做 0.15 秒的極速過渡，
-     這個時間長度最接近原生 App，不會有拖泥帶水的漂移感 */
+  只對整體外觀形變（transform）、背景與陰影做 0.15 秒的極速過渡，
+  這個時間長度最接近原生 App，不會有拖泥帶水的漂移感 */
   transition: background-color 0.15s ease-out, box-shadow 0.15s ease-out, transform 0.15s ease-out;
-  
   /* 鎖定硬體加速 */
   transform-origin: center center;
   backface-visibility: hidden;
@@ -1135,34 +1262,38 @@ html, body {
 
 /* 完美優化：升級後的 Hover 懸停動效 */
 .upload-video-btn:hover {
-  background-color: #e65f00; /* 變成稍微飽和、更有質感的深橘色 */
-  color: #ffffff;             /* 確保文字維持清晰的白色 */
-  
+  background-color: #e65f00;
+  /* 變成稍微飽和、更有質感的深橘色 */
+  color: #ffffff;
+  /* 確保文字維持清晰的白色 */
   /* 🚀 同步關鍵 2：
-     整體按鈕向上微浮 1.5 像素。因為我們拿掉了子元素的形變動畫，
-     所以裡面的字和圖標此時會像釘死在按鈕上一樣，跟著按鈕 100% 絕對同步往上，絕不提前或延後位移！ */
-  transform: translateY(-1.5px); 
-  box-shadow: 0 0px 20px rgba(255, 106, 0, 0.55); /* 加上精緻的橘色發光光暈 */
+  整體按鈕向上微浮 1.5 像素。因為我們拿掉了子元素的形變動畫，
+  所以裡面的字和圖標此時會像釘死在按鈕上一樣，跟著按鈕 100% 絕對同步往上，絕不提前或延後位移！ */
+  transform: translateY(-1.5px);
+  box-shadow: 0 0px 20px rgba(255, 106, 0, 0.55);
+  /* 加上精緻的橘色發光光暈 */
 }
 
 /* 完美優化：新增 Active 點擊按下的物理回饋 */
 .upload-video-btn:active {
-  transform: translateY(0px); /* 按下去時貼回平面 */
-  box-shadow: 0 2px 8px rgba(255, 106, 0, 0.3);  /* 陰影隨之縮小 */
+  transform: translateY(0px);
+  /* 按下去時貼回平面 */
+  box-shadow: 0 2px 8px rgba(255, 106, 0, 0.3);
+  /* 陰影隨之縮小 */
 }
 
 .upload-video-btn .plus-icon {
-  font-size: 20px;         
-  line-height: 0;          /* 鎖定基線不被系統字體行高干擾 */
-  display: inline-flex;    
+  font-size: 20px;
+  line-height: 0;
+  /* 鎖定基線不被系統字體行高干擾 */
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 500;
   margin-right: -2px;
-  
   /* 🚀 同步關鍵 3：
-     圖標只准針對「顏色（color）」做動畫過渡，完全移除 transform 等位置動畫。
-     這能阻斷它自己想提前位移的任何小動作！ */
+  圖標只准針對「顏色（color）」做動畫過渡，完全移除 transform 等位置動畫。
+  這能阻斷它自己想提前位移的任何小動作！ */
   transition: color 0.15s ease-out;
 }
 
@@ -1170,8 +1301,10 @@ html, body {
 .upload-video-btn *,
 .upload-video-btn::before,
 .upload-video-btn::after {
-  transition: color 0.15s ease-out !important; /* 只允許顏色漸變 */
-  transform: none !important;                  /* 拒絕獨立位移，必須無條件服從父層按鈕 */
+  transition: color 0.15s ease-out !important;
+  /* 只允許顏色漸變 */
+  transform: none !important;
+  /* 拒絕獨立位移，必須無條件服從父層按鈕 */
 }
 
 /* 確保滑鼠移上去時，內部的 + 號百分之百保持亮白色 */
@@ -1179,10 +1312,9 @@ html, body {
   color: #ffffff !important;
 }
 
-
 /* ==========================================================================
-   📱 響應式部分
-   ========================================================================== */
+📱 響應式部分
+========================================================================== */
 @media (max-width: 1024px) {
   .upload-video-btn {
     padding: 0 !important;
@@ -1191,18 +1323,19 @@ html, body {
     border-radius: 50% !important;
     gap: 0 !important;
     font-size: 0 !important;
-    transform: none !important; /* 行動端圓形按鈕不需要懸停位移 */
+    transform: none !important;
+    /* 行動端圓形按鈕不需要懸停位移 */
   }
   .upload-video-btn .plus-icon {
     margin-right: 0 !important;
     font-size: 22px !important;
   }
+
 }
 
-
 /* ==========================================================================
-   📱 響應式魔法：當平板/側邊欄擠壓或螢幕變小時（小於 1024px），文字消失只留 + 號
-   ========================================================================== */
+📱 響應式魔法：當平板/側邊欄擠壓或螢幕變小時（小於 1024px），文字消失只留 + 號
+========================================================================== */
 @media (max-width: 1024px) {
   .upload-video-btn {
     /* 1. 把左右內襯縮小，並把按鈕強制變成正圓形（寬高一樣） */
@@ -1210,54 +1343,43 @@ html, body {
     width: 36px !important;
     height: 36px !important;
     border-radius: 50% !important;
-    
     /* 2. 清除原本文字與圖標之間的 gap */
     gap: 0 !important;
   }
-
   /* 3. 核心關鍵：直接鎖定按鈕內部的「純文字」，將其隱形 */
   .upload-video-btn {
-    font-size: 0 !important; /* 利用字體大小變 0，讓網頁只渲染圖標，且不會留下文字寬度 */
+    font-size: 0 !important;
+    /* 利用字體大小變 0，讓網頁只渲染圖標，且不會留下文字寬度 */
   }
-
   /* 4. 確保 + 號圖標在圓形按鈕裡依然完美置中，且清除右邊距修正 */
   .upload-video-btn .plus-icon {
     margin-right: 0 !important;
-    font-size: 22px !important; /* 變成純圖標按鈕後，可以稍微把 + 號放大一點點更新穎 */
+    font-size: 22px !important;
+    /* 變成純圖標按鈕後，可以稍微把 + 號放大一點點更新穎 */
   }
+
 }
 
 /* =========================
-   Toast 通知系統
+Toast 通知系統
 ========================= */
-
 .toast-notification {
   position: fixed;
   right: 24px;
   bottom: 24px;
-
   display: flex;
   align-items: center;
   gap: 10px;
-
   min-width: 260px;
   max-width: 420px;
-
   padding: 14px 18px;
-
   background: #ffffff;
   color: #111111;
-
   border-radius: 14px;
-
-  box-shadow:
-    0 10px 30px rgba(0,0,0,.18);
-
+  box-shadow:     0 10px 30px rgba(0,0,0,.18);
   z-index: 999999;
-
   font-size: 14px;
   font-weight: 500;
-
   animation: toastSlideIn .25s ease;
 }
 
@@ -1287,25 +1409,21 @@ html, body {
     opacity: 0;
     transform: translateY(20px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
   }
+
 }
 
 .random-avatar-btn {
   width: 100%;
   margin-top: 12px;
-
   padding: 10px;
-
   border: none;
   border-radius: 10px;
-
   background: #f3f4f6;
   cursor: pointer;
-
   transition: .2s;
 }
 
@@ -1313,11 +1431,9 @@ html, body {
   background: #e5e7eb;
 }
 
-
 /* ==========================================================================
-   🖥️ 電腦與平板端：主頁 3 欄 / 頻道頁 4 欄 與 Padding 完美修復
-   ========================================================================== */
-
+🖥️ 電腦與平板端：主頁 3 欄 / 頻道頁 4 欄 與 Padding 完美修復
+========================================================================== */
 /* 確保全域元件寬高計算正確，防止 Padding 把元件撐爆 */
 *, *::before, *::after {
   box-sizing: border-box !important;
@@ -1327,7 +1443,8 @@ html, body {
 .video-card {
   width: 100% !important;
   max-width: 100% !important;
-  padding: 0 !important; /* 清除可能導致錯位的外層內襯 */
+  padding: 0 !important;
+  /* 清除可能導致錯位的外層內襯 */
   margin: 0 !important;
   display: flex;
   flex-direction: column;
@@ -1337,14 +1454,15 @@ html, body {
 }
 
 /* 確保縮圖與影片完美 16:9 比例且不留黑邊或變形 */
-.video-thumbnail, 
+.video-thumbnail,
 .video-card video,
 .thumbnail-container {
   width: 100% !important;
   height: auto !important;
   aspect-ratio: 16 / 9 !important;
   object-fit: cover !important;
-  border-radius: 12px !important; /* 圓角更精緻 */
+  border-radius: 12px !important;
+  /* 圓角更精緻 */
   display: block !important;
 }
 
@@ -1352,43 +1470,46 @@ html, body {
 .video-details, .video-info {
   display: flex !important;
   gap: 12px !important;
-  padding: 12px 4px 8px 4px !important; /* 上左右下給予舒適留白，不貼邊 */
+  padding: 12px 4px 8px 4px !important;
+  /* 上左右下給予舒適留白，不貼邊 */
   width: 100% !important;
 }
 
 .video-text {
   flex: 1 !important;
-  min-width: 0 !important; /* 防止長文字把網格撐開爆版 */
+  min-width: 0 !important;
+  /* 防止長文字把網格撐開爆版 */
 }
-
 
 /* 🟢 2. 電腦與平板佈局設定 (螢幕大於 768px 時生效) */
 @media (min-width: 769px) {
-
   /* 🏠 主頁網格：強制設定一排就是「剛好 3 部影片」 */
   .video-grid {
     display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important; /* 強制 3 等分 */
-    gap: 24px 16px !important; /* 上下間距 24px，左右間距 16px */
+    grid-template-columns: repeat(3, 1fr) !important;
+    /* 強制 3 等分 */
+    gap: 24px 16px !important;
+    /* 上下間距 24px，左右間距 16px */
     width: 100% !important;
     padding: 0 !important;
   }
-
   /* 📺 頻道頁面網格：自動偵測並強制設定一排「剛好 4 部影片」 */
   .channel-page .video-grid,
   .channel-container .video-grid,
   .channel-content .video-grid,
   .profile-section .video-grid,
   [className*="channel"] .video-grid {
-    grid-template-columns: repeat(4, 1fr) !important; /* 強制 4 等分 */
-    gap: 20px 14px !important; /* 4 欄時稍微縮小間距防止擁擠 */
+    grid-template-columns: repeat(4, 1fr) !important;
+    /* 強制 4 等分 */
+    gap: 20px 14px !important;
+    /* 4 欄時稍微縮小間距防止擁擠 */
   }
+
 }
 
 /* ==========================================================================
-   📱 手機端極致相容性優化：徹底消滅右側黑邊、Navbar 元件強制定向與水平居中 (768px 以下生效)
-   ========================================================================== */
-
+📱 手機端極致相容性優化：徹底消滅右側黑邊、Navbar 元件強制定向與水平居中 (768px 以下生效)
+========================================================================== */
 /* 🚀 物理級別全域防爆：嚴格限制網頁主體死死貼齊手機螢幕，絕不允許任何橫向滾動 */
 html, body, #root {
   overflow-x: hidden !important;
@@ -1399,129 +1520,141 @@ html, body, #root {
 }
 
 @media (max-width: 768px) {
-  
   /* 🚀 擊殺真兇：強制把電腦版的 flex 與 100vw 結構扒掉，重設為全滿的區塊寬度 */
   .main-wrapper {
-    display: block !important;       /* 拔除電腦版的 flex 橫向並排 */
-    width: 100% !important;          /* 拋棄 100vw，改用與手機螢幕 100% 自適應貼齊 */
+    display: block !important;
+    /* 拔除電腦版的 flex 橫向並排 */
+    width: 100% !important;
+    /* 拋棄 100vw，改用與手機螢幕 100% 自適應貼齊 */
     max-width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
-    margin-top: 60px !important;     /* 配合手機版 Navbar 的 60px 高度 */
+    margin-top: 60px !important;
+    /* 配合手機版 Navbar 的 60px 高度 */
     min-height: calc(100vh - 60px) !important;
     overflow-x: hidden !important;
   }
-
   /* 🚀 徹底消除電腦版留給左側欄的 240px 巨大黑空洞 */
   .main-content, .content, .main-container {
-    margin-left: 0 !important;       /* 強制拔除 240px 左邊距 */
-    width: 100% !important;          /* 吃滿手機寬度 */
+    margin-left: 0 !important;
+    /* 強制拔除 240px 左邊距 */
+    width: 100% !important;
+    /* 吃滿手機寬度 */
     max-width: 100% !important;
-    padding: 16px 12px !important;   /* 給予精緻舒適的四周留白 */
-    padding-top: 16px !important;    
+    padding: 16px 12px !important;
+    /* 給予精緻舒適的四周留白 */
+    padding-top: 16px !important;
     box-sizing: border-box !important;
-    
     /* 讓內部的影片列表與內容在手機螢幕正中央排隊 */
     display: flex !important;
     flex-direction: column !important;
-    align-items: center !important; 
+    align-items: center !important;
     justify-content: center !important;
   }
-
   /* 🟢 1. Navbar 行動端排版：強制所有元件上下垂直完美對齊、各就各位 */
   .navbar {
     width: 100% !important;
     max-width: 100% !important;
-    height: 60px !important;         /* 縮減頂部高度 */
-    padding: 0 12px !important;      /* 縮小左右內襯 */
+    height: 60px !important;
+    /* 縮減頂部高度 */
+    padding: 0 12px !important;
+    /* 縮小左右內襯 */
     display: flex !important;
-    flex-direction: row !important;   /* 強制橫向排開 */
-    align-items: center !important;   /* 所有元件上下垂直中心點完美鎖死對齊 */
+    flex-direction: row !important;
+    /* 強制橫向排開 */
+    align-items: center !important;
+    /* 所有元件上下垂直中心點完美鎖死對齊 */
     justify-content: space-between !important;
-    gap: 6px !important;             
+    gap: 6px !important;
     box-sizing: border-box !important;
     left: 0 !important;
     right: 0 !important;
   }
-
   /* 左側 LOGO 區塊 */
   .navbar > div:first-child {
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
-    flex-shrink: 0 !important;       
+    flex-shrink: 0 !important;
   }
-
   /* ==========================================================================
-     💡 LOGO 行動端微調：絕對不改顏色！百分之百維持原設計，僅等比例縮小
-     ========================================================================== */
+  💡 LOGO 行動端微調：絕對不改顏色！百分之百維持原設計，僅等比例縮小
+  ========================================================================== */
   .logo-hub-style {
-    font-size: 20px !important;       /* 💡 僅縮小左邊 Leaf 的字體（原本電腦版是 24px） */
-    gap: 5px !important;              /* 💡 縮小字體後的舒適間距 */
+    font-size: 20px !important;
+    /* 💡 僅縮小左邊 Leaf 的字體（原本電腦版是 24px） */
+    gap: 5px !important;
+    /* 💡 縮小字體後的舒適間距 */
     display: inline-flex !important;
     align-items: center !important;
   }
-
   /* 右側橘色背景的 hub 方塊 */
   .logo-badge-orange {
-    font-size: 18px !important;       /* 💡 僅縮小右邊 hub 的字體（原本電腦版是 13px） */
-    padding: 2px 5px !important;      /* 💡 微調橘色方塊的上下左右內襯，符合手機尺寸 */
-    border-radius: 4px !important;    /* 💡 維持微圓角 */
+    font-size: 18px !important;
+    /* 💡 僅縮小右邊 hub 的字體（原本電腦版是 13px） */
+    padding: 2px 5px !important;
+    /* 💡 微調橘色方塊的上下左右內襯，符合手機尺寸 */
+    border-radius: 4px !important;
+    /* 💡 維持微圓角 */
     display: inline-block !important;
-    margin-left: -2px !important;      /* 💡 縮小字體後的舒適間距 */
+    margin-left: -2px !important;
+    /* 💡 縮小字體後的舒適間距 */
   }
-
   /* 中間搜尋框：自適應伸縮，限制上限防止壓擠兩側 */
   .search-bar {
-    flex: 1 !important;              /* 自動彈性伸展，填滿中間空間 */
-    max-width: 180px !important;     /* 鎖定最大寬度，嚴防擠壓到頭像與上傳按鈕 */
+    flex: 1 !important;
+    /* 自動彈性伸展，填滿中間空間 */
+    max-width: 180px !important;
+    /* 鎖定最大寬度，嚴防擠壓到頭像與上傳按鈕 */
     min-width: 80px !important;
-    height: 32px !important;         
+    height: 32px !important;
     display: flex !important;
     align-items: center !important;
-    margin-left: -1px !important;        /* 💡 給予 LOGO 一點呼吸空間 */
+    margin-left: -1px !important;
+    /* 💡 給予 LOGO 一點呼吸空間 */
   }
-  
   .search-input {
-    font-size: 12px !important;      /* 防止 iOS 瀏覽器自動放大聚焦 */
+    font-size: 12px !important;
+    /* 防止 iOS 瀏覽器自動放大聚焦 */
     padding: 0 6px !important;
     width: 100% !important;
   }
-
   .search-btn {
     width: 30px !important;
     height: 100% !important;
     flex-shrink: 0 !important;
   }
-
   /* 右側操作區容器修正（覆蓋行內樣式的關鍵） */
   .navbar-actions {
     display: flex !important;
     flex-direction: row !important;
-    align-items: center !important;   /* 強制讓上傳按鈕與頭像水平高度對齊 */
+    align-items: center !important;
+    /* 強制讓上傳按鈕與頭像水平高度對齊 */
     justify-content: flex-end !important;
-    gap: 8px !important;              /* 💡 覆蓋電腦版原本過寬的 16px 間距 */
+    gap: 8px !important;
+    /* 💡 覆蓋電腦版原本過寬的 16px 間距 */
     flex-shrink: 0 !important;
   }
-
   /* 🚀 究極修正：把上傳按鈕限制成和頭像等大的 32px 正圓形 */
   nav .upload-video-btn,
   .upload-video-btn {
-    width: 32px !important;        
-    height: 32px !important;       
-    min-width: 32px !important;       /* 鎖死寬度，即使有文字也不准撐開 */
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    /* 鎖死寬度，即使有文字也不准撐開 */
     max-width: 32px !important;
-    border-radius: 50% !important;   /* 強制完美正圓 */
-    padding: 0 !important;         
+    border-radius: 50% !important;
+    /* 強制完美正圓 */
+    padding: 0 !important;
     margin: 0 !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
     transform: none !important;
     flex-shrink: 0 !important;
-    overflow: hidden !important;     /* 確保溢出內容絕對不可見 */
+    overflow: hidden !important;
+    /* 確保溢出內容絕對不可見 */
   }
-
   /* 💡 徹底消滅「新增影片」文字，連留白空間都不給 */
   .upload-video-btn .upload-btn-text {
     display: none !important;
@@ -1529,21 +1662,19 @@ html, body, #root {
     height: 0 !important;
     opacity: 0 !important;
   }
-
   /* 修正隱藏文字後的按鈕內部，確保只剩下 + 號單獨在正中央放大 */
   nav .upload-video-btn .plus-icon,
   .upload-video-btn .plus-icon {
-    font-size: 20px !important;      
+    font-size: 20px !important;
     line-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    color: #ffffff !important;       
+    color: #ffffff !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
     transform: none !important;
   }
-
   /* 頭像包覆層與頭像尺寸對齊修正 */
   .avatar-container {
     display: flex !important;
@@ -1553,51 +1684,52 @@ html, body, #root {
     height: 32px !important;
     flex-shrink: 0 !important;
   }
-
   .avatar {
-    width: 32px !important;        
+    width: 32px !important;
     height: 32px !important;
     border-radius: 50% !important;
     display: block !important;
     margin: 0 !important;
   }
-
   /* 🟢 2. 側邊欄完全隱藏 */
   .sidebar {
-    display: none !important;        
+    display: none !important;
   }
-
   /* 🟢 3. 影片網格：單欄精緻置中瀑布流 */
   .video-grid {
     width: 100% !important;
-    max-width: 440px !important;     
-    margin: 0 auto !important;       /* 左右自動外邊距，達成絕對置中 */
+    max-width: 440px !important;
+    margin: 0 auto !important;
+    /* 左右自動外邊距，達成絕對置中 */
     display: flex !important;
     flex-direction: column !important;
-    align-items: center !important; 
-    gap: 24px !important;            
+    align-items: center !important;
+    gap: 24px !important;
   }
-
   .video-card {
     width: 100% !important;
     max-width: 100% !important;
     margin: 0 auto !important;
   }
+
 }
 
 /* ==========================================================================
-   🎬 電腦版「新增影片」按鈕微調：消除扁塌感，讓按鈕與頭貼完美等高
-   ========================================================================== */
+🎬 電腦版「新增影片」按鈕微調：消除扁塌感，讓按鈕與頭貼完美等高
+========================================================================== */
 .upload-video-btn {
-  height: 37px !important;         /* 💡 核心修正：將高度鎖死在 40px，使其與電腦版頭貼一樣高 */
-  padding: 0 20px !important;      /* 💡 拔除上下 padding 改由 height 撐高，左右保留 20px 舒適延伸 */
+  height: 37px !important;
+  /* 💡 核心修正：將高度鎖死在 40px，使其與電腦版頭貼一樣高 */
+  padding: 0 20px !important;
+  /* 💡 拔除上下 padding 改由 height 撐高，左右保留 20px 舒適延伸 */
   margin-top: -2px !important;
 }
 
 /* 確保按鈕內部的加號和文字不會歪掉 */
 .upload-video-btn .plus-icon {
   font-size: 20px !important;
-  line-height: 0 !important;       /* 防止字體行高拉歪按鈕對齊 */
+  line-height: 0 !important;
+  /* 防止字體行高拉歪按鈕對齊 */
   display: flex !important;
   align-items: center !important;
 }
@@ -1607,10 +1739,15 @@ html, body, #root {
 }
 
 .avatar-preview {
-  width: 100px !important;       /* 💡 加上 !important 確保不被其他全域 img 樣式覆蓋 */
-  height: 100px !important;      /* 💡 鎖死高度 */
-  border-radius: 50% !important;  /* 💡 確保一定是完美正圓 */
-  object-fit: cover !important;   /* 💡 防止圖片被壓扁或拉長變形 */
-  margin: 0 auto 15px auto !important; /* 💡 確保在視窗中線絕對置中，並跟下方留出距離 */
+  width: 100px !important;
+  /* 💡 加上 !important 確保不被其他全域 img 樣式覆蓋 */
+  height: 100px !important;
+  /* 💡 鎖死高度 */
+  border-radius: 50% !important;
+  /* 💡 確保一定是完美正圓 */
+  object-fit: cover !important;
+  /* 💡 防止圖片被壓扁或拉長變形 */
+  margin: 0 auto 15px auto !important;
+  /* 💡 確保在視窗中線絕對置中，並跟下方留出距離 */
   display: block !important;
 }
