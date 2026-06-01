@@ -428,15 +428,21 @@ export default function App() {
 
   return channelSnap.exists();
   };
+  
   useEffect(() => {
     if (currentView !== 'home') return;
-    if (searchInputStr.trim()) {
-      setIsPageLoading(true);
+
+    if (!searchInputStr.trim()) {
+      return;
     }
+
+    setIsPageLoading(true);
+
     const delayDebounceFn = setTimeout(() => {
       setSearchQuery(searchInputStr);
       setIsPageLoading(false);
-    }, 350); 
+    }, 350);
+
     return () => clearTimeout(delayDebounceFn);
   }, [searchInputStr, currentView]);
 
@@ -724,12 +730,9 @@ export default function App() {
         'success'
       );
 
-      // Toast 出現後再關 Buffer
-      await new Promise(resolve =>
-        setTimeout(resolve, 300)
-      );
-
-      setIsPageLoading(false);
+      setTimeout(() => {
+        setIsPageLoading(false);
+      }, 800);
 
     } catch (err) {
       console.error(
