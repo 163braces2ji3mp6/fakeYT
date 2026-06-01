@@ -1119,11 +1119,24 @@ html, body {
   gap: 6px;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(255, 106, 0, 0.4);
-  transition: transform 0.2s;
+  
+  /* 🟢 優化：將 transition 改為 all，讓所有變形與顏色、Padding 縮小都有 0.2 秒的絲滑漸變 */
+  transition: all 0.2s ease-in-out;
+  white-space: nowrap;     /* 🟢 關鍵設定：強制文字絕對不換行，避免在過渡期擠到下一行 */
 }
 
+/* 完美優化：升級後的 Hover 懸停動效 */
 .upload-video-btn:hover {
-  transform: scale(1.05);
+  background-color: #e65f00; /* 變成稍微飽和、更有質感的深橘色 */
+  color: #ffffff;             /* 確保文字維持清晰的白色 */
+  transform: scale(1.03) translateY(-1.5px); 
+  box-shadow: 0 0 20px rgba(255, 106, 0, 0.55); /* 加上精緻的橘色發光光暈 */
+}
+
+/* 完美優化：新增 Active 點擊按下的物理回饋 */
+.upload-video-btn:active {
+  transform: scale(0.98) translateY(0px); /* 按下去時有微幅縮小沉回原位的真實按鍵感 */
+  box-shadow: 0 2px 8px rgba(255, 106, 0, 0.3);  /* 陰影隨之縮小 */
 }
 
 .upload-video-btn .plus-icon {
@@ -1132,10 +1145,43 @@ html, body {
   display: inline-flex;    /* 💡 改用 inline-flex，讓圖標自己也能完美置中 */
   align-items: center;
   font-weight: 500;
-  
-  /* 💡 究極微調：因為原本的 CSS 是 `translateY(1px)` 把 + 號往下推，
-        如果覺得字偏下，我們應該改為「負值」微調（往上拉），或者直接歸零由 Flexbox 處理 */
   margin-right: -1px;
+  
+  /* 確保內部的 + 號在變色時也能同步平滑過渡 */
+  transition: all 0.2s ease-in-out;
+}
+
+/* 確保滑鼠移上去時，內部的 + 號百分之百保持亮白色，絕不隱形 */
+.upload-video-btn:hover .plus-icon {
+  color: #ffffff !important;
+}
+
+
+/* ==========================================================================
+   📱 響應式魔法：當平板/側邊欄擠壓或螢幕變小時（小於 1024px），文字消失只留 + 號
+   ========================================================================== */
+@media (max-width: 1024px) {
+  .upload-video-btn {
+    /* 1. 把左右內襯縮小，並把按鈕強制變成正圓形（寬高一樣） */
+    padding: 0 !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 50% !important;
+    
+    /* 2. 清除原本文字與圖標之間的 gap */
+    gap: 0 !important;
+  }
+
+  /* 3. 核心關鍵：直接鎖定按鈕內部的「純文字」，將其隱形 */
+  .upload-video-btn {
+    font-size: 0 !important; /* 利用字體大小變 0，讓網頁只渲染圖標，且不會留下文字寬度 */
+  }
+
+  /* 4. 確保 + 號圖標在圓形按鈕裡依然完美置中，且清除右邊距修正 */
+  .upload-video-btn .plus-icon {
+    margin-right: 0 !important;
+    font-size: 22px !important; /* 變成純圖標按鈕後，可以稍微把 + 號放大一點點更新穎 */
+  }
 }
 
 /* =========================
@@ -1224,3 +1270,75 @@ html, body {
   background: #e5e7eb;
 }
 
+
+/* ==========================================================================
+   🖥️ 電腦與平板端：主頁 3 欄 / 頻道頁 4 欄 與 Padding 完美修復
+   ========================================================================== */
+
+/* 確保全域元件寬高計算正確，防止 Padding 把元件撐爆 */
+*, *::before, *::after {
+  box-sizing: border-box !important;
+}
+
+/* 🟢 1. 修正影片卡片 Padding 與溢出問題 (解決你提到的壞掉問題) */
+.video-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important; /* 清除可能導致錯位的外層內襯 */
+  margin: 0 !important;
+  display: flex;
+  flex-direction: column;
+  background-color: transparent;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* 確保縮圖與影片完美 16:9 比例且不留黑邊或變形 */
+.video-thumbnail, 
+.video-card video,
+.thumbnail-container {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 16 / 9 !important;
+  object-fit: cover !important;
+  border-radius: 12px !important; /* 圓角更精緻 */
+  display: block !important;
+}
+
+/* 影片下方文字資訊區塊的 Padding 重新校正 */
+.video-details, .video-info {
+  display: flex !important;
+  gap: 12px !important;
+  padding: 12px 4px 8px 4px !important; /* 上左右下給予舒適留白，不貼邊 */
+  width: 100% !important;
+}
+
+.video-text {
+  flex: 1 !important;
+  min-width: 0 !important; /* 防止長文字把網格撐開爆版 */
+}
+
+
+/* 🟢 2. 電腦與平板佈局設定 (螢幕大於 768px 時生效) */
+@media (min-width: 769px) {
+
+  /* 🏠 主頁網格：強制設定一排就是「剛好 3 部影片」 */
+  .video-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important; /* 強制 3 等分 */
+    gap: 24px 16px !important; /* 上下間距 24px，左右間距 16px */
+    width: 100% !important;
+    padding: 0 !important;
+  }
+
+  /* 📺 頻道頁面網格：自動偵測並強制設定一排「剛好 4 部影片」 */
+  /* 這裡精準鎖定了頻道頁面常見的包裹類名 (如 .channel-page, .channel-container 等) */
+  .channel-page .video-grid,
+  .channel-container .video-grid,
+  .channel-content .video-grid,
+  .profile-section .video-grid,
+  [className*="channel"] .video-grid {
+    grid-template-columns: repeat(4, 1fr) !important; /* 強制 4 等分 */
+    gap: 20px 14px !important; /* 4 欄時稍微縮小間距防止擁擠 */
+  }
+}
