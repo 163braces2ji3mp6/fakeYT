@@ -559,8 +559,19 @@ export default function App() {
       { merge: true }
     );
 
-    await updateMatchingDocs('videos', () => {
-      const updates = { avatar: avatarUrl };
+    await updateMatchingDocs('videos', (data) => {
+      const needsAvatarUpdate =
+        data.avatar !== avatarUrl ||
+        data.creatorAvatar !== avatarUrl;
+
+      if (!needsAvatarUpdate && !rename) return null;
+
+      const updates = {};
+
+      if (needsAvatarUpdate) {
+        updates.avatar = avatarUrl;
+        updates.creatorAvatar = avatarUrl;
+      }
 
       if (rename) {
         updates.channel = toName;
@@ -1301,6 +1312,10 @@ export default function App() {
         data.author === localUsername ||
         data.channel === localUsername
       ) {
+        if (data.avatar === newAvatar && data.creatorAvatar === newAvatar) {
+          continue;
+        }
+
         await setDoc(
           doc(db, 'videos', docSnap.id),
           {
@@ -1343,6 +1358,7 @@ export default function App() {
         time: "剛剛",            
         duration: finalDuration, 
         avatar: unifiedAvatar,
+        creatorAvatar: unifiedAvatar,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
         category: newVideoCategory, 
