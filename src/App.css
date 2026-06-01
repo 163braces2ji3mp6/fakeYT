@@ -1375,7 +1375,6 @@ html, body {
   }
 
   /* 📺 頻道頁面網格：自動偵測並強制設定一排「剛好 4 部影片」 */
-  /* 這裡精準鎖定了頻道頁面常見的包裹類名 (如 .channel-page, .channel-container 等) */
   .channel-page .video-grid,
   .channel-container .video-grid,
   .channel-content .video-grid,
@@ -1384,4 +1383,225 @@ html, body {
     grid-template-columns: repeat(4, 1fr) !important; /* 強制 4 等分 */
     gap: 20px 14px !important; /* 4 欄時稍微縮小間距防止擁擠 */
   }
+}
+
+/* ==========================================================================
+   📱 手機端極致相容性優化：徹底消滅右側黑邊、Navbar 元件強制定向與水平居中 (768px 以下生效)
+   ========================================================================== */
+
+/* 🚀 物理級別全域防爆：嚴格限制網頁主體死死貼齊手機螢幕，絕不允許任何橫向滾動 */
+html, body, #root {
+  overflow-x: hidden !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+@media (max-width: 768px) {
+  
+  /* 🚀 擊殺真兇：強制把電腦版的 flex 與 100vw 結構扒掉，重設為全滿的區塊寬度 */
+  .main-wrapper {
+    display: block !important;       /* 拔除電腦版的 flex 橫向並排 */
+    width: 100% !important;          /* 拋棄 100vw，改用與手機螢幕 100% 自適應貼齊 */
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    margin-top: 60px !important;     /* 配合手機版 Navbar 的 60px 高度 */
+    min-height: calc(100vh - 60px) !important;
+    overflow-x: hidden !important;
+  }
+
+  /* 🚀 徹底消除電腦版留給左側欄的 240px 巨大黑空洞 */
+  .main-content, .content, .main-container {
+    margin-left: 0 !important;       /* 強制拔除 240px 左邊距 */
+    width: 100% !important;          /* 吃滿手機寬度 */
+    max-width: 100% !important;
+    padding: 16px 12px !important;   /* 給予精緻舒適的四周留白 */
+    padding-top: 16px !important;    
+    box-sizing: border-box !important;
+    
+    /* 讓內部的影片列表與內容在手機螢幕正中央排隊 */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important; 
+    justify-content: center !important;
+  }
+
+  /* 🟢 1. Navbar 行動端排版：強制所有元件上下垂直完美對齊、各就各位 */
+  .navbar {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 60px !important;         /* 縮減頂部高度 */
+    padding: 0 12px !important;      /* 縮小左右內襯 */
+    display: flex !important;
+    flex-direction: row !important;   /* 強制橫向排開 */
+    align-items: center !important;   /* 所有元件上下垂直中心點完美鎖死對齊 */
+    justify-content: space-between !important;
+    gap: 6px !important;             
+    box-sizing: border-box !important;
+    left: 0 !important;
+    right: 0 !important;
+  }
+
+  /* 左側 LOGO 區塊 */
+  .navbar > div:first-child {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    flex-shrink: 0 !important;       
+  }
+
+  /* ==========================================================================
+     💡 LOGO 行動端微調：絕對不改顏色！百分之百維持原設計，僅等比例縮小
+     ========================================================================== */
+  .logo-hub-style {
+    font-size: 20px !important;       /* 💡 僅縮小左邊 Leaf 的字體（原本電腦版是 24px） */
+    gap: 5px !important;              /* 💡 縮小字體後的舒適間距 */
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  /* 右側橘色背景的 hub 方塊 */
+  .logo-badge-orange {
+    font-size: 18px !important;       /* 💡 僅縮小右邊 hub 的字體（原本電腦版是 13px） */
+    padding: 2px 5px !important;      /* 💡 微調橘色方塊的上下左右內襯，符合手機尺寸 */
+    border-radius: 4px !important;    /* 💡 維持微圓角 */
+    display: inline-block !important;
+    margin-left: -2px !important;      /* 💡 縮小字體後的舒適間距 */
+  }
+
+  /* 中間搜尋框：自適應伸縮，限制上限防止壓擠兩側 */
+  .search-bar {
+    flex: 1 !important;              /* 自動彈性伸展，填滿中間空間 */
+    max-width: 180px !important;     /* 鎖定最大寬度，嚴防擠壓到頭像與上傳按鈕 */
+    min-width: 80px !important;
+    height: 32px !important;         
+    display: flex !important;
+    align-items: center !important;
+    margin-left: -1px !important;        /* 💡 給予 LOGO 一點呼吸空間 */
+  }
+  
+  .search-input {
+    font-size: 12px !important;      /* 防止 iOS 瀏覽器自動放大聚焦 */
+    padding: 0 6px !important;
+    width: 100% !important;
+  }
+
+  .search-btn {
+    width: 30px !important;
+    height: 100% !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* 右側操作區容器修正（覆蓋行內樣式的關鍵） */
+  .navbar-actions {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;   /* 強制讓上傳按鈕與頭像水平高度對齊 */
+    justify-content: flex-end !important;
+    gap: 8px !important;              /* 💡 覆蓋電腦版原本過寬的 16px 間距 */
+    flex-shrink: 0 !important;
+  }
+
+  /* 🚀 究極修正：把上傳按鈕限制成和頭像等大的 32px 正圓形 */
+  nav .upload-video-btn,
+  .upload-video-btn {
+    width: 32px !important;        
+    height: 32px !important;       
+    min-width: 32px !important;       /* 鎖死寬度，即使有文字也不准撐開 */
+    max-width: 32px !important;
+    border-radius: 50% !important;   /* 強制完美正圓 */
+    padding: 0 !important;         
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transform: none !important;
+    flex-shrink: 0 !important;
+    overflow: hidden !important;     /* 確保溢出內容絕對不可見 */
+  }
+
+  /* 💡 徹底消滅「新增影片」文字，連留白空間都不給 */
+  .upload-video-btn .upload-btn-text {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+  }
+
+  /* 修正隱藏文字後的按鈕內部，確保只剩下 + 號單獨在正中央放大 */
+  nav .upload-video-btn .plus-icon,
+  .upload-video-btn .plus-icon {
+    font-size: 20px !important;      
+    line-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #ffffff !important;       
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transform: none !important;
+  }
+
+  /* 頭像包覆層與頭像尺寸對齊修正 */
+  .avatar-container {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 32px !important;
+    height: 32px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .avatar {
+    width: 32px !important;        
+    height: 32px !important;
+    border-radius: 50% !important;
+    display: block !important;
+    margin: 0 !important;
+  }
+
+  /* 🟢 2. 側邊欄完全隱藏 */
+  .sidebar {
+    display: none !important;        
+  }
+
+  /* 🟢 3. 影片網格：單欄精緻置中瀑布流 */
+  .video-grid {
+    width: 100% !important;
+    max-width: 440px !important;     
+    margin: 0 auto !important;       /* 左右自動外邊距，達成絕對置中 */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important; 
+    gap: 24px !important;            
+  }
+
+  .video-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+  }
+}
+
+/* ==========================================================================
+   🎬 電腦版「新增影片」按鈕微調：消除扁塌感，讓按鈕與頭貼完美等高
+   ========================================================================== */
+.upload-video-btn {
+  height: 37px !important;         /* 💡 核心修正：將高度鎖死在 40px，使其與電腦版頭貼一樣高 */
+  padding: 0 20px !important;      /* 💡 拔除上下 padding 改由 height 撐高，左右保留 20px 舒適延伸 */
+  margin-top: -2px !important;
+}
+
+/* 確保按鈕內部的加號和文字不會歪掉 */
+.upload-video-btn .plus-icon {
+  font-size: 20px !important;
+  line-height: 0 !important;       /* 防止字體行高拉歪按鈕對齊 */
+  display: flex !important;
+  align-items: center !important;
+}
+
+.upload-video-btn .upload-btn-text {
+  line-height: 1 !important;
 }

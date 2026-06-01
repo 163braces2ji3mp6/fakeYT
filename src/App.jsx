@@ -13,7 +13,6 @@ import { db } from './firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
-
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 const isShiauyeAsset = (item) => {
   if (!item) return false;
@@ -1650,7 +1649,6 @@ export default function App() {
   return (
     <div>
       {/* 頂部導覽列 */}
-      
       <nav className="navbar">
         <div className="logo-hub-style" onClick={() => {
           handleHomeNavigation();
@@ -1659,6 +1657,7 @@ export default function App() {
           <span className="logo-text-white">Leaf</span>
           <span className="logo-badge-orange">hub</span>
         </div>
+        
         <div className="search-bar">
           <input 
             type="text" 
@@ -1680,15 +1679,15 @@ export default function App() {
           </button>
         </div>
           
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* 💡 核心修正 1：移除 style 的 gap，由 className="navbar-actions" 在 CSS 統籌控制 */}
+        <div className="navbar-actions" style={{ display: 'flex', alignItems: 'center', gap: '14px'}}>
           <button onClick={() => setIsUploadModalOpen(true)} className="upload-video-btn">
-            <span className="plus-icon">+</span> 新增影片
+            <span className="plus-icon">+</span> 
+            {/* 💡 核心修正 2：幫文字加上專用 class 方便手機版徹底隱藏 */}
+            <span className="upload-btn-text">新增影片</span>
           </button>
 
-          <div
-            className="avatar-container"
-            ref={profileMenuRef}
-          >
+          <div className="avatar-container" ref={profileMenuRef}>
             <img
               src={unifiedAvatar}
               alt={localUsername}
@@ -1778,7 +1777,8 @@ export default function App() {
           </aside>
         )}
 
-        <main className="content-area" ref={contentAreaRef}>
+        {/* 💡 核心修正 3：加入 main-content 類名，確保與手機版 CSS 精準對接 */}
+        <main className="content-area main-content" ref={contentAreaRef}>
           {currentView === 'home' && (
             <>
               <div className="category-bar">
