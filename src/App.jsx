@@ -10,7 +10,7 @@ import {
 } from './firebaseService';
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 import { db } from './firebase'; 
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 
@@ -334,6 +334,8 @@ export default function App() {
         rename: false
       });
 
+      await repairMyVideos();
+
       setTargetChannel(prev =>
         prev && (prev.name === localUsername || prev.userId === currentUserId)
           ? { ...prev, avatar: avatarUrl }
@@ -564,11 +566,12 @@ export default function App() {
         data.avatar !== avatarUrl ||
         data.creatorAvatar !== avatarUrl;
 
-      const needsIdentityBackfill =
-        String(data.userId ?? '') !== String(toUserId) ||
-        String(data.author ?? '') !== String(toName);
+      const needsIdentityUpdate =
+        rename ||
+        data.userId !== toUserId ||
+        data.author !== toName;
 
-      if (!needsAvatarUpdate && !needsIdentityBackfill && !rename) return null;
+      if (!needsAvatarUpdate && !needsIdentityUpdate) return null;
 
       const updates = {};
 
@@ -577,7 +580,7 @@ export default function App() {
         updates.creatorAvatar = avatarUrl;
       }
 
-      if (needsIdentityBackfill || rename) {
+      if (needsIdentityUpdate) {
         updates.userId = toUserId;
         updates.author = toName;
       }
@@ -661,6 +664,8 @@ export default function App() {
         subscriberCount: isSameUsername ? null : currentSubCount,
         rename: !isSameUsername
       });
+
+      await repairMyVideos();
 
       setCurrentUserAvatar(previewAvatar);
       setLocalUsername(newUsername);
@@ -953,9 +958,7 @@ export default function App() {
               {
                 ...videoData,
                 avatar: resolvedAvatar,
-                creatorAvatar: resolvedAvatar,
-                userId: finalId,
-                author: finalName
+                creatorAvatar: resolvedAvatar
               },
               { merge: true }
             );
@@ -1325,8 +1328,8 @@ export default function App() {
         if (
           data.avatar === newAvatar &&
           data.creatorAvatar === newAvatar &&
-          String(data.userId ?? '') === String(currentUserId) &&
-          String(data.author ?? '') === String(localUsername)
+          data.userId === currentUserId &&
+          data.author === localUsername
         ) {
           continue;
         }
@@ -1335,14 +1338,50 @@ export default function App() {
           doc(db, 'videos', docSnap.id),
           {
             ...data,
-            avatar: newAvatar,
-            creatorAvatar: newAvatar,
             userId: currentUserId,
-            author: localUsername
+            author: localUsername,
+            avatar: newAvatar,
+            creatorAvatar: newAvatar
           },
           { merge: true }
         );
       }
+    }
+  };
+
+  const repairMyVideos = async () => {
+    try {
+      if (!currentUserId || localUsername === '載入中...') return;
+
+      const snapshot = await getDocs(collection(db, 'videos'));
+      const batch = writeBatch(db);
+      const avatarToUse = currentUserAvatar || previewAvatar || unifiedAvatar;
+
+      snapshot.docs.forEach((videoDoc) => {
+        const data = videoDoc.data();
+
+        const belongsToMe =
+          String(data.channel ?? '') === String(localUsername) ||
+          String(data.author ?? '') === String(localUsername) ||
+          String(data.userId ?? '') === String(currentUserId);
+
+        if (!belongsToMe) return;
+
+        batch.set(
+          doc(db, 'videos', videoDoc.id),
+          {
+            userId: currentUserId,
+            author: localUsername,
+            avatar: avatarToUse,
+            creatorAvatar: avatarToUse
+          },
+          { merge: true }
+        );
+      });
+
+      await batch.commit();
+    } catch (err) {
+      console.error('補影片資料失敗:', err);
     }
   };
 
