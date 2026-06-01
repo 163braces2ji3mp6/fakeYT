@@ -334,6 +334,8 @@ export default function App() {
         rename: false
       });
 
+      await syncAvatarToFirebase(avatarUrl);
+
       await repairMyVideos({
         channelName: localUsername,
         avatarUrl
@@ -1351,45 +1353,57 @@ export default function App() {
 
   const repairMyVideos = async ({
     channelName = localUsername,
-    avatarUrl = previewAvatar || currentUserAvatar || unifiedAvatar
+    avatarUrl = currentUserAvatar
   } = {}) => {
     try {
-      if (!currentUserId || !channelName) return;
+      if (!channelName) return;
 
-      const snapshot = await getDocs(collection(db, 'videos'));
-      const batch = writeBatch(db);
+      const snapshot = await getDocs(
+        collection(db, 'videos')
+      );
 
-      snapshot.docs.forEach((videoDoc) => {
+      let updateCount = 0;
+
+      for (const videoDoc of snapshot.docs) {
         const data = videoDoc.data();
 
-        const belongsToMe =
-          String(data.channel ?? '') === String(channelName);
+        const videoChannel = String(
+          data.channel ?? ''
+        ).trim();
 
-        if (!belongsToMe) return;
+        const currentChannel = String(
+          channelName ?? ''
+        ).trim();
 
-        const updates = {};
-
-        if (data.avatar !== avatarUrl || data.creatorAvatar !== avatarUrl) {
-          updates.avatar = avatarUrl;
-          updates.creatorAvatar = avatarUrl;
+        if (videoChannel !== currentChannel) {
+          continue;
         }
 
-        if (data.userId !== currentUserId || !data.userId) {
+        const updates = {
+          avatar: avatarUrl,
+          creatorAvatar: avatarUrl
+        };
+
+        if (!data.userId) {
           updates.userId = currentUserId;
         }
 
-        if (Object.keys(updates).length > 0) {
-          batch.set(
-            doc(db, 'videos', videoDoc.id),
-            updates,
-            { merge: true }
-          );
-        }
-      });
+        await updateDoc(
+          doc(db, 'videos', videoDoc.id),
+          updates
+        );
 
-      await batch.commit();
+        updateCount++;
+      }
+
+      console.log(
+        `repairMyVideos 完成，共更新 ${updateCount} 部影片`
+      );
     } catch (err) {
-      console.error('補影片資料失敗:', err);
+      console.error(
+        'repairMyVideos 失敗:',
+        err
+      );
     }
   };
 
