@@ -681,13 +681,7 @@ export default function App() {
         toUserId: currentUserId,
         subscriberCount: isSameUsername ? null : currentSubCount,
         rename: !isSameUsername
-      });
-
-      await syncAvatarToFirebase(avatarUrl);
-
-      await repairMyVideos({
-        channelName: newUsername,
-        avatarUrl
+        
       });
 
       setCurrentUserAvatar(avatarUrl);
@@ -1334,79 +1328,79 @@ export default function App() {
     };
 
     const syncAvatarToFirebase = async (newAvatar) => {
-    if (!currentUserId) return;
+      if (!currentUserId) return;
 
-    // comments
-    const commentsSnapshot = await getDocs(collection(db, 'comments'));
+      // comments
+      const commentsSnapshot = await getDocs(collection(db, 'comments'));
 
-    for (const docSnap of commentsSnapshot.docs) {
-      const data = docSnap.data();
+      for (const docSnap of commentsSnapshot.docs) {
+        const data = docSnap.data();
 
-      if (
-        data.userId === currentUserId ||
-        data.author === localUsername
-      ) {
+        if (
+          data.userId === currentUserId ||
+          data.author === localUsername
+        ) {
+          await setDoc(
+            doc(db, 'comments', docSnap.id),
+            {
+              ...data,
+              avatar: newAvatar
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      // replies
+      const repliesSnapshot = await getDocs(collection(db, 'replies'));
+
+      for (const docSnap of repliesSnapshot.docs) {
+        const data = docSnap.data();
+
+        if (
+          data.userId === currentUserId ||
+          data.author === localUsername
+        ) {
+          await setDoc(
+            doc(db, 'replies', docSnap.id),
+            {
+              ...data,
+              avatar: newAvatar
+            },
+            { merge: true }
+          );
+        }
+      }
+      // videos
+      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+
+      for (const docSnap of videosSnapshot.docs) {
+        const data = docSnap.data();
+
+        if (String(data.channel ?? '') !== String(localUsername)) {
+          continue;
+        }
+
+        if (
+          data.avatar === newAvatar &&
+          data.creatorAvatar === newAvatar &&
+          data.userId === currentUserId
+        ) {
+          continue;
+        }
+
         await setDoc(
-          doc(db, 'comments', docSnap.id),
+          doc(db, 'Videos', docSnap.id),
           {
             ...data,
-            avatar: newAvatar
+            userId: currentUserId,
+            avatar: newAvatar,
+            creatorAvatar: newAvatar
           },
           { merge: true }
         );
       }
-    }
-
-    // replies
-    const repliesSnapshot = await getDocs(collection(db, 'replies'));
-
-    for (const docSnap of repliesSnapshot.docs) {
-      const data = docSnap.data();
-
-      if (
-        data.userId === currentUserId ||
-        data.author === localUsername
-      ) {
-        await setDoc(
-          doc(db, 'replies', docSnap.id),
-          {
-            ...data,
-            avatar: newAvatar
-          },
-          { merge: true }
-        );
-      }
-    }
-    // videos
-    const videosSnapshot = await getDocs(collection(db, 'Videos'));
-
-    for (const docSnap of videosSnapshot.docs) {
-      const data = docSnap.data();
-
-      if (String(data.channel ?? '') !== String(localUsername)) {
-        continue;
-      }
-
-      if (
-        data.avatar === newAvatar &&
-        data.creatorAvatar === newAvatar &&
-        data.userId === currentUserId
-      ) {
-        continue;
-      }
-
-      await setDoc(
-        doc(db, 'Videos', docSnap.id),
-        {
-          ...data,
-          userId: currentUserId,
-          avatar: newAvatar,
-          creatorAvatar: newAvatar
-        },
-        { merge: true }
-      );
-    }
-  };
+    };
 
   const repairMyVideos = async ({
     channelName = localUsername,
