@@ -1129,11 +1129,16 @@ export default function App() {
         shuffledAll = [justUploadedVideo, ...shuffledAll];
       }
       setVideos(shuffledAll);
-      setIsPageLoading(false);
-      setIsFirstInit(false); 
+      
+      // 🟢 修正：只有在第一次載入網頁時，才在這裡關閉全域 Loading
+      // 如此一來，改名換頭貼在後台同步資料時，就不會再被這裡強制提早關閉轉圈圈了！
+      if (isFirstInit) {
+        setIsPageLoading(false);
+        setIsFirstInit(false); 
+      }
     });
     return () => unsubscribe();
-  }, [justUploadedVideo]);
+  }, [justUploadedVideo, isFirstInit]); // 💡 重點：記得把 isFirstInit 加進依賴陣列，避免 React 的閉包陷阱
 
   useEffect(() => {
     function handleClickOutside(event) {
