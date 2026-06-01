@@ -1118,10 +1118,12 @@ export default function App() {
   }, [selectedVideo]);
 
   useEffect(() => {
-    const unsubscribe = subscribeToVideos((firebaseVideos) => {
-      const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
-      setRawFirebaseVideos(validFirebaseVideos);
-      
+  const unsubscribe = subscribeToVideos((firebaseVideos) => {
+    const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
+    setRawFirebaseVideos(validFirebaseVideos);
+    
+    // 💡 核心改進點：只有在第一次初始化（isFirstInit 為 true）時才進行洗牌（shuffle）
+    if (isFirstInit) {
       let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
       if (justUploadedVideo) {
         shuffledAll = shuffledAll.filter(v => v.id !== justUploadedVideo.id);
@@ -1129,17 +1131,27 @@ export default function App() {
       }
       setVideos(shuffledAll);
       
-      // 🟢 修改這裡：幫第一次開網頁加上最低 Buffer 時間
-      if (isFirstInit) {
-        setIsFirstInit(false); // 💡 立即防重，避免這段時間內 Firebase 重複觸發
-        
-        setTimeout(() => {
-          setIsPageLoading(false);
-        }, 1); // ⏳ 1000 毫秒 = 1 秒（也可以依喜好改成 800）
-      }
-    });
-    return () => unsubscribe();
-  }, [justUploadedVideo, isFirstInit]);
+      setIsFirstInit(false); // 💡 立即防重，避免這段時間內 Firebase 重複觸發
+      
+      setTimeout(() => {
+        setIsPageLoading(false);
+      }, 1); 
+    } else {
+      // 💡 重點：如果不是第一次（代表是使用者在點影片、點讚或增加觀看數而觸發更新）
+      // 我們要維持本來的影片排序，只去更新被點擊影片的數據（例如觀看次數），絕對不重新洗牌！
+      setVideos((prevVideos) => {
+        return prevVideos.map((currentVideo) => {
+          // 在剛下載的最新 Firebase 資料中，找找看有沒有對應的這部影片
+          const updatedInfo = validFirebaseVideos.find(v => v.id === currentVideo.id);
+          // 如果有找到更新的數據，就把它融合進去（更新觀看數），但留在原位；沒找到就維持原樣
+          return updatedInfo ? { ...currentVideo, ...updatedInfo } : currentVideo;
+        });
+      });
+    }
+  });
+  
+  return () => unsubscribe();
+}, [justUploadedVideo, isFirstInit]);
 
   useEffect(() => {
     function handleClickOutside(event) {
