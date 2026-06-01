@@ -654,6 +654,7 @@ export default function App() {
         return;
       }
     }
+
     setIsSettingsModalOpen(false);
     setIsPageLoading(true);
 
@@ -681,7 +682,6 @@ export default function App() {
         toUserId: currentUserId,
         subscriberCount: isSameUsername ? null : currentSubCount,
         rename: !isSameUsername
-        
       });
 
       setCurrentUserAvatar(avatarUrl);
@@ -723,6 +723,14 @@ export default function App() {
           : '帳號名稱與頭貼已同步更新！',
         'success'
       );
+
+      // Toast 出現後再關 Buffer
+      await new Promise(resolve =>
+        setTimeout(resolve, 300)
+      );
+
+      setIsPageLoading(false);
+
     } catch (err) {
       console.error(
         '改名並搬移中文檔案失敗:',
@@ -733,7 +741,7 @@ export default function App() {
         '更新失敗，請稍後再試',
         'error'
       );
-    } finally {
+
       setIsPageLoading(false);
     }
   };
