@@ -1130,15 +1130,18 @@ export default function App() {
       }
       setVideos(shuffledAll);
       
-      // 🟢 修正：只有在第一次載入網頁時，才在這裡關閉全域 Loading
-      // 如此一來，改名換頭貼在後台同步資料時，就不會再被這裡強制提早關閉轉圈圈了！
+      // 🟢 修改這裡：幫第一次開網頁加上最低 Buffer 時間
       if (isFirstInit) {
-        setIsPageLoading(false);
-        setIsFirstInit(false); 
+        setIsFirstInit(false); // 💡 立即防重，避免這段時間內 Firebase 重複觸發
+        
+        // 讓第一次打開主頁時，Buffer 圈圈至少轉個 1 秒鐘，畫面載入才會滑順、不閃爍
+        setTimeout(() => {
+          setIsPageLoading(false);
+        }, 1000); // ⏳ 1000 毫秒 = 1 秒（也可以依喜好改成 800）
       }
     });
     return () => unsubscribe();
-  }, [justUploadedVideo, isFirstInit]); // 💡 重點：記得把 isFirstInit 加進依賴陣列，避免 React 的閉包陷阱
+  }, [justUploadedVideo, isFirstInit]);
 
   useEffect(() => {
     function handleClickOutside(event) {
