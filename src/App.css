@@ -2317,3 +2317,66 @@ html, body, #root {
     height: 86px !important;
   }
 }
+
+/* ==========================================================================
+🖥️ 電腦版頻道頁改回原本排列：頭像左、文字右
+手機版維持置中，不受影響
+========================================================================== */
+@media (min-width: 769px) {
+  .channel-header-info {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    gap: 24px !important;
+    padding-left: 8px !important;
+    padding-bottom: 24px !important;
+    margin-bottom: 32px !important;
+  }
+
+  .channel-header-info > img {
+    width: 120px !important;
+    height: 120px !important;
+    margin: 0 !important;
+    flex: 0 0 auto !important;
+  }
+
+  .channel-header-text {
+    flex: 1 !important;
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    text-align: left !important;
+  }
+
+  .channel-title-row {
+    width: auto !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 20px !important;
+    flex-wrap: wrap !important;
+    text-align: left !important;
+  }
+
+  .channel-header-info h1,
+  .channel-header-info p {
+    text-align: left !important;
+  }
+
+  .channel-header-info .sub-action-btn {
+    margin-left: 0 !important;
+  }
+
+  .channel-tabs-bar {
+    justify-content: flex-start !important;
+    padding-left: 8px !important;
+  }
+}
