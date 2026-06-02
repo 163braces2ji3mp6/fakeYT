@@ -1187,7 +1187,8 @@ export default function App() {
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
-  const handleChannelNavigation = async (channelName, channelAvatar, e) => {
+  // 第 4 個參數 providedUserId 很重要：從影片卡片點進頻道時，直接把 video.userId 傳進來
+  const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
     if (e) e.stopPropagation();
 
     setIsChannelLoading(true);
@@ -1216,72 +1217,89 @@ export default function App() {
       return;
     }
 
+    const matchedLocalVideo = (Array.isArray(videos) ? videos : []).find(video => {
+      return (
+        String(video.channel ?? '') === String(finalName) ||
+        String(video.author ?? '') === String(finalName) ||
+        String(video.creatorName ?? '') === String(finalName) ||
+        String(video.username ?? '') === String(finalName)
+      );
+    });
+
+    const hintedUserId =
+      providedUserId ||
+      matchedLocalVideo?.userId ||
+      (finalName === localUsername ? currentUserId : '');
+
     const initialChannelData = {
       name: finalName,
       username: finalName,
       channelName: finalName,
       avatar: finalAvatar,
       bio: initialBio,
-      userId: finalName === localUsername ? currentUserId : ''
+      userId: hintedUserId
     };
     setTargetChannel(initialChannelData);
 
-    let finalId = initialChannelData.userId;
-    let resolvedAvatar = finalAvatar;
+    let finalId = hintedUserId;
+    let resolvedAvatar = finalAvatar || matchedLocalVideo?.avatar || matchedLocalVideo?.creatorAvatar || GUEST_AVATAR;
     let resolvedSubscriberCount = 0;
 
     try {
       const isMyOwnChannel = finalName === localUsername;
 
-      // 1) 自己的頻道：直接優先讀 Channels/{currentUserId}
-      if (isMyOwnChannel && currentUserId) {
-        const ownIdSnap = await getDoc(doc(db, 'Channels', currentUserId));
-        if (ownIdSnap.exists()) {
-          const data = ownIdSnap.data();
-          finalId = data.userId || currentUserId;
-          resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
-          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
-
-          // 🟢 如果 ID 文件還沒有 avatar，回頭讀舊版 Channels/{username} 補大頭貼
-          if ((!data.avatar || data.avatar === GUEST_AVATAR) && finalName) {
-            const legacyAvatarSnap = await getDoc(doc(db, 'Channels', finalName));
-            if (legacyAvatarSnap.exists()) {
-              const legacyData = legacyAvatarSnap.data();
-              resolvedAvatar = legacyData.avatar || resolvedAvatar;
-            }
-          }
-        }
-      }
-
-      // 2) 名稱 fallback：讀舊版 Channels/{username}
-      if (!finalId) {
-        const legacySnap = await getDoc(doc(db, 'Channels', finalName));
-        if (legacySnap.exists()) {
-          const data = legacySnap.data();
-          finalId = data.userId || data.canonicalChannelId || legacySnap.id;
-          resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
+      // 1) 有 userId 時，永遠先讀 Channels/{userId}
+      if (finalId) {
+        const idSnap = await getDoc(doc(db, 'Channels', finalId));
+        if (idSnap.exists()) {
+          const data = idSnap.data();
+          finalId = data.userId || finalId;
+          resolvedAvatar = data.avatar || resolvedAvatar;
           resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
         }
       }
 
-      // 3) 新版查詢 fallback：用 username / name / channelName 找 userId 文件
+      // 2) 沒有 userId 時，先用新版欄位查詢 name / username / channelName
+      // 注意：這一步要放在 legacy Channels/{username} 前面，避免舊名字文件沒有 userId 時擋住新版 ID 文件
       if (!finalId) {
         const fieldsToCheck = ['username', 'name', 'channelName'];
         for (const fieldName of fieldsToCheck) {
           const q = query(collection(db, 'Channels'), where(fieldName, '==', finalName));
           const snap = await getDocs(q);
+
           if (!snap.empty) {
-            const channelDoc = snap.docs[0];
-            const data = channelDoc.data();
-            finalId = data.userId || channelDoc.id;
-            resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
+            const idFirstDoc = snap.docs.find(channelDoc => {
+              const data = channelDoc.data();
+              return Boolean(data.userId || String(channelDoc.id).startsWith('user_') || String(channelDoc.id) === currentUserId);
+            }) || snap.docs[0];
+
+            const data = idFirstDoc.data();
+            finalId = data.userId || idFirstDoc.id;
+            resolvedAvatar = data.avatar || resolvedAvatar;
             resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
             break;
           }
         }
       }
 
-      // 4) 都找不到才建立雙軌文件
+      // 3) 最後才讀舊版 Channels/{username} fallback
+      // 如果舊文件沒有 userId / canonicalChannelId，不要把 username 當成 userId。
+      if (!finalId) {
+        const legacySnap = await getDoc(doc(db, 'Channels', finalName));
+        if (legacySnap.exists()) {
+          const data = legacySnap.data();
+          finalId = data.userId || data.canonicalChannelId || '';
+          resolvedAvatar = data.avatar || resolvedAvatar;
+          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+        }
+      }
+
+      // 4) 如果影片資料內有 userId，但上面都沒解出來，就用影片的 userId
+      if (!finalId && matchedLocalVideo?.userId) {
+        finalId = matchedLocalVideo.userId;
+      }
+
+      // 5) 都找不到才建立新 ID 文件。這通常只會發生在完全沒有 userId 的舊資料。
       if (!finalId) {
         finalId = isMyOwnChannel
           ? currentUserId
@@ -1291,7 +1309,7 @@ export default function App() {
           name: finalName,
           username: finalName,
           channelName: finalName,
-          avatar: finalAvatar,
+          avatar: resolvedAvatar,
           userId: finalId,
           subscriberCount: 0,
           createdAt: new Date().toISOString(),
@@ -1299,10 +1317,9 @@ export default function App() {
         };
 
         await setDoc(doc(db, 'Channels', finalId), newChannelPayload, { merge: true });
-        // 🟢 新資料只寫入 Channels/{userId}，不再建立 Channels/{username} fallback 文件
       }
 
-      // 5) 舊影片補 userId / avatar，讓頻道頁之後可以優先用 ID 篩選
+      // 6) 舊影片補 userId / avatar，讓其他人以後點同頻道可以直接讀到正確 userId
       const videosSnapshot = await getDocs(collection(db, 'Videos'));
       for (const videoDoc of videosSnapshot.docs) {
         const videoData = videoDoc.data();
@@ -1315,14 +1332,20 @@ export default function App() {
 
         const needsUpdate =
           isSameChannel &&
-          (!videoData.userId || videoData.avatar !== resolvedAvatar || videoData.creatorAvatar !== resolvedAvatar);
+          (
+            !videoData.userId ||
+            videoData.userId !== finalId ||
+            videoData.avatar !== resolvedAvatar ||
+            videoData.creatorAvatar !== resolvedAvatar
+          );
 
         if (needsUpdate) {
           await setDoc(doc(db, 'Videos', videoDoc.id), {
             ...videoData,
-            userId: videoData.userId || finalId,
+            userId: finalId,
             avatar: resolvedAvatar,
-            creatorAvatar: resolvedAvatar
+            creatorAvatar: resolvedAvatar,
+            channelAvatar: resolvedAvatar
           }, { merge: true });
         }
       }
@@ -1959,7 +1982,7 @@ export default function App() {
             src={avatarSrc}
             alt={displayName}
             className="channel-avatar channel-avatar-clickable"
-            onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e)}
+            onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
             style={{ cursor: 'pointer' }}
             onError={(e) => {
               e.currentTarget.src = GUEST_AVATAR;
@@ -1969,7 +1992,7 @@ export default function App() {
             <h3 className="video-title">{video.title}</h3>
             <p
               className="channel-name channel-name-clickable"
-              onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e)}
+              onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
               style={{ cursor: 'pointer', display: 'inline-block' }}
             >
               {displayName}
