@@ -698,11 +698,14 @@ export default function App() {
       channelPayload.subsCount = deleteField();
     }
 
-    await setDoc(
-      doc(db, 'Channels', toName),
-      channelPayload,
-      { merge: true }
-    );
+    // 🟢 新資料只寫入 Channels/{userId}，名稱只當欄位，不再新建 Channels/{username}
+    if (toUserId) {
+      await setDoc(
+        doc(db, 'Channels', toUserId),
+        channelPayload,
+        { merge: true }
+      );
+    }
 
     // 讓 Buffer 有機會先 render 出來
     await new Promise(resolve =>
@@ -814,7 +817,7 @@ export default function App() {
 
     try {
       const oldDocRef = doc(db, 'Channels', oldUsername);
-      const newDocRef = doc(db, 'Channels', newUsername);
+      const newDocRef = doc(db, 'Channels', currentUserId);
       const oldDocSnap = await getDoc(oldDocRef);
       const oldChannelData = oldDocSnap.exists() ? oldDocSnap.data() : {};
 
@@ -827,7 +830,7 @@ export default function App() {
         0
       );
 
-      // 🟢 新頻道只寫入 subscriberCount，一併刪除舊的 subscribers / subsCount 欄位
+      // 🟢 新資料只寫入 Channels/{userId}，並保留 subscriberCount
       await setDoc(newDocRef, {
         ...oldChannelData,
         name: newUsername,
@@ -945,13 +948,16 @@ export default function App() {
 
     try {
       await setDoc(
-        doc(db, 'Channels', randomUser.name),
+        doc(db, 'Channels', randomUser.id),
         {
+          userId: randomUser.id,
+          name: randomUser.name,
+          username: randomUser.name,
           channelName: randomUser.name,
           avatar: avatarUrl,
-          userId: randomUser.id,
           subscriberCount: 0,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         },
         { merge: true }
       );
@@ -1109,21 +1115,26 @@ export default function App() {
   const handleMyChannelClick = () => {
     setIsChannelLoading(true); 
     setTargetChannel({
+      userId: currentUserId,
       name: localUsername,
+      username: localUsername,
+      channelName: localUsername,
       avatar: unifiedAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
-      bio: getRandomBio() 
+      bio: getRandomBio(),
+      subscriberCount: liveSubscriberCount
     });
+    setTargetChannelUserId(currentUserId);
     setCurrentView('channel'); 
     setChannelTab('videos'); 
     setIsProfileOpen(false); 
     forceScrollToTop(); 
   };
 
-  // 🟢 中文檔名完美版：統一用中文帳號名稱當作 Firebase 的文件 ID
+  // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
   const handleChannelNavigation = async (channelName, channelAvatar, e) => {
-    if (e) e.stopPropagation(); 
-    
-    setIsChannelLoading(true); 
+    if (e) e.stopPropagation();
+
+    setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
     forceScrollToTop();
@@ -1131,127 +1142,160 @@ export default function App() {
     const startTime = Date.now();
     const finalName = channelName || localUsername;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
-    let resolvedAvatar = finalAvatar;
-    const getUnifiedAvatar = (channelName, avatar, isCurrentUser = false) => {
-      if (isCurrentUser) return avatar;
-      if (channelName === '小葉') return avatarImage;
-      return avatar || GUEST_AVATAR;
-    };
-    // 1. 小葉官方帳號固定設定
+    const initialBio = getRandomBio();
+
     if (finalName === '小葉') {
       const shiauyeChannel = {
         name: '小葉',
+        username: '小葉',
+        channelName: '小葉',
         avatar: avatarImage,
         bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！',
         userId: 'shiauye_official'
       };
       setTargetChannel(shiauyeChannel);
-      setTargetChannelUserId('shiauye_official'); 
+      setTargetChannelUserId('shiauye_official');
       localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
       setIsChannelLoading(false);
-      return; 
+      return;
     }
 
-    const initialBio = getRandomBio();
-    const initialChannelData = { name: finalName, avatar: finalAvatar, bio: initialBio, userId: '' };
+    const initialChannelData = {
+      name: finalName,
+      username: finalName,
+      channelName: finalName,
+      avatar: finalAvatar,
+      bio: initialBio,
+      userId: finalName === localUsername ? currentUserId : ''
+    };
     setTargetChannel(initialChannelData);
 
-    let finalId = '';
+    let finalId = initialChannelData.userId;
+    let resolvedAvatar = finalAvatar;
+    let resolvedSubscriberCount = 0;
 
     try {
-      const isMyOwnChannel = (finalName === localUsername);
+      const isMyOwnChannel = finalName === localUsername;
 
-      // 🎯 核心修正：不管是自己還是別人，統一用「中文名字 (finalName)」直接當作文件 ID 去尋找！
-      const docRef = doc(db, 'Channels', finalName);
-      const docSnap = await getDoc(docRef);
+      // 1) 自己的頻道：直接優先讀 Channels/{currentUserId}
+      if (isMyOwnChannel && currentUserId) {
+        const ownIdSnap = await getDoc(doc(db, 'Channels', currentUserId));
+        if (ownIdSnap.exists()) {
+          const data = ownIdSnap.data();
+          finalId = data.userId || currentUserId;
+          resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
+          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
 
-      if (docSnap.exists()) {
-        const channelData = docSnap.data();
-
-        finalId =
-          channelData.userId ||
-          `user_${Math.random().toString(16).substring(2, 6)}`;
-
-        // ✅ 用 Firebase 最新頭貼
-        resolvedAvatar =
-          channelData.avatar ||
-          finalAvatar ||
-          GUEST_AVATAR;
-      } else {
-        // 🆕 如果不存在（全新帳號或別人新頻道），直接用中文名字建立文件，配給他一組背景識別 ID
-        if (isMyOwnChannel) {
-          finalId = currentUserId; // 自己的話維持你原本的 currentUserId 確保前後一致
-        } else {
-          finalId = `user_${Math.random().toString(16).substring(2, 6)}`;
-        }
-
-        // ✅ 順便把舊影片頭貼同步
-        const videosSnapshot = await getDocs(
-          collection(db, 'Videos')
-        );
-
-        for (const videoDoc of videosSnapshot.docs) {
-          const videoData = videoDoc.data();
-
-          const isSameChannel =
-            String(videoData.channel ?? '') === String(finalName) ||
-            String(videoData.userId ?? '') === String(finalId);
-
-          const needsUpdate =
-            videoData.avatar !== resolvedAvatar ||
-            videoData.creatorAvatar !== resolvedAvatar ||
-            !videoData.userId;
-
-          if (isSameChannel && needsUpdate) {
-            await setDoc(
-              doc(db, 'Videos', videoDoc.id),
-              {
-                ...videoData,
-                userId: videoData.userId || finalId,
-                avatar: resolvedAvatar,
-                creatorAvatar: resolvedAvatar
-              },
-              { merge: true }
-            );
+          // 🟢 如果 ID 文件還沒有 avatar，回頭讀舊版 Channels/{username} 補大頭貼
+          if ((!data.avatar || data.avatar === GUEST_AVATAR) && finalName) {
+            const legacyAvatarSnap = await getDoc(doc(db, 'Channels', finalName));
+            if (legacyAvatarSnap.exists()) {
+              const legacyData = legacyAvatarSnap.data();
+              resolvedAvatar = legacyData.avatar || resolvedAvatar;
+            }
           }
         }
+      }
 
-        await setDoc(docRef, {
+      // 2) 名稱 fallback：讀舊版 Channels/{username}
+      if (!finalId) {
+        const legacySnap = await getDoc(doc(db, 'Channels', finalName));
+        if (legacySnap.exists()) {
+          const data = legacySnap.data();
+          finalId = data.userId || data.canonicalChannelId || legacySnap.id;
+          resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
+          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+        }
+      }
+
+      // 3) 新版查詢 fallback：用 username / name / channelName 找 userId 文件
+      if (!finalId) {
+        const fieldsToCheck = ['username', 'name', 'channelName'];
+        for (const fieldName of fieldsToCheck) {
+          const q = query(collection(db, 'Channels'), where(fieldName, '==', finalName));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const channelDoc = snap.docs[0];
+            const data = channelDoc.data();
+            finalId = data.userId || channelDoc.id;
+            resolvedAvatar = data.avatar || finalAvatar || GUEST_AVATAR;
+            resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+            break;
+          }
+        }
+      }
+
+      // 4) 都找不到才建立雙軌文件
+      if (!finalId) {
+        finalId = isMyOwnChannel
+          ? currentUserId
+          : `user_${Math.random().toString(16).substring(2, 6)}`;
+
+        const newChannelPayload = {
+          name: finalName,
+          username: finalName,
           channelName: finalName,
           avatar: finalAvatar,
           userId: finalId,
           subscriberCount: 0,
-          createdAt: new Date().toISOString()
-        });
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
 
-        resolvedAvatar = finalAvatar;
-        console.log(`✨ [新建成功] 已成功建立中文文件名檔案：Channels/${finalName}`);
+        await setDoc(doc(db, 'Channels', finalId), newChannelPayload, { merge: true });
+        // 🟢 新資料只寫入 Channels/{userId}，不再建立 Channels/{username} fallback 文件
+      }
+
+      // 5) 舊影片補 userId / avatar，讓頻道頁之後可以優先用 ID 篩選
+      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      for (const videoDoc of videosSnapshot.docs) {
+        const videoData = videoDoc.data();
+        const isSameChannel =
+          String(videoData.channel ?? '') === String(finalName) ||
+          String(videoData.author ?? '') === String(finalName) ||
+          String(videoData.creatorName ?? '') === String(finalName) ||
+          String(videoData.username ?? '') === String(finalName) ||
+          String(videoData.userId ?? '') === String(finalId);
+
+        const needsUpdate =
+          isSameChannel &&
+          (!videoData.userId || videoData.avatar !== resolvedAvatar || videoData.creatorAvatar !== resolvedAvatar);
+
+        if (needsUpdate) {
+          await setDoc(doc(db, 'Videos', videoDoc.id), {
+            ...videoData,
+            userId: videoData.userId || finalId,
+            avatar: resolvedAvatar,
+            creatorAvatar: resolvedAvatar
+          }, { merge: true });
+        }
       }
 
     } catch (err) {
-      console.error("Firebase Channels 讀取或寫入失敗:", err);
+      console.error('Firebase Channels 雙軌讀取或寫入失敗:', err);
       const suffix = finalName.split('_')[1] || 'temp';
-      finalId = `user_${suffix}`;
+      finalId = finalId || `user_${suffix}`;
     }
 
-    // 2. 同步 React 狀態與 localStorage 快取
     setTargetChannelUserId(finalId);
     const updatedChannelData = {
       name: finalName,
+      username: finalName,
+      channelName: finalName,
       avatar: resolvedAvatar,
       bio: initialBio,
-      userId: finalId
+      userId: finalId,
+      subscriberCount: resolvedSubscriberCount
     };
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
-    // 3. 最低轉圈延遲控制（650ms）
     const minimumDelay = 650;
     const elapsedTime = Date.now() - startTime;
     const remainingTime = minimumDelay - elapsedTime;
 
     if (remainingTime > 0) {
-      setTimeout(() => { setIsChannelLoading(false); }, remainingTime);
+      setTimeout(() => setIsChannelLoading(false), remainingTime);
     } else {
       setIsChannelLoading(false);
     }
@@ -1850,6 +1894,42 @@ export default function App() {
     );
   };
 
+  // 🟢 頻道頁大頭貼：雙軌支援後避免 ID 文件沒有 avatar 時讀不到
+  const getTargetChannelAvatarSrc = () => {
+    const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
+    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
+
+    if (channelName === '小葉') return avatarImage;
+
+    if (
+      String(channelUserId || '') === String(currentUserId || '') ||
+      String(channelName || '') === String(localUsername || '')
+    ) {
+      return unifiedAvatar || currentUserAvatar || GUEST_AVATAR;
+    }
+
+    if (targetChannel?.avatar && targetChannel.avatar !== GUEST_AVATAR) {
+      return targetChannel.avatar;
+    }
+
+    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
+      return (
+        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+        String(video.channel ?? '') === String(channelName) ||
+        String(video.author ?? '') === String(channelName) ||
+        String(video.creatorName ?? '') === String(channelName) ||
+        String(video.username ?? '') === String(channelName)
+      );
+    });
+
+    return (
+      matchedVideo?.avatar ||
+      matchedVideo?.creatorAvatar ||
+      targetChannel?.avatar ||
+      GUEST_AVATAR
+    );
+  };
+
   const getChannelVideos = (channelName) => {
     if (!channelName) return [];
 
@@ -2175,11 +2255,14 @@ export default function App() {
                       <>
                         <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
                         <div className="channel-header-info" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '32px', paddingLeft: '0', textAlign: 'center' }}>
-                          <img src={
-                            targetChannel?.name === localUsername
-                              ? unifiedAvatar
-                              : targetChannel?.avatar
-                          } alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
+                          <img
+                            src={getTargetChannelAvatarSrc()}
+                            alt="Channel Avatar"
+                            style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }}
+                            onError={(e) => {
+                              e.currentTarget.src = GUEST_AVATAR;
+                            }}
+                          />
                           <div className="channel-header-text" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                             <div className="channel-title-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
                               <h1 style={{ fontSize: '32px', margin: '0', color: '#fff', textAlign: 'center' }}>{targetChannel?.name}</h1>
