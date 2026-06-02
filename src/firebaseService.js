@@ -33,36 +33,24 @@ export function formatTimeAgo(timestamp) {
     date = new Date(timestamp);
   }
 
-  if (isNaN(date.getTime())) {
-    return '未知時間';
-  }
+  if (isNaN(date.getTime())) return '未知時間';
 
   const now = new Date();
   const secondsPast = Math.floor((now.getTime() - date.getTime()) / 1000);
 
-  if (secondsPast < 0 || secondsPast < 60) {
-    return '剛剛';
-  }
+  if (secondsPast < 0 || secondsPast < 60) return '剛剛';
 
   const minutesPast = Math.floor(secondsPast / 60);
-  if (minutesPast < 60) {
-    return `${minutesPast} 分鐘前`;
-  }
+  if (minutesPast < 60) return `${minutesPast} 分鐘前`;
 
   const hoursPast = Math.floor(minutesPast / 60);
-  if (hoursPast < 24) {
-    return `${hoursPast} 小時前`;
-  }
+  if (hoursPast < 24) return `${hoursPast} 小時前`;
 
   const daysPast = Math.floor(hoursPast / 24);
-  if (daysPast < 30) {
-    return `${daysPast} 天前`;
-  }
+  if (daysPast < 30) return `${daysPast} 天前`;
 
   const monthsPast = Math.floor(daysPast / 30);
-  if (monthsPast < 12) {
-    return `${monthsPast} 個月前`;
-  }
+  if (monthsPast < 12) return `${monthsPast} 個月前`;
 
   const yearsPast = Math.floor(monthsPast / 12);
   return `${yearsPast} 年前`;
@@ -73,7 +61,7 @@ export function formatTimeAgo(timestamp) {
    ---------------------------------------------------------
    ✅ 新資料只寫 Channels/{userId}
    ✅ 舊資料 Channels/{username} 只讀取 fallback
-   ✅ 頭貼 avatar 會跟著 Channels/{userId} 一起更新
+   ✅ avatar 會跟著 Channels/{userId} 一起更新
 ========================================================= */
 const getChannelNameFromData = (data = {}) => {
   return (
@@ -138,6 +126,7 @@ const findChannelByName = async (channelName) => {
     }
   }
 
+  // 舊資料 fallback：Channels/{username}
   const legacySnap = await getDoc(doc(db, 'Channels', channelName));
   if (legacySnap.exists()) {
     return {
@@ -170,7 +159,6 @@ const resolveChannelId = async (channelInput) => {
     }
   }
 
-  // 沒有 userId 時無法保證 ID 架構，只能回傳空 ID；呼叫端可選擇不要寫入
   return {
     channelId: '',
     channelData: normalized
@@ -193,9 +181,7 @@ const upsertChannelByUserId = async (channelInput) => {
     updatedAt: serverTimestamp()
   };
 
-  if (normalized.avatar) {
-    payload.avatar = normalized.avatar;
-  }
+  if (normalized.avatar) payload.avatar = normalized.avatar;
 
   // 只有第一次建立才初始化 subscriberCount，避免覆蓋既有訂閱數
   if (!channelSnap.exists()) {
@@ -250,7 +236,7 @@ export async function uploadVideoToFirebase(videoData) {
       userId: videoData.userId,
       name: videoData.channel || videoData.creatorName || videoData.username || videoData.author,
       username: videoData.username || videoData.channel || videoData.creatorName || videoData.author,
-      channelName: videoData.channel || videoData.creatorName || videoData.username || videoData.author,
+      channelName: videoData.channelName || videoData.channel || videoData.creatorName || videoData.username || videoData.author,
       avatar: videoData.avatar || videoData.creatorAvatar || videoData.channelAvatar,
       subscriberCount: videoData.subscriberCount
     });
@@ -268,8 +254,10 @@ export async function uploadVideoToFirebase(videoData) {
       channel: videoData.channel || channelPayload.name,
       creatorName: videoData.creatorName || channelPayload.name,
       username: videoData.username || channelPayload.name,
+      channelName: videoData.channelName || channelPayload.channelName || channelPayload.name,
       avatar: videoData.avatar || channelPayload.avatar,
       creatorAvatar: videoData.creatorAvatar || channelPayload.avatar,
+      channelAvatar: videoData.channelAvatar || channelPayload.avatar,
       createdAt: serverTimestamp()
     });
   } catch (error) {
@@ -302,9 +290,7 @@ export async function incrementVideoViews(videoId) {
 export function subscribeToChannelData(channelInput, callback) {
   const normalized = normalizeChannelInput(channelInput);
 
-  if (!normalized.userId && !normalized.name) {
-    return () => {};
-  }
+  if (!normalized.userId && !normalized.name) return () => {};
 
   let unsubscribed = false;
   let unsubscribePrimary = null;
@@ -364,9 +350,7 @@ export function subscribeToChannelData(channelInput, callback) {
         console.error("自動建立 Channels/{userId} 頻道資料失敗:", err);
       }
 
-      if (!unsubscribeFallback) {
-        subscribeFallbackByName();
-      }
+      if (!unsubscribeFallback) subscribeFallbackByName();
     });
   } else {
     // 沒有 userId 時只讀舊版 fallback，不新建 Channels/{username}
@@ -383,7 +367,7 @@ export function subscribeToChannelData(channelInput, callback) {
 /**
  * 🔔 變更雲端頻道的訂閱人數 (isSubscribing ? +1 : -1)
  * 支援 channelInfo 物件：{ userId, name, avatar }
- * 會優先更新 Channels/{userId}；只有完全找不到 userId 時才 fallback 舊資料。
+ * 會優先更新 Channels/{userId}。
  */
 export async function toggleChannelSubscription(channelInput, isSubscribing) {
   try {
