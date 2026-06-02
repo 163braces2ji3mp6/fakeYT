@@ -869,23 +869,41 @@ export default function App() {
     );
 
     try {
-      const oldDocRef = doc(db, 'Channels', oldUsername);
-      const newDocRef = doc(db, 'Channels', currentUserId);
-      const oldDocSnap = await getDoc(oldDocRef);
-      const oldChannelData = oldDocSnap.exists() ? oldDocSnap.data() : {};
+      const idDocRef = doc(db, 'Channels', currentUserId);
+      const oldNameDocRef = doc(db, 'Channels', oldUsername);
 
-      // 🟢 改名時保留舊訂閱數；舊資料如果有 subscribers / subsCount 也只拿來轉回 subscriberCount
-      const preservedSubscriberCount = Number(
-        oldChannelData.subscriberCount ??
-        oldChannelData.subscribers ??
-        oldChannelData.subsCount ??
-        liveSubscriberCount ??
+      // 🟢 關鍵修正：改名時訂閱數一定優先從 Channels/{userId} 讀
+      // 舊版 Channels/{username} 只當 fallback，避免舊名字文件 subscriberCount = 0 把正確訂閱數覆蓋掉
+      const idDocSnap = await getDoc(idDocRef);
+      const oldNameDocSnap = await getDoc(oldNameDocRef);
+
+      const idChannelData = idDocSnap.exists() ? idDocSnap.data() : {};
+      const oldNameChannelData = oldNameDocSnap.exists() ? oldNameDocSnap.data() : {};
+      const baseChannelData = idDocSnap.exists() ? idChannelData : oldNameChannelData;
+
+      const getSafeSubscriberCount = (...values) => {
+        for (const value of values) {
+          if (value !== undefined && value !== null && value !== '') {
+            const num = Number(value);
+            if (!Number.isNaN(num)) return num;
+          }
+        }
+        return 0;
+      };
+
+      const preservedSubscriberCount = getSafeSubscriberCount(
+        idChannelData.subscriberCount,
+        idChannelData.subscribers,
+        idChannelData.subsCount,
+        oldNameChannelData.subscriberCount,
+        oldNameChannelData.subscribers,
+        oldNameChannelData.subsCount,
+        liveSubscriberCount,
         0
       );
 
-      // 🟢 新資料只寫入 Channels/{userId}，並保留 subscriberCount
-      await setDoc(newDocRef, {
-        ...oldChannelData,
+      const channelPayload = {
+        ...baseChannelData,
         name: newUsername,
         username: newUsername,
         channelName: newUsername,
@@ -895,7 +913,10 @@ export default function App() {
         subscribers: deleteField(),
         subsCount: deleteField(),
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      };
+
+      // 🟢 新資料只寫入 Channels/{userId}
+      await setDoc(idDocRef, channelPayload, { merge: true });
 
       await syncCurrentUserProfileEverywhere({
         avatarUrl,
@@ -907,9 +928,13 @@ export default function App() {
         rename: !isSameUsername
       });
 
-      // 🟢 最後才刪舊文件，避免先刪導致新頻道訂閱數拿不到
-      if (!isSameUsername && oldDocSnap.exists()) {
-        await deleteDoc(oldDocRef);
+      // 🟡 舊版 Channels/{username} 只刪舊名稱文件，不刪 Channels/{userId}
+      if (
+        !isSameUsername &&
+        oldNameDocSnap.exists() &&
+        String(oldNameDocRef.id) !== String(currentUserId)
+      ) {
+        await deleteDoc(oldNameDocRef);
       }
 
       setCurrentUserAvatar(avatarUrl);
@@ -935,29 +960,15 @@ export default function App() {
       setLocalUsername(newUsername);
       setInputUsername(newUsername);
 
-      localStorage.setItem(
-        'device_user_name',
-        newUsername
-      );
-
-      localStorage.setItem(
-        'device_user_avatar',
-        avatarUrl
-      );
-
-      localStorage.setItem(
-        'device_user_id',
-        currentUserId
-      );
+      localStorage.setItem('device_user_name', newUsername);
+      localStorage.setItem('device_user_avatar', avatarUrl);
+      localStorage.setItem('device_user_id', currentUserId);
 
       setSubscribedChannels(prev => {
         const nextSubs = prev.map(name =>
           name === oldUsername ? newUsername : name
         );
-        localStorage.setItem(
-          'leafhub_subscriptions',
-          JSON.stringify(nextSubs)
-        );
+        localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
         return nextSubs;
       });
 
@@ -970,16 +981,8 @@ export default function App() {
       );
 
     } catch (err) {
-      console.error(
-        '改名並搬移中文檔案失敗:',
-        err
-      );
-
-      showToast(
-        '更新失敗，請稍後再試',
-        'error'
-      );
-
+      console.error('改名並保留訂閱數失敗:', err);
+      showToast('更新失敗，請稍後再試', 'error');
       setIsPageLoading(false);
     }
   };
