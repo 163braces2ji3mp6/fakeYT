@@ -549,11 +549,40 @@ export default function App() {
   /* ------------------------------
     08. Account Helpers / 帳號與名稱檢查
   ------------------------------ */
+  // 🟢 名稱查重：新架構 Channels/{userId}，所以不能只用 doc id 查 username
   const checkUsernameExists = async (username) => {
-  const channelRef = doc(db, "Channels", username);
-  const channelSnap = await getDoc(channelRef);
+    const cleanUsername = String(username ?? '').trim();
+    if (!cleanUsername) return false;
 
-  return channelSnap.exists();
+    // 舊資料 fallback：Channels/{username}
+    const legacyRef = doc(db, 'Channels', cleanUsername);
+    const legacySnap = await getDoc(legacyRef);
+    if (
+      legacySnap.exists() &&
+      String(legacySnap.data()?.userId ?? '') !== String(currentUserId ?? '')
+    ) {
+      return true;
+    }
+
+    // 新資料：Channels/{userId}，用欄位查重
+    const fieldsToCheck = ['username', 'name', 'channelName'];
+
+    for (const fieldName of fieldsToCheck) {
+      const usernameQuery = query(
+        collection(db, 'Channels'),
+        where(fieldName, '==', cleanUsername)
+      );
+      const usernameSnapshot = await getDocs(usernameQuery);
+
+      const hasOtherUser = usernameSnapshot.docs.some(channelDoc => {
+        const data = channelDoc.data();
+        return String(data?.userId ?? channelDoc.id) !== String(currentUserId ?? '');
+      });
+
+      if (hasOtherUser) return true;
+    }
+
+    return false;
   };
   
   useEffect(() => {
@@ -591,26 +620,50 @@ export default function App() {
   };
 
   useEffect(() => {
-    let activeChannelName = null;
+    let activeChannelInfo = null;
+
     if (currentView === 'channel' && targetChannel?.name) {
-      activeChannelName = targetChannel.name;
+      activeChannelInfo = {
+        userId: targetChannel?.userId || targetChannelUserId,
+        name: targetChannel?.name,
+        username: targetChannel?.username || targetChannel?.name,
+        channelName: targetChannel?.channelName || targetChannel?.name,
+        avatar: targetChannel?.avatar || unifiedAvatar
+      };
     } else if (currentView === 'watch' && selectedVideo?.channel) {
-      activeChannelName = selectedVideo.channel;
+      activeChannelInfo = {
+        userId: selectedVideo?.userId,
+        name: selectedVideo?.channel,
+        username: selectedVideo?.username || selectedVideo?.channel,
+        channelName: selectedVideo?.channel,
+        avatar: selectedVideo?.avatar || selectedVideo?.creatorAvatar
+      };
     }
 
-    if (!activeChannelName) return;
+    if (!activeChannelInfo?.name && !activeChannelInfo?.userId) return;
 
-    const unsubscribe = subscribeToChannelData(activeChannelName, (channelData) => {
-      if (channelData && channelData.subscriberCount !== undefined) {
-        setLiveSubscriberCount(channelData.subscriberCount);
+    const unsubscribe = subscribeToChannelData(activeChannelInfo, (channelData) => {
+      if (channelData) {
+        setLiveSubscriberCount(Number(channelData.subscriberCount ?? 0));
+        setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
+
+        if (currentView === 'channel') {
+          setTargetChannel(prev => ({
+            ...prev,
+            ...channelData,
+            name: channelData.name || prev?.name || activeChannelInfo.name,
+            avatar: channelData.avatar || prev?.avatar || activeChannelInfo.avatar || GUEST_AVATAR
+          }));
+        }
+
         setTimeout(() => {
           setIsChannelLoading(false);
-        }, 350); 
+        }, 350);
       }
     });
 
     return () => unsubscribe();
-  }, [currentView, targetChannel?.name, selectedVideo?.channel]);
+  }, [currentView, targetChannel?.userId, targetChannelUserId, targetChannel?.name, targetChannel?.avatar, selectedVideo?.userId, selectedVideo?.channel]);
 
 
 
@@ -1433,12 +1486,39 @@ export default function App() {
 
   const toggleSubscribe = async (channelName) => {
     const isCurrentlySubbed = subscribedChannels.includes(channelName);
+
+    const channelInfo =
+      targetChannel?.name === channelName
+        ? {
+            userId: targetChannel?.userId || targetChannelUserId,
+            name: targetChannel?.name,
+            username: targetChannel?.username || targetChannel?.name,
+            channelName: targetChannel?.channelName || targetChannel?.name,
+            avatar: targetChannel?.avatar || getTargetChannelAvatarSrc?.() || unifiedAvatar
+          }
+        : selectedVideo?.channel === channelName
+          ? {
+              userId: selectedVideo?.userId,
+              name: selectedVideo?.channel,
+              username: selectedVideo?.username || selectedVideo?.channel,
+              channelName: selectedVideo?.channel,
+              avatar: selectedVideo?.avatar || selectedVideo?.creatorAvatar
+            }
+          : {
+              userId: targetChannel?.userId || targetChannelUserId || selectedVideo?.userId || '',
+              name: channelName,
+              username: channelName,
+              channelName,
+              avatar: targetChannel?.avatar || selectedVideo?.avatar || selectedVideo?.creatorAvatar || unifiedAvatar
+            };
+
     setSubscribedChannels(prev => {
       const nextSubs = isCurrentlySubbed ? prev.filter(item => item !== channelName) : [...prev, channelName];
       localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
       return nextSubs;
     });
-    await toggleChannelSubscription(channelName, !isCurrentlySubbed);
+
+    await toggleChannelSubscription(channelInfo, !isCurrentlySubbed);
   };
 
 
@@ -1775,12 +1855,18 @@ export default function App() {
       const dataToUpload = {
         title: newVideoTitle,
         channel: localUsername,
+        creatorName: localUsername,
+        username: localUsername,
+        channelName: localUsername,
+        author: localUsername,
         userId: currentUserId,
         views: 0,            
         time: "剛剛",            
         duration: finalDuration, 
         avatar: unifiedAvatar,
         creatorAvatar: unifiedAvatar,
+        channelAvatar: unifiedAvatar,
+        subscriberCount: liveSubscriberCount,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
         category: newVideoCategory, 
