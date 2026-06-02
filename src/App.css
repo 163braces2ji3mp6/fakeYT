@@ -37,28 +37,6 @@
   /* 確保高度計算包含 border */
 }
 
-.logo {
-  color: #ff6a00;
-  font-size: 24px;
-  /* 💡 LOGO 字體放大 */
-  font-weight: 900;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  user-select: none;
-}
-
-.logo-badge {
-  background-color: #ff6a00;
-  color: #050505;
-  padding: 3px 8px;
-  /* 💡 標籤放大 */
-  border-radius: 6px;
-  font-size: 13px;
-  /* 💡 標籤字體放大 */
-}
-
 .avatar {
   width: 38px;
   /* 💡 頭像從 32px 放大到 38px */
@@ -369,50 +347,6 @@ html, body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
 }
 
-.player-bg-blur {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: brightness(0.6) contrast(1.1);
-}
-
-.player-overlay-icon {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 70px;
-  height: 70px;
-  background-color: rgba(255, 106, 0, 0.9);
-  color: #000;
-  font-size: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  padding-left: 5px;
-  cursor: pointer;
-  box-shadow: 0 0 20px rgba(255, 106, 0, 0.5);
-  transition: all 0.2s ease;
-}
-
-.player-overlay-icon:hover {
-  transform: translate(-50%, -50%) scale(1.1);
-  background-color: #ff8833;
-}
-
-.player-status-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(transparent, rgba(0,0,0,0.9));
-  padding: 16px;
-  color: #ff6a00;
-  font-size: 13px;
-  font-weight: bold;
-}
-
 .watch-video-title {
   font-size: 22px;
   /* 💡 影片內頁大標題也稍微增厚放大 */
@@ -603,19 +537,6 @@ html, body {
   padding-bottom: 0 !important;
 }
 
-.comment-user-avatar {
-  width: 32px;
-  height: 32px;
-  background-color: #222;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: #ff6a00;
-  border: 1px solid #333;
-}
-
 /* 💡 關鍵修正：確保區塊是垂直排列 (column) */
 .comment-content-body {
   flex: 1;
@@ -667,13 +588,6 @@ html, body {
   align-items: center;
   z-index: 999;
   /* 💡 確保 z-index 比 Navbar 的 100 還大 */
-}
-
-.no-comments-prompt {
-  font-size: 13px;
-  color: #444;
-  text-align: center;
-  padding: 12px 0;
 }
 
 /* ==========================================================================
@@ -956,7 +870,15 @@ html, body {
 .channel-header-info {
   border-bottom: 1px solid #111;
   padding-bottom: 24px;
+
+  /* 新增：整個頻道資料區置中 */
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
 }
+
 
 .channel-header-info img {
   box-shadow: 0 4px 20px rgba(255, 106, 0, 0.2);
@@ -1159,12 +1081,6 @@ html, body {
 .skeleton-btn, .skeleton-thumb, .skeleton-avatar, .skeleton-text {
   background: #272727;
   animation: pulse 1.5s infinite ease-in-out;
-}
-
-.skeleton-btn {
-  width: 60px;
-  height: 32px;
-  border-radius: 8px;
 }
 
 .skeleton-thumb {
@@ -1416,21 +1332,6 @@ Toast 通知系統
 
 }
 
-.random-avatar-btn {
-  width: 100%;
-  margin-top: 12px;
-  padding: 10px;
-  border: none;
-  border-radius: 10px;
-  background: #f3f4f6;
-  cursor: pointer;
-  transition: .2s;
-}
-
-.random-avatar-btn:hover {
-  background: #e5e7eb;
-}
-
 /* ==========================================================================
 🖥️ 電腦與平板端：主頁 3 欄 / 頻道頁 4 欄 與 Padding 完美修復
 ========================================================================== */
@@ -1498,7 +1399,7 @@ Toast 通知系統
   .channel-container .video-grid,
   .channel-content .video-grid,
   .profile-section .video-grid,
-  [className*="channel"] .video-grid {
+  [class*="channel"] .video-grid {
     grid-template-columns: repeat(4, 1fr) !important;
     /* 強制 4 等分 */
     gap: 20px 14px !important;
@@ -1750,4 +1651,669 @@ html, body, #root {
   margin: 0 auto 15px auto !important;
   /* 💡 確保在視窗中線絕對置中，並跟下方留出距離 */
   display: block !important;
+}
+
+/* ==========================================================================
+📱 手機版最終修正版：修 Navbar / Content / Sidebar / 影片卡片 / 播放頁
+請貼在 App.css 最底部，覆蓋前面混亂設定
+========================================================================== */
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    background: #050505 !important;
+  }
+
+  /* Navbar 手機版 */
+  .navbar {
+    height: 60px !important;
+    padding: 0 10px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  .logo-hub-style {
+    font-size: 21px !important;
+    margin: 0 !important;
+    flex-shrink: 0 !important;
+    gap: 3px !important;
+  }
+
+  .logo-text-white {
+    padding: 0 !important;
+    margin-right: 2px !important;
+  }
+
+  .logo-badge-orange {
+    font-size: 18px !important;
+    padding: 2px 5px !important;
+    border-radius: 4px !important;
+    margin-left: 0 !important;
+  }
+
+  /* 搜尋欄手機版 */
+  .search-bar {
+    flex: 1 !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: 34px !important;
+    margin-left: 0 !important;
+  }
+
+  .search-input {
+    font-size: 13px !important;
+    padding: 0 8px !important;
+    min-width: 0 !important;
+  }
+
+  .search-btn {
+    width: 34px !important;
+    min-width: 34px !important;
+  }
+
+  .search-icon-svg {
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  /* 右側按鈕區 */
+  .navbar-actions {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 7px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .upload-video-btn {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    max-width: 32px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    transform: none !important;
+  }
+
+  .upload-video-btn .upload-btn-text {
+    display: none !important;
+  }
+
+  .upload-video-btn .plus-icon {
+    font-size: 22px !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .avatar-container {
+    width: 32px !important;
+    height: 32px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .avatar {
+    width: 32px !important;
+    height: 32px !important;
+  }
+
+  /* 隱藏左側欄 */
+  .sidebar {
+    display: none !important;
+  }
+
+  /* 主容器手機版 */
+  .main-wrapper {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: calc(100vh - 60px) !important;
+    margin: 0 !important;
+    margin-top: 60px !important;
+    padding: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  /* 這個才是你真正的內容區 */
+  .content-area {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    padding: 16px 12px !important;
+    height: auto !important;
+    min-height: calc(100vh - 60px) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  .content-area:has(.watch-layout) {
+    margin-left: 0 !important;
+    padding: 12px !important;
+  }
+
+  .view-page-title {
+    font-size: 18px !important;
+    margin-bottom: 16px !important;
+  }
+
+  /* 分類列 */
+  .category-bar {
+    gap: 8px !important;
+    margin-bottom: 18px !important;
+    padding-bottom: 10px !important;
+  }
+
+  .category-btn {
+    font-size: 13px !important;
+    padding: 6px 13px !important;
+  }
+
+  /* 首頁 / 頻道影片列表 */
+  .video-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 24px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  .video-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .thumbnail-wrapper,
+  .video-thumbnail,
+  .thumbnail-container {
+    width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    border-radius: 10px !important;
+  }
+
+  .video-info-section,
+  .video-details,
+  .video-info {
+    width: 100% !important;
+    padding: 10px 2px 0 2px !important;
+    gap: 10px !important;
+  }
+
+  .channel-avatar {
+    width: 34px !important;
+    height: 34px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .video-title {
+    font-size: 15px !important;
+    line-height: 1.35 !important;
+  }
+
+  .channel-name {
+    font-size: 13px !important;
+  }
+
+  .video-meta {
+    font-size: 12px !important;
+  }
+
+  /* 播放頁手機版 */
+  .watch-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 24px !important;
+    width: 100% !important;
+  }
+
+  .watch-main-content {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .video-player-simulation {
+    border-radius: 10px !important;
+  }
+
+  .watch-video-title {
+    font-size: 18px !important;
+    margin: 14px 0 !important;
+    line-height: 1.4 !important;
+  }
+
+  .watch-actions-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 14px !important;
+  }
+
+  .channel-info-block {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .channel-avatar-large {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .channel-name-large {
+    font-size: 15px !important;
+  }
+
+  .video-interactions-block {
+    width: 100% !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  .like-action-btn,
+  .sub-action-btn {
+    font-size: 13px !important;
+    padding: 7px 14px !important;
+  }
+
+  /* 留言區 */
+  .comments-section-wrapper {
+    width: 100% !important;
+    padding: 14px !important;
+    border-radius: 10px !important;
+  }
+
+  .comments-section-wrapper h3 {
+    font-size: 15px !important;
+  }
+
+  .comment-form-box {
+    display: flex !important;
+    gap: 8px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .comment-text-input {
+    min-width: 0 !important;
+    font-size: 13px !important;
+    padding: 9px 10px !important;
+  }
+
+  .comment-submit-btn {
+    padding: 0 12px !important;
+    font-size: 13px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .single-comment-card {
+    width: 100% !important;
+  }
+
+  .comment-user-text {
+    font-size: 13px !important;
+    word-break: break-word !important;
+  }
+
+  /* 留言排序按鈕 */
+  .sort-bar,
+  .comments-sort-bar {
+    gap: 8px !important;
+    margin: 12px 0 !important;
+  }
+
+  .sort-btn {
+    font-size: 13px !important;
+    padding: 7px 12px !important;
+  }
+
+  /* 右側推薦欄改成下方列表 */
+  .watch-sidebar-recommendations {
+    width: 100% !important;
+    margin-top: 8px !important;
+  }
+
+  .recommend-mini-card {
+    width: 100% !important;
+    padding: 8px 0 !important;
+    gap: 10px !important;
+  }
+
+  .mini-card-thumb {
+    width: 42% !important;
+    max-width: 170px !important;
+    min-width: 130px !important;
+    border-radius: 8px !important;
+  }
+
+  .mini-card-info {
+    min-width: 0 !important;
+  }
+
+  .mini-card-title {
+    font-size: 14px !important;
+    line-height: 1.35 !important;
+  }
+
+  .mini-card-channel {
+    font-size: 12px !important;
+  }
+
+  .mini-card-views {
+    font-size: 12px !important;
+  }
+
+  /* 頻道頁 */
+  .channel-page-wrapper {
+    width: 100% !important;
+  }
+
+  .channel-banner {
+    height: 110px !important;
+    border-radius: 10px !important;
+  }
+
+  .channel-header-info {
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 14px !important;
+  }
+
+  .channel-header-info img {
+    width: 86px !important;
+    height: 86px !important;
+  }
+
+  .channel-header-info h1 {
+    font-size: 24px !important;
+  }
+
+  .channel-tabs-bar {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    gap: 28px !important;
+  }
+
+  .channel-about-section {
+    padding: 16px !important;
+  }
+
+  /* 頭像下拉選單 */
+  .profile-dropdown-menu {
+    position: fixed !important;
+    top: 62px !important;
+    right: 10px !important;
+    width: min(260px, calc(100vw - 20px)) !important;
+    max-width: calc(100vw - 20px) !important;
+  }
+
+  /* Toast 手機版 */
+  .toast-notification {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 16px !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: auto !important;
+  }
+}
+
+
+/* ==========================================================================
+✅ Channel Page Final Fix / 頻道頁置中與手機版穩定版
+   這段對應 App.jsx：channel-header-info / channel-header-text / channel-title-row
+========================================================================== */
+.channel-page-wrapper {
+  width: 100%;
+}
+
+.channel-banner {
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.channel-header-info {
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  padding-left: 0 !important;
+  padding-bottom: 24px !important;
+  border-bottom: 1px solid #111 !important;
+}
+
+.channel-header-info > img {
+  display: block !important;
+  margin: 0 auto !important;
+  flex: 0 0 auto !important;
+}
+
+.channel-header-text {
+  width: 100% !important;
+  max-width: 760px !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.channel-title-row {
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 16px !important;
+  flex-wrap: wrap !important;
+  text-align: center !important;
+}
+
+.channel-header-info h1,
+.channel-header-info p {
+  text-align: center !important;
+}
+
+.channel-header-info .sub-action-btn {
+  margin-left: 0 !important;
+}
+
+.channel-tabs-bar {
+  justify-content: center !important;
+  padding-left: 0 !important;
+}
+
+@media (max-width: 768px) {
+  .channel-banner {
+    height: 110px !important;
+    border-radius: 10px !important;
+  }
+
+  .channel-header-info {
+    gap: 14px !important;
+    margin-bottom: 24px !important;
+  }
+
+  .channel-header-info > img {
+    width: 86px !important;
+    height: 86px !important;
+  }
+
+  .channel-header-info h1 {
+    font-size: 24px !important;
+    line-height: 1.2 !important;
+  }
+
+  .channel-header-info p {
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+    max-width: 100% !important;
+  }
+
+  .channel-title-row {
+    gap: 10px !important;
+  }
+}
+
+/* ==========================================================================
+📱 手機版 Navbar 最終調整：LOGO 加大 + 搜尋欄縮短
+請貼在 App.css 最底部
+========================================================================== */
+@media (max-width: 768px) {
+  /* 手機版 Navbar 整體 */
+  .navbar {
+    height: 60px !important;
+    padding: 0 8px !important;
+    gap: 6px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    box-sizing: border-box !important;
+  }
+
+  /* 修正：CSS 裡要用 >，不能用 &gt; */
+  .navbar > div:first-child {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* LOGO 放大 */
+  .logo-hub-style {
+    font-size: 26px !important;
+    margin: 0 !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    letter-spacing: -0.8px !important;
+  }
+
+  .logo-text-white {
+    padding: 0 !important;
+    margin-right: 1px !important;
+    line-height: 1 !important;
+  }
+
+  /* hub 橘色方塊放大 */
+  .logo-badge-orange {
+    font-size: 22px !important;
+    padding: 3px 7px !important;
+    border-radius: 5px !important;
+    margin-left: 0 !important;
+    line-height: 1 !important;
+    display: inline-block !important;
+  }
+
+  /* 搜尋欄縮短 */
+  .search-bar {
+    flex: 0 1 200px !important;
+    width: 200px !important;
+    max-width: 200px !important;
+    min-width: 105px !important;
+    height: 34px !important;
+    margin-left: 0 !important;
+    border-radius: 999px !important;
+  }
+
+  .search-input {
+    font-size: 12px !important;
+    padding: 0 6px !important;
+    min-width: 0 !important;
+  }
+
+  .search-btn {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 100% !important;
+    flex-shrink: 0 !important;
+  }
+
+  .search-icon-svg {
+    width: 17px !important;
+    height: 17px !important;
+  }
+
+  /* 右側 + 按鈕和頭像區 */
+  .navbar-actions {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .upload-video-btn {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    max-width: 32px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    transform: none !important;
+  }
+
+  .upload-video-btn .upload-btn-text {
+    display: none !important;
+  }
+
+  .upload-video-btn .plus-icon {
+    font-size: 22px !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .avatar-container {
+    width: 32px !important;
+    height: 32px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .avatar {
+    width: 32px !important;
+    height: 32px !important;
+    margin: 0 !important;
+  }
+}
+
+/* ==========================================================================
+✅ 修正 CSS 裡錯誤的 &gt; selector
+========================================================================== */
+.channel-header-info > img {
+  display: block !important;
+  margin: 0 auto !important;
+  flex: 0 0 auto !important;
+}
+
+@media (max-width: 768px) {
+  .channel-header-info > img {
+    width: 86px !important;
+    height: 86px !important;
+  }
 }

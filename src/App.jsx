@@ -193,6 +193,72 @@ function formatSubscribers(count) {
 }
 
 
+// 🟢 排序系統工具：支援 Firebase Timestamp、Date、字串日期
+const getDateValue = (value) => {
+  if (!value) return 0;
+
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().getTime();
+  }
+
+  if (typeof value === 'number') return value;
+
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const getLikeCount = (item) => {
+  return Number(
+    item?.likes ??
+    item?.likeCount ??
+    item?.likedBy?.length ??
+    0
+  );
+};
+
+const getViewCount = (video) => {
+  const raw = video?.views ?? video?.viewCount ?? 0;
+
+  if (typeof raw === 'number') return raw;
+
+  if (typeof raw === 'string') {
+    const cleaned = raw.replace(/次/g, '').trim();
+
+    if (cleaned.includes('萬')) {
+      return Number(cleaned.replace('萬', '')) * 10000 || 0;
+    }
+
+    return Number(cleaned.replace(/,/g, '')) || 0;
+  }
+
+  return 0;
+};
+
+const sortVideos = (videoList, sortType = 'latest') => {
+  const list = [...videoList];
+
+  if (sortType === 'views') {
+    return list.sort((a, b) => getViewCount(b) - getViewCount(a));
+  }
+
+  return list.sort((a, b) => {
+    const bTime = getDateValue(b.createdAt ?? b.publishedAt ?? b.uploadedAt ?? b.time);
+    const aTime = getDateValue(a.createdAt ?? a.publishedAt ?? a.uploadedAt ?? a.time);
+    return bTime - aTime;
+  });
+};
+
+const sortComments = (commentList, sortType = 'likes') => {
+  const list = [...commentList];
+
+  if (sortType === 'latest') {
+    return list.sort((a, b) => getDateValue(b.createdAt) - getDateValue(a.createdAt));
+  }
+
+  return list.sort((a, b) => getLikeCount(b) - getLikeCount(a));
+};
+
+
 /* =========================================================
   07. Main App Component / 主元件
 ========================================================= */
@@ -453,6 +519,9 @@ export default function App() {
   const profileMenuRef = useRef(null);
   const contentAreaRef = useRef(null);
   const [channelTab, setChannelTab] = useState('videos');
+  // 🟢 排序系統：頻道影片預設最新；留言預設最多讚
+  const [channelVideoSort, setChannelVideoSort] = useState('latest');
+  const [commentSort, setCommentSort] = useState('likes');
 
   const replyInputRefs = useRef({});
 
@@ -1742,7 +1811,7 @@ export default function App() {
   const getChannelVideos = (channelName) => {
     if (!channelName) return [];
 
-    return videos.filter(video =>
+    const channelVideos = videos.filter(video =>
       channelName === '小葉'
         ? (
             String(video.channel) === '小葉' ||
@@ -1752,13 +1821,15 @@ export default function App() {
           )
         : String(video.channel) === String(channelName)
     );
+
+    return sortVideos(channelVideos, channelVideoSort);
   };
 
 
   /* ------------------------------
     19. Render Entry / JSX 主畫面
   ------------------------------ */
-  const allDisplayedComments = [...optimisticComments, ...comments];
+  const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
 
   return (
     <div>
@@ -2061,15 +2132,15 @@ export default function App() {
                     ) : (
                       <>
                         <div className="channel-banner" style={{ width: '100%', height: '180px', background: 'linear-gradient(135deg, #1f1f1f 0%, #111111 50%, #ff6a00 100%)', borderRadius: '16px', marginBottom: '24px', border: '1px solid #222' }}></div>
-                        <div className="channel-header-info" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px', paddingLeft: '8px' }}>
+                        <div className="channel-header-info" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '32px', paddingLeft: '0', textAlign: 'center' }}>
                           <img src={
                             targetChannel?.name === localUsername
                               ? unifiedAvatar
                               : targetChannel?.avatar
                           } alt="Channel Avatar" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #ff6a00' }} />
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                              <h1 style={{ fontSize: '32px', margin: '0 -20px 0 0', color: '#fff' }}>{targetChannel?.name}</h1>
+                          <div className="channel-header-text" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                            <div className="channel-title-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff', textAlign: 'center' }}>{targetChannel?.name}</h1>
                               {targetChannel?.name !== localUsername && (
                                 <button className={`sub-action-btn ${subscribedChannels.includes(targetChannel?.name) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(targetChannel?.name)} style={{ padding: '8px 20px', fontSize: '14px' }}>
                                   {subscribedChannels.includes(targetChannel?.name) ? '✓ 已訂閱' : '訂閱'}
@@ -2087,15 +2158,35 @@ export default function App() {
                       </>
                     )}
 
-                    <div className="channel-tabs-bar" style={{ display: 'flex', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
+                    <div className="channel-tabs-bar" style={{ display: 'flex', justifyContent: 'center', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '0' }}>
                       <button onClick={() => setChannelTab('videos')} style={{ background: 'transparent', border: 'none', color: channelTab === 'videos' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'videos' ? '3px solid #ff6a00' : '3px solid transparent' }}>影片</button>
                       <button onClick={() => setChannelTab('about')} style={{ background: 'transparent', border: 'none', color: channelTab === 'about' ? '#ff6a00' : '#888', padding: '12px 0', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderBottom: channelTab === 'about' ? '3px solid #ff6a00' : '3px solid transparent' }}>關於</button>
                     </div>
 
                     {channelTab === 'videos' ? (
-                      <div className="video-grid">
-                        {getChannelVideos(targetChannel?.name).map((video) => renderVideoCard(video))}
-                      </div>
+                      <>
+                        <div className="sort-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 18px 8px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className={channelVideoSort === 'latest' ? 'sort-btn active' : 'sort-btn'}
+                            onClick={() => setChannelVideoSort('latest')}
+                            style={{ border: 'none', borderRadius: '999px', padding: '8px 14px', cursor: 'pointer', fontWeight: 'bold', background: channelVideoSort === 'latest' ? '#ff6a00' : '#222', color: channelVideoSort === 'latest' ? '#fff' : '#ccc' }}
+                          >
+                            最新發布
+                          </button>
+                          <button
+                            type="button"
+                            className={channelVideoSort === 'views' ? 'sort-btn active' : 'sort-btn'}
+                            onClick={() => setChannelVideoSort('views')}
+                            style={{ border: 'none', borderRadius: '999px', padding: '8px 14px', cursor: 'pointer', fontWeight: 'bold', background: channelVideoSort === 'views' ? '#ff6a00' : '#222', color: channelVideoSort === 'views' ? '#fff' : '#ccc' }}
+                          >
+                            觀看次數
+                          </button>
+                        </div>
+                        <div className="video-grid">
+                          {getChannelVideos(targetChannel?.name).map((video) => renderVideoCard(video))}
+                        </div>
+                      </>
                     ) : (
                       <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                         <h3>簡介</h3>
@@ -2170,10 +2261,9 @@ export default function App() {
                               style={{ fontWeight: 'bold', color: '#fff', cursor: 'pointer' }}
                             >
                               {selectedVideo.channel || '小葉'}
-                            </div>
+                            </div>                          
                             <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
-                              {/* 💡 4. 如果是小葉，可以強行給一個好看的固定訂閱數（12.8萬），如果是其他人則走原本的 live 數據 */}
-                              {selectedVideo.channel === '小葉' ? '12.8萬' : formatSubscribers(liveSubscriberCount)} 位訂閱者
+                              {formatSubscribers(liveSubscriberCount)} 位訂閱者
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
@@ -2193,11 +2283,71 @@ export default function App() {
 
                       {/* 評論區 */}
                       <div className="comments-section-wrapper">
-                        <h3>💬 評論區 ({allDisplayedComments.length})</h3>
-                        <form onSubmit={handleAddComment} className="comment-form-box">
-                          <input type="text" placeholder="留下你的公開評論..." className="comment-text-input" value={newCommentInput} onChange={(e) => setNewCommentInput(e.target.value)} />
-                          <button type="submit" className="comment-submit-btn" disabled={!newCommentInput.trim()}>發布</button>
-                        </form>
+                      <h3>💬 評論區 ({allDisplayedComments.length})</h3>
+
+                      <form onSubmit={handleAddComment} className="comment-form-box">
+                        <input
+                          type="text"
+                          placeholder="留下你的公開評論..."
+                          className="comment-text-input"
+                          value={newCommentInput}
+                          onChange={(e) => setNewCommentInput(e.target.value)}
+                        />
+                        <button
+                          type="submit"
+                          className="comment-submit-btn"
+                          disabled={!newCommentInput.trim()}
+                        >
+                          發布
+                        </button>
+                      </form>
+
+                      {!isCommentsLoading && allDisplayedComments.length > 0 && (
+                        <div
+                          className="sort-bar comments-sort-bar"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            margin: '14px 0 12px',
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className={commentSort === 'likes' ? 'sort-btn active' : 'sort-btn'}
+                            onClick={() => setCommentSort('likes')}
+                            style={{
+                              border: 'none',
+                              borderRadius: '999px',
+                              padding: '8px 14px',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              background: commentSort === 'likes' ? '#ff6a00' : '#222',
+                              color: commentSort === 'likes' ? '#fff' : '#ccc'
+                            }}
+                          >
+                            熱門留言
+                          </button>
+
+                          <button
+                            type="button"
+                            className={commentSort === 'latest' ? 'sort-btn active' : 'sort-btn'}
+                            onClick={() => setCommentSort('latest')}
+                            style={{
+                              border: 'none',
+                              borderRadius: '999px',
+                              padding: '8px 14px',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              background: commentSort === 'latest' ? '#ff6a00' : '#222',
+                              color: commentSort === 'latest' ? '#fff' : '#ccc'
+                            }}
+                          >
+                            最新留言
+                          </button>
+                        </div>
+                      )}
 
                         <div className="comment-list-container">
                           {isCommentsLoading ? (
