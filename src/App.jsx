@@ -682,15 +682,19 @@ export default function App() {
     };
 
     const channelPayload = {
+      name: toName,
+      username: toName,
       channelName: toName,
       avatar: avatarUrl,
       userId: toUserId,
       updatedAt: new Date().toISOString()
     };
 
-    if (subscriberCount !== null) {
-      channelPayload.subscriberCount =
-        subscriberCount;
+    // 🟢 改名時保留訂閱數，不要讓新頻道文件歸 0
+    if (subscriberCount !== null && subscriberCount !== undefined) {
+      channelPayload.subscriberCount = subscriberCount;
+      channelPayload.subscribers = subscriberCount;
+      channelPayload.subsCount = subscriberCount;
     }
 
     await setDoc(
@@ -809,15 +813,34 @@ export default function App() {
 
     try {
       const oldDocRef = doc(db, 'Channels', oldUsername);
+      const newDocRef = doc(db, 'Channels', newUsername);
       const oldDocSnap = await getDoc(oldDocRef);
+      const oldChannelData = oldDocSnap.exists() ? oldDocSnap.data() : {};
 
-      const currentSubCount = oldDocSnap.exists()
-        ? (oldDocSnap.data().subscriberCount || 0)
-        : 0;
+      // 🟢 關鍵修正：改名以前先把舊頻道訂閱數抓出來
+      // 支援多種可能欄位，避免 subscriberCount / subscribers / subsCount 名稱不同造成歸 0
+      const preservedSubscriberCount = Number(
+        oldChannelData.subscriberCount ??
+        oldChannelData.subscribers ??
+        oldChannelData.subsCount ??
+        liveSubscriberCount ??
+        0
+      );
 
-      if (!isSameUsername && oldDocSnap.exists()) {
-        await deleteDoc(oldDocRef);
-      }
+      // 🟢 先建立 / 更新新名稱的頻道文件，而且帶入舊資料與舊訂閱數
+      // 注意：先寫新文件，再刪舊文件，避免改名過程中訂閱數遺失
+      await setDoc(newDocRef, {
+        ...oldChannelData,
+        name: newUsername,
+        username: newUsername,
+        channelName: newUsername,
+        avatar: avatarUrl,
+        userId: currentUserId,
+        subscriberCount: preservedSubscriberCount,
+        subscribers: preservedSubscriberCount,
+        subsCount: preservedSubscriberCount,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
 
       await syncCurrentUserProfileEverywhere({
         avatarUrl,
@@ -825,11 +848,17 @@ export default function App() {
         fromUserId: currentUserId,
         toName: newUsername,
         toUserId: currentUserId,
-        subscriberCount: isSameUsername ? null : currentSubCount,
+        subscriberCount: preservedSubscriberCount,
         rename: !isSameUsername
       });
 
+      // 🟢 最後才刪除舊名稱文件，避免新文件還沒完整建立就消失
+      if (!isSameUsername && oldDocSnap.exists()) {
+        await deleteDoc(oldDocRef);
+      }
+
       setCurrentUserAvatar(avatarUrl);
+      setLiveSubscriberCount(preservedSubscriberCount);
 
       setTargetChannel(prev =>
         prev && (
@@ -839,7 +868,13 @@ export default function App() {
           ? {
               ...prev,
               name: newUsername,
-              avatar: avatarUrl
+              username: newUsername,
+              channelName: newUsername,
+              avatar: avatarUrl,
+              userId: currentUserId,
+              subscriberCount: preservedSubscriberCount,
+              subscribers: preservedSubscriberCount,
+              subsCount: preservedSubscriberCount
             }
           : prev
       );
@@ -861,6 +896,18 @@ export default function App() {
         'device_user_id',
         currentUserId
       );
+
+      // 🟢 如果自己的訂閱清單裡剛好有舊名稱，也一起換成新名稱
+      setSubscribedChannels(prev => {
+        const nextSubs = prev.map(name =>
+          name === oldUsername ? newUsername : name
+        );
+        localStorage.setItem(
+          'leafhub_subscriptions',
+          JSON.stringify(nextSubs)
+        );
+        return nextSubs;
+      });
 
       showToast(
         isSameUsername ? '頭貼已更新！' : '帳號名稱與頭貼已同步更新！',
