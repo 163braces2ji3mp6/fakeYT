@@ -2224,9 +2224,9 @@ html, body, #root {
 
   /* 搜尋欄縮短 */
   .search-bar {
-    flex: 0 1 200px !important;
-    width: 200px !important;
-    max-width: 200px !important;
+    flex: 0 1 150px !important;
+    width: 150px !important;
+    max-width: 150px !important;
     min-width: 105px !important;
     height: 34px !important;
     margin-left: 0 !important;
