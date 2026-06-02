@@ -274,33 +274,188 @@ export default function App() {
   });
   const migrateChannelAvatars = async () => {
   try {
-    const snapshot = await getDocs(
-      collection(db, 'Channels')
-    );
+    const channelsSnapshot = await getDocs(collection(db, 'Channels'));
+    const videosSnapshot = await getDocs(collection(db, 'Videos'));
 
-    for (const channelDoc of snapshot.docs) {
-      const data = channelDoc.data();
+    const allChannels = channelsSnapshot.docs.map(channelDoc => ({
+      id: channelDoc.id,
+      ...channelDoc.data()
+    }));
 
-      // 沒有 avatar 才補
-      if (!data.avatar) {
-        await updateDoc(
-          doc(db, 'Channels', channelDoc.id),
-          {
-            avatar: generateRandomAvatar()
-            // 或 GUEST_AVATAR
-          }
+    const allVideos = videosSnapshot.docs.map(videoDoc => ({
+      id: videoDoc.id,
+      ...videoDoc.data()
+    }));
+
+    const toNumber = (value) => {
+      const num = Number(value ?? 0);
+      return Number.isNaN(num) ? 0 : num;
+    };
+
+    const pickSubscriberCount = (...values) => {
+      return Math.max(...values.map(toNumber), 0);
+    };
+
+    const getChannelName = (data = {}) => {
+      return data.name || data.username || data.channelName || data.channel || data.creatorName || data.author || data.id || '';
+    };
+
+    const findCanonicalUserId = (legacyData = {}) => {
+      const legacyDocId = legacyData.id || '';
+      const channelName = getChannelName(legacyData) || legacyDocId;
+
+      if (legacyData.userId) return legacyData.userId;
+      if (legacyData.canonicalChannelId) return legacyData.canonicalChannelId;
+      if (String(legacyDocId).startsWith('user_') || legacyDocId === 'shiauye_official') return legacyDocId;
+
+      const matchedVideo = allVideos.find(video => {
+        return (
+          String(video.channel ?? '') === String(channelName) ||
+          String(video.author ?? '') === String(channelName) ||
+          String(video.creatorName ?? '') === String(channelName) ||
+          String(video.username ?? '') === String(channelName)
         );
+      });
+      if (matchedVideo?.userId) return matchedVideo.userId;
+
+      const matchedIdChannel = allChannels.find(channel => {
+        const sameName =
+          String(channel.name ?? '') === String(channelName) ||
+          String(channel.username ?? '') === String(channelName) ||
+          String(channel.channelName ?? '') === String(channelName) ||
+          String(channel.id ?? '') === String(channelName);
+
+        const looksLikeIdDoc =
+          Boolean(channel.userId || channel.canonicalChannelId) ||
+          String(channel.id ?? '').startsWith('user_') ||
+          String(channel.id ?? '') === 'shiauye_official';
+
+        return sameName && looksLikeIdDoc;
+      });
+
+      if (matchedIdChannel) {
+        return matchedIdChannel.userId || matchedIdChannel.canonicalChannelId || matchedIdChannel.id;
       }
+
+      return '';
+    };
+
+    let migratedCount = 0;
+    let skippedCount = 0;
+
+    for (const channelDoc of channelsSnapshot.docs) {
+      const legacyData = {
+        id: channelDoc.id,
+        ...channelDoc.data()
+      };
+
+      const channelName = getChannelName(legacyData) || channelDoc.id;
+      const canonicalUserId = findCanonicalUserId(legacyData);
+
+      if (!canonicalUserId) {
+        skippedCount++;
+        continue;
+      }
+
+      const idDocRef = doc(db, 'Channels', canonicalUserId);
+      const idDocSnap = await getDoc(idDocRef);
+      const idData = idDocSnap.exists() ? idDocSnap.data() : {};
+
+      const matchedVideo = allVideos.find(video => {
+        return (
+          String(video.userId ?? '') === String(canonicalUserId) ||
+          String(video.channel ?? '') === String(channelName) ||
+          String(video.author ?? '') === String(channelName) ||
+          String(video.creatorName ?? '') === String(channelName) ||
+          String(video.username ?? '') === String(channelName)
+        );
+      });
+
+      const resolvedAvatar =
+        idData.avatar ||
+        legacyData.avatar ||
+        matchedVideo?.avatar ||
+        matchedVideo?.creatorAvatar ||
+        matchedVideo?.channelAvatar ||
+        GUEST_AVATAR;
+
+      const preservedSubscriberCount = pickSubscriberCount(
+        idData.subscriberCount,
+        idData.subscribers,
+        idData.subsCount,
+        legacyData.subscriberCount,
+        legacyData.subscribers,
+        legacyData.subsCount,
+        matchedVideo?.subscriberCount,
+        liveSubscriberCount
+      );
+
+      await setDoc(idDocRef, {
+        ...idData,
+        name: idData.name || legacyData.name || channelName,
+        username: idData.username || legacyData.username || legacyData.name || channelName,
+        channelName: idData.channelName || legacyData.channelName || legacyData.name || channelName,
+        avatar: resolvedAvatar,
+        userId: canonicalUserId,
+        subscriberCount: preservedSubscriberCount,
+        subscribers: deleteField(),
+        subsCount: deleteField(),
+        updatedAt: new Date().toISOString(),
+        createdAt: idData.createdAt || legacyData.createdAt || new Date().toISOString()
+      }, { merge: true });
+
+      // 🟡 先保留舊版 Channels/{username}，不刪除，只補上 canonicalChannelId 方便之後讀取
+      if (String(channelDoc.id) !== String(canonicalUserId)) {
+        await setDoc(doc(db, 'Channels', channelDoc.id), {
+          ...channelDoc.data(),
+          canonicalChannelId: canonicalUserId,
+          userId: channelDoc.data().userId || canonicalUserId,
+          avatar: legacyData.avatar || resolvedAvatar,
+          subscriberCount: pickSubscriberCount(legacyData.subscriberCount, preservedSubscriberCount),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      // 順手補同頻道舊影片的 userId / avatar，其他帳號之後就能讀到新版 userId
+      for (const videoDoc of videosSnapshot.docs) {
+        const videoData = videoDoc.data();
+        const isSameChannel =
+          String(videoData.userId ?? '') === String(canonicalUserId) ||
+          String(videoData.channel ?? '') === String(channelName) ||
+          String(videoData.author ?? '') === String(channelName) ||
+          String(videoData.creatorName ?? '') === String(channelName) ||
+          String(videoData.username ?? '') === String(channelName);
+
+        if (!isSameChannel) continue;
+
+        const needsVideoUpdate =
+          videoData.userId !== canonicalUserId ||
+          videoData.avatar !== resolvedAvatar ||
+          videoData.creatorAvatar !== resolvedAvatar ||
+          videoData.channelAvatar !== resolvedAvatar;
+
+        if (needsVideoUpdate) {
+          await setDoc(doc(db, 'Videos', videoDoc.id), {
+            ...videoData,
+            userId: canonicalUserId,
+            avatar: resolvedAvatar,
+            creatorAvatar: resolvedAvatar,
+            channelAvatar: resolvedAvatar
+          }, { merge: true });
+        }
+      }
+
+      migratedCount++;
     }
 
-    showToast('舊帳號頭貼已補齊');
+    showToast(`舊帳號訂閱數已同步：${migratedCount} 筆，略過：${skippedCount} 筆`, 'success');
   } catch (err) {
     console.error(err);
-    showToast('補頭貼失敗', 'error');
+    showToast('舊帳號訂閱數同步失敗', 'error');
   }
 };
 
-  const toastTimeoutRef = useRef(null);
+const toastTimeoutRef = useRef(null);
 
   // 加上第三個參數 onCloseCallback
   const showToast = (message, type = 'success', onCloseCallback = null) => {
@@ -928,14 +1083,15 @@ export default function App() {
         rename: !isSameUsername
       });
 
-      // 🟡 舊版 Channels/{username} 只刪舊名稱文件，不刪 Channels/{userId}
-      if (
-        !isSameUsername &&
-        oldNameDocSnap.exists() &&
-        String(oldNameDocRef.id) !== String(currentUserId)
-      ) {
-        await deleteDoc(oldNameDocRef);
-      }
+      // 🟡 先保留舊版 Channels/{username} 文件，不刪除。
+      // 舊文件會繼續當 fallback；確認遷移穩定後再手動清理。
+      // if (
+      //   !isSameUsername &&
+      //   oldNameDocSnap.exists() &&
+      //   String(oldNameDocRef.id) !== String(currentUserId)
+      // ) {
+      //   await deleteDoc(oldNameDocRef);
+      // }
 
       setCurrentUserAvatar(avatarUrl);
       setLiveSubscriberCount(preservedSubscriberCount);
@@ -1187,7 +1343,7 @@ export default function App() {
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
-  // 第 4 個參數 providedUserId 很重要：從影片卡片點進頻道時，直接把 video.userId 傳進來
+  // 第 4 個參數 providedUserId 很重要：其他帳號從影片卡片點進頻道時，可以直接讀到正確 userId
   const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
     if (e) e.stopPropagation();
 
@@ -1217,8 +1373,18 @@ export default function App() {
       return;
     }
 
+    const toNumber = (value) => {
+      const num = Number(value ?? 0);
+      return Number.isNaN(num) ? 0 : num;
+    };
+
+    const pickSubscriberCount = (...values) => {
+      return Math.max(...values.map(toNumber), 0);
+    };
+
     const matchedLocalVideo = (Array.isArray(videos) ? videos : []).find(video => {
       return (
+        String(video.userId ?? '') === String(providedUserId ?? '') ||
         String(video.channel ?? '') === String(finalName) ||
         String(video.author ?? '') === String(finalName) ||
         String(video.creatorName ?? '') === String(finalName) ||
@@ -1242,25 +1408,28 @@ export default function App() {
     setTargetChannel(initialChannelData);
 
     let finalId = hintedUserId;
-    let resolvedAvatar = finalAvatar || matchedLocalVideo?.avatar || matchedLocalVideo?.creatorAvatar || GUEST_AVATAR;
+    let resolvedAvatar =
+      finalAvatar ||
+      matchedLocalVideo?.avatar ||
+      matchedLocalVideo?.creatorAvatar ||
+      matchedLocalVideo?.channelAvatar ||
+      GUEST_AVATAR;
     let resolvedSubscriberCount = 0;
+    let idData = {};
+    let legacyData = {};
+    let legacyDocId = finalName;
 
     try {
-      const isMyOwnChannel = finalName === localUsername;
-
       // 1) 有 userId 時，永遠先讀 Channels/{userId}
       if (finalId) {
         const idSnap = await getDoc(doc(db, 'Channels', finalId));
         if (idSnap.exists()) {
-          const data = idSnap.data();
-          finalId = data.userId || finalId;
-          resolvedAvatar = data.avatar || resolvedAvatar;
-          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+          idData = idSnap.data();
+          finalId = idData.userId || finalId;
         }
       }
 
-      // 2) 沒有 userId 時，先用新版欄位查詢 name / username / channelName
-      // 注意：這一步要放在 legacy Channels/{username} 前面，避免舊名字文件沒有 userId 時擋住新版 ID 文件
+      // 2) 先用新版欄位查詢 name / username / channelName，優先找到真正的 userId 文件
       if (!finalId) {
         const fieldsToCheck = ['username', 'name', 'channelName'];
         for (const fieldName of fieldsToCheck) {
@@ -1270,27 +1439,30 @@ export default function App() {
           if (!snap.empty) {
             const idFirstDoc = snap.docs.find(channelDoc => {
               const data = channelDoc.data();
-              return Boolean(data.userId || String(channelDoc.id).startsWith('user_') || String(channelDoc.id) === currentUserId);
+              return Boolean(
+                data.userId ||
+                data.canonicalChannelId ||
+                String(channelDoc.id).startsWith('user_') ||
+                String(channelDoc.id) === 'shiauye_official'
+              );
             }) || snap.docs[0];
 
             const data = idFirstDoc.data();
-            finalId = data.userId || idFirstDoc.id;
-            resolvedAvatar = data.avatar || resolvedAvatar;
-            resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+            finalId = data.userId || data.canonicalChannelId || (String(idFirstDoc.id).startsWith('user_') ? idFirstDoc.id : '');
+            idData = data;
             break;
           }
         }
       }
 
-      // 3) 最後才讀舊版 Channels/{username} fallback
-      // 如果舊文件沒有 userId / canonicalChannelId，不要把 username 當成 userId。
-      if (!finalId) {
-        const legacySnap = await getDoc(doc(db, 'Channels', finalName));
-        if (legacySnap.exists()) {
-          const data = legacySnap.data();
-          finalId = data.userId || data.canonicalChannelId || '';
-          resolvedAvatar = data.avatar || resolvedAvatar;
-          resolvedSubscriberCount = Number(data.subscriberCount ?? 0);
+      // 3) 讀舊版 Channels/{username}，用來補 avatar / subscriberCount
+      const legacySnap = await getDoc(doc(db, 'Channels', finalName));
+      if (legacySnap.exists()) {
+        legacyData = legacySnap.data();
+        legacyDocId = legacySnap.id;
+
+        if (!finalId) {
+          finalId = legacyData.userId || legacyData.canonicalChannelId || matchedLocalVideo?.userId || '';
         }
       }
 
@@ -1301,42 +1473,82 @@ export default function App() {
 
       // 5) 都找不到才建立新 ID 文件。這通常只會發生在完全沒有 userId 的舊資料。
       if (!finalId) {
-        finalId = isMyOwnChannel
+        finalId = finalName === localUsername
           ? currentUserId
           : `user_${Math.random().toString(16).substring(2, 6)}`;
-
-        const newChannelPayload = {
-          name: finalName,
-          username: finalName,
-          channelName: finalName,
-          avatar: resolvedAvatar,
-          userId: finalId,
-          subscriberCount: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        await setDoc(doc(db, 'Channels', finalId), newChannelPayload, { merge: true });
       }
 
-      // 6) 舊影片補 userId / avatar，讓其他人以後點同頻道可以直接讀到正確 userId
+      // 如果前面解出 finalId 後，補讀 Channels/{userId}
+      if (finalId && Object.keys(idData).length === 0) {
+        const idSnap = await getDoc(doc(db, 'Channels', finalId));
+        if (idSnap.exists()) idData = idSnap.data();
+      }
+
+      resolvedAvatar =
+        idData.avatar ||
+        legacyData.avatar ||
+        matchedLocalVideo?.avatar ||
+        matchedLocalVideo?.creatorAvatar ||
+        matchedLocalVideo?.channelAvatar ||
+        resolvedAvatar ||
+        GUEST_AVATAR;
+
+      resolvedSubscriberCount = pickSubscriberCount(
+        idData.subscriberCount,
+        idData.subscribers,
+        idData.subsCount,
+        legacyData.subscriberCount,
+        legacyData.subscribers,
+        legacyData.subsCount,
+        matchedLocalVideo?.subscriberCount,
+        liveSubscriberCount
+      );
+
+      // 6) 關鍵修正：只要解析出 finalId，就把舊帳號 avatar / subscriberCount 合併回 Channels/{userId}
+      await setDoc(doc(db, 'Channels', finalId), {
+        ...idData,
+        name: idData.name || legacyData.name || finalName,
+        username: idData.username || legacyData.username || legacyData.name || finalName,
+        channelName: idData.channelName || legacyData.channelName || legacyData.name || finalName,
+        avatar: resolvedAvatar,
+        userId: finalId,
+        subscriberCount: resolvedSubscriberCount,
+        subscribers: deleteField(),
+        subsCount: deleteField(),
+        updatedAt: new Date().toISOString(),
+        createdAt: idData.createdAt || legacyData.createdAt || new Date().toISOString()
+      }, { merge: true });
+
+      // 🟡 先保留舊版 Channels/{username}，但補上 canonicalChannelId / userId / subscriberCount，方便 fallback 讀到新版資料
+      if (legacyDocId && String(legacyDocId) !== String(finalId)) {
+        await setDoc(doc(db, 'Channels', legacyDocId), {
+          ...legacyData,
+          canonicalChannelId: finalId,
+          userId: legacyData.userId || finalId,
+          avatar: legacyData.avatar || resolvedAvatar,
+          subscriberCount: pickSubscriberCount(legacyData.subscriberCount, resolvedSubscriberCount),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      // 7) 舊影片補 userId / avatar，讓其他帳號以後點同頻道可以直接讀到正確 userId
       const videosSnapshot = await getDocs(collection(db, 'Videos'));
       for (const videoDoc of videosSnapshot.docs) {
         const videoData = videoDoc.data();
         const isSameChannel =
+          String(videoData.userId ?? '') === String(finalId) ||
           String(videoData.channel ?? '') === String(finalName) ||
           String(videoData.author ?? '') === String(finalName) ||
           String(videoData.creatorName ?? '') === String(finalName) ||
-          String(videoData.username ?? '') === String(finalName) ||
-          String(videoData.userId ?? '') === String(finalId);
+          String(videoData.username ?? '') === String(finalName);
 
         const needsUpdate =
           isSameChannel &&
           (
-            !videoData.userId ||
             videoData.userId !== finalId ||
             videoData.avatar !== resolvedAvatar ||
-            videoData.creatorAvatar !== resolvedAvatar
+            videoData.creatorAvatar !== resolvedAvatar ||
+            videoData.channelAvatar !== resolvedAvatar
           );
 
         if (needsUpdate) {
@@ -1351,7 +1563,7 @@ export default function App() {
       }
 
     } catch (err) {
-      console.error('Firebase Channels 雙軌讀取或寫入失敗:', err);
+      console.error('Firebase Channels 舊帳號訂閱數同步失敗:', err);
       const suffix = finalName.split('_')[1] || 'temp';
       finalId = finalId || `user_${suffix}`;
     }
