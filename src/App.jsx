@@ -13,7 +13,7 @@ import {
 } from './firebaseService';
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 import { db } from './firebase'; 
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 
@@ -690,11 +690,12 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
-    // 🟢 改名時保留訂閱數，不要讓新頻道文件歸 0
+    // 🟢 只保留 subscriberCount 這一個訂閱數欄位
+    // 舊版曾寫入 subscribers / subsCount，這裡順手清掉，避免 Firestore 欄位看起來很多個訂閱計數
     if (subscriberCount !== null && subscriberCount !== undefined) {
       channelPayload.subscriberCount = subscriberCount;
-      channelPayload.subscribers = subscriberCount;
-      channelPayload.subsCount = subscriberCount;
+      channelPayload.subscribers = deleteField();
+      channelPayload.subsCount = deleteField();
     }
 
     await setDoc(
@@ -817,8 +818,7 @@ export default function App() {
       const oldDocSnap = await getDoc(oldDocRef);
       const oldChannelData = oldDocSnap.exists() ? oldDocSnap.data() : {};
 
-      // 🟢 關鍵修正：改名以前先把舊頻道訂閱數抓出來
-      // 支援多種可能欄位，避免 subscriberCount / subscribers / subsCount 名稱不同造成歸 0
+      // 🟢 改名時保留舊訂閱數；舊資料如果有 subscribers / subsCount 也只拿來轉回 subscriberCount
       const preservedSubscriberCount = Number(
         oldChannelData.subscriberCount ??
         oldChannelData.subscribers ??
@@ -827,8 +827,7 @@ export default function App() {
         0
       );
 
-      // 🟢 先建立 / 更新新名稱的頻道文件，而且帶入舊資料與舊訂閱數
-      // 注意：先寫新文件，再刪舊文件，避免改名過程中訂閱數遺失
+      // 🟢 新頻道只寫入 subscriberCount，一併刪除舊的 subscribers / subsCount 欄位
       await setDoc(newDocRef, {
         ...oldChannelData,
         name: newUsername,
@@ -837,8 +836,8 @@ export default function App() {
         avatar: avatarUrl,
         userId: currentUserId,
         subscriberCount: preservedSubscriberCount,
-        subscribers: preservedSubscriberCount,
-        subsCount: preservedSubscriberCount,
+        subscribers: deleteField(),
+        subsCount: deleteField(),
         updatedAt: new Date().toISOString()
       }, { merge: true });
 
@@ -852,7 +851,7 @@ export default function App() {
         rename: !isSameUsername
       });
 
-      // 🟢 最後才刪除舊名稱文件，避免新文件還沒完整建立就消失
+      // 🟢 最後才刪舊文件，避免先刪導致新頻道訂閱數拿不到
       if (!isSameUsername && oldDocSnap.exists()) {
         await deleteDoc(oldDocRef);
       }
@@ -872,9 +871,7 @@ export default function App() {
               channelName: newUsername,
               avatar: avatarUrl,
               userId: currentUserId,
-              subscriberCount: preservedSubscriberCount,
-              subscribers: preservedSubscriberCount,
-              subsCount: preservedSubscriberCount
+              subscriberCount: preservedSubscriberCount
             }
           : prev
       );
@@ -897,7 +894,6 @@ export default function App() {
         currentUserId
       );
 
-      // 🟢 如果自己的訂閱清單裡剛好有舊名稱，也一起換成新名稱
       setSubscribedChannels(prev => {
         const nextSubs = prev.map(name =>
           name === oldUsername ? newUsername : name
@@ -913,7 +909,6 @@ export default function App() {
         isSameUsername ? '頭貼已更新！' : '帳號名稱與頭貼已同步更新！',
         'success',
         () => {
-          // 🟢 當 Toast 消失時，才把 Buffer 關掉
           setIsPageLoading(false);
         }
       );
