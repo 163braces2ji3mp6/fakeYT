@@ -30,3 +30,9 @@ node_modules
 
 # 如果你還是堅持用本機 MP4 檔案，且檔案很大（大於 50MB），請把影片資料夾也忽略：
 /public/videos/
+
+.env
+.env.local
+.env.*.local
+!.env.example
+

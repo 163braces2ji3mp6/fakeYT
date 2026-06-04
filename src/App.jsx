@@ -22,6 +22,15 @@ import avatarImage from './assets/163braces.jpg'
 ============================== */
 const GUEST_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%232a2a2a'/><circle cx='16' cy='13' r='5' fill='%23888888'/><path d='M16 20c-4.5 0-8 2.5-8 5v1h16v-1c0-2.5-3.5-5-8-5z' fill='%23888888'/></svg>";
 
+// YouTube Data API v3：本版本改成前端直接呼叫 YouTube API。
+// 請在 .env.local 放：VITE_YOUTUBE_API_KEY=你的新 API Key
+// 注意：Vite 中 VITE_ 開頭的變數會被打包到前端，正式上線請務必在 Google Cloud Console 加「網站限制」與「API 限制」。
+const YOUTUBE_API_KEY = import.meta.env?.VITE_YOUTUBE_API_KEY || '';
+const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
+const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
+const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
+
+
 /* ==============================
   03. Asset Helpers / 頭貼與身份判斷工具
 ============================== */
@@ -485,7 +494,8 @@ const toastTimeoutRef = useRef(null);
     07-2. Page / Video / Search State
   ------------------------------ */
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
-  const bufferTimeoutRef = useRef(null); 
+  const bufferTimeoutRef = useRef(null);
+  const youtubeCleanupRunningRef = useRef(false); 
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
@@ -1640,7 +1650,7 @@ const toastTimeoutRef = useRef(null);
 
   useEffect(() => {
   const unsubscribe = subscribeToVideos((firebaseVideos) => {
-    const validFirebaseVideos = Array.isArray(firebaseVideos) ? firebaseVideos : [];
+    const validFirebaseVideos = (Array.isArray(firebaseVideos) ? firebaseVideos : []).filter(isVideoVisible);
     setRawFirebaseVideos(validFirebaseVideos);
     
     // 💡 核心改進點：只有在第一次初始化（isFirstInit 為 true）時才進行洗牌（shuffle）
@@ -1673,6 +1683,19 @@ const toastTimeoutRef = useRef(null);
   
   return () => unsubscribe();
 }, [justUploadedVideo, isFirstInit]);
+
+useEffect(() => {
+  if (!Array.isArray(rawFirebaseVideos) || rawFirebaseVideos.length === 0) return;
+
+  // 網頁載入 / Firebase 影片更新時先強制檢查一次，避免剛下架的影片卡在冷卻時間內不刪除。
+    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, true);
+
+  const timer = setInterval(() => {
+    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos);
+  }, YOUTUBE_STATUS_CHECK_INTERVAL_MS);
+
+  return () => clearInterval(timer);
+}, [rawFirebaseVideos]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -2068,13 +2091,175 @@ const toastTimeoutRef = useRef(null);
   /* ------------------------------
     17. Upload Helpers / 上傳影片
   ------------------------------ */
-  const fetchVideoDuration = (ytId) => {
-    return new Promise((resolve) => {
-      const randMin = Math.floor(Math.random() * 8) + 1; 
-      const randSec = Math.floor(Math.random() * 60);
-      const duration = `${randMin.toString().padStart(2, '0')}:${randSec.toString().padStart(2, '0')}`;
-      resolve(duration);
-    });
+  const parseYoutubeApiDate = (value) => {
+    if (!value) return null;
+    if (typeof value?.toDate === 'function') return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const formatYouTubeDuration = (isoDuration = 'PT0S') => {
+    const match = String(isoDuration).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    if (!match) return '00:00';
+
+    const hours = Number(match[1] || 0);
+    const minutes = Number(match[2] || 0);
+    const seconds = Number(match[3] || 0);
+
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const isYoutubeRegionBlocked = (contentDetails, regionCode = 'TW') => {
+    const regionRestriction = contentDetails?.regionRestriction;
+    if (!regionRestriction) return false;
+
+    if (Array.isArray(regionRestriction.blocked)) {
+      return regionRestriction.blocked.includes(regionCode);
+    }
+
+    if (Array.isArray(regionRestriction.allowed)) {
+      return !regionRestriction.allowed.includes(regionCode);
+    }
+
+    return false;
+  };
+
+  const isYoutubeVideoUnavailable = (info) => {
+    if (!info) return true;
+    return info.playable === false;
+  };
+
+  const fetchYoutubeVideoInfo = async (ytId) => {
+    if (!YOUTUBE_API_KEY) {
+      throw new Error('尚未設定 VITE_YOUTUBE_API_KEY，請在專案根目錄建立 .env.local');
+    }
+
+    const url = new URL(YOUTUBE_VIDEOS_API_URL);
+    url.searchParams.set('part', 'contentDetails,status,snippet');
+    url.searchParams.set('id', ytId);
+    url.searchParams.set('key', YOUTUBE_API_KEY);
+
+    const response = await fetch(url.toString());
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const apiMessage = data?.error?.message || data?.reason || 'YouTube API 回應失敗';
+      throw new Error(apiMessage);
+    }
+
+    const item = data.items?.[0];
+
+    if (!item) {
+      return {
+        ok: true,
+        playable: false,
+        reason: 'not_found_or_private_or_deleted',
+        videoId: ytId
+      };
+    }
+
+    const privacyStatus = item.status?.privacyStatus;
+    const embeddable = item.status?.embeddable;
+    const regionBlocked = isYoutubeRegionBlocked(item.contentDetails, 'TW');
+    const durationIso = item.contentDetails?.duration || 'PT0S';
+
+    const playable =
+      privacyStatus === 'public' &&
+      embeddable !== false &&
+      regionBlocked === false;
+
+    return {
+      ok: true,
+      playable,
+      reason: playable ? 'ok' : 'not_playable',
+      videoId: ytId,
+      title: item.snippet?.title || '',
+      duration: formatYouTubeDuration(durationIso),
+      durationIso,
+      privacyStatus,
+      embeddable,
+      regionBlocked
+    };
+  };
+
+  const deleteUnavailableYoutubeVideo = async (video, reason = 'youtube_unavailable') => {
+    if (!video?.id || !video?.youtubeId) return;
+
+    try {
+      await deleteDoc(doc(db, 'Videos', video.id));
+
+      setRawFirebaseVideos(prev =>
+        Array.isArray(prev) ? prev.filter(item => item.id !== video.id) : prev
+      );
+
+      setVideos(prev =>
+        Array.isArray(prev) ? prev.filter(item => item.id !== video.id) : prev
+      );
+
+      if (selectedVideo?.id === video.id) {
+        setSelectedVideo(null);
+        setCurrentView('home');
+      }
+
+      console.log(`已刪除不可觀看的 YouTube 影片：${video.youtubeId}，原因：${reason}`);
+    } catch (error) {
+      console.error('刪除不可觀看影片失敗：', error);
+    }
+  };
+
+  const cleanupUnavailableYoutubeVideosFromClient = async (videoList = [], forceCheck = false) => {
+    if (youtubeCleanupRunningRef.current || !YOUTUBE_API_KEY) return;
+
+    const candidates = (Array.isArray(videoList) ? videoList : [])
+      .filter(video => video?.youtubeId && video?.id)
+      .filter(video => {
+        if (forceCheck) return true;
+        const lastCheckedAt = parseYoutubeApiDate(video.youtubeCheckedAt);
+        if (!lastCheckedAt) return true;
+        return Date.now() - lastCheckedAt.getTime() > YOUTUBE_STATUS_CHECK_COOLDOWN_MS;
+      });
+
+    if (candidates.length === 0) {
+      console.log('YouTube 影片檢查：沒有需要檢查的影片');
+      return;
+    }
+
+    youtubeCleanupRunningRef.current = true;
+
+    try {
+      console.log(`YouTube 影片檢查開始，共 ${candidates.length} 支`);
+
+      for (const video of candidates) {
+        try {
+          const info = await fetchYoutubeVideoInfo(video.youtubeId);
+
+          if (isYoutubeVideoUnavailable(info)) {
+            await deleteUnavailableYoutubeVideo(video, info.reason || 'youtube_unavailable');
+            continue;
+          }
+
+          await updateDoc(doc(db, 'Videos', video.id), {
+            isYoutubePlayable: true,
+            youtubeCheckedAt: new Date(),
+            youtubePrivacyStatus: info.privacyStatus || null,
+            youtubeEmbeddable: info.embeddable ?? null,
+            youtubeRegionBlocked: info.regionBlocked ?? false,
+            duration: info.duration || video.duration || '00:00',
+            durationIso: info.durationIso || video.durationIso || null,
+            unavailableReason: null
+          });
+        } catch (error) {
+          console.warn(`檢查 YouTube 影片失敗：${video.youtubeId}`, error);
+        }
+      }
+    } finally {
+      youtubeCleanupRunningRef.current = false;
+    }
   };
 
   const handleUploadVideo = async (e) => {
@@ -2082,52 +2267,66 @@ const toastTimeoutRef = useRef(null);
     const ytId = extractYoutubeId(newVideoUrl);
 
     if (!newVideoTitle.trim() || !ytId) {
-      showToast('請輸入完整資訊！');
+      showToast('請輸入完整資訊，並確認是有效的 YouTube 網址！', 'error');
       return;
     }
 
-    setIsAnalyzing(true)
-    const finalDuration = await fetchVideoDuration(ytId);
+    setIsAnalyzing(true);
 
     try {
+      const ytInfo = await fetchYoutubeVideoInfo(ytId);
+
+      if (isYoutubeVideoUnavailable(ytInfo)) {
+        showToast('這支 YouTube 影片目前不可觀看、已下架、私人、不可嵌入或所在地區不可播放。', 'error');
+        return;
+      }
+
       const dataToUpload = {
-        title: newVideoTitle,
+        title: newVideoTitle.trim() || ytInfo.title || '未命名影片',
         channel: localUsername,
         creatorName: localUsername,
         username: localUsername,
         channelName: localUsername,
         author: localUsername,
         userId: currentUserId,
-        views: 0,            
-        time: "剛剛",            
-        duration: finalDuration, 
+        views: 0,
+        time: '剛剛',
+        duration: ytInfo.duration || '00:00',
+        durationIso: ytInfo.durationIso || null,
         avatar: unifiedAvatar,
         creatorAvatar: unifiedAvatar,
         channelAvatar: unifiedAvatar,
         subscriberCount: liveSubscriberCount,
         videoUrl: newVideoUrl,
         youtubeId: ytId,
-        category: newVideoCategory, 
-        thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`
+        source: 'youtube',
+        category: newVideoCategory,
+        thumbnail: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`,
+        isYoutubePlayable: true,
+        youtubeCheckedAt: new Date(),
+        youtubePrivacyStatus: ytInfo.privacyStatus || null,
+        youtubeEmbeddable: ytInfo.embeddable ?? null,
+        youtubeRegionBlocked: ytInfo.regionBlocked ?? false,
+        unavailableReason: null
       };
-      
+
       await uploadVideoToFirebase(dataToUpload);
-      setJustUploadedVideo(dataToUpload); 
-    
+      setJustUploadedVideo(dataToUpload);
+
       setNewVideoTitle('');
       setNewVideoUrl('');
-      setNewVideoCategory('未分類'); 
-      setIsUploadModalOpen(false); 
+      setNewVideoCategory('未分類');
+      setIsUploadModalOpen(false);
       setSearchInputStr('');
       setSearchQuery('');
       setActiveCategory('全部');
       setCurrentView('home');
-      showToast("上傳成功！", "success");
+      showToast('上傳成功！已抓取 YouTube 真實影片長度。', 'success');
     } catch (error) {
-      console.error("上傳失敗：", error);
-      showToast("上傳失敗，請稍後再試！", "error");
+      console.error('上傳失敗：', error);
+      showToast(error.message || '上傳失敗，請稍後再試！', 'error');
     } finally {
-      setIsAnalyzing(false); 
+      setIsAnalyzing(false);
     }
   };
 
@@ -2135,9 +2334,15 @@ const toastTimeoutRef = useRef(null);
   /* ------------------------------
     18. Render Helpers / 篩選、頭貼、影片卡片
   ------------------------------ */
+  const isVideoVisible = (video = {}) => {
+    return video.deletedFromPublicList !== true && video.isYoutubePlayable !== false;
+  };
+
   const getFilteredVideos = () => {
     const currentVideos = Array.isArray(videos) ? videos : [];
     return currentVideos.filter(video => {
+      if (!isVideoVisible(video)) return false;
+
       const matchesSearch = !searchQuery.trim() || 
                             video.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             video.channel?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -2258,14 +2463,15 @@ const toastTimeoutRef = useRef(null);
     if (!channelName) return [];
 
     const channelVideos = videos.filter(video =>
-      channelName === '小葉'
+      isVideoVisible(video) &&
+      (channelName === '小葉'
         ? (
             String(video.channel) === '小葉' ||
             String(video.author) === '小葉' ||
             String(video.creatorName) === '小葉' ||
             String(video.username) === '小葉'
           )
-        : String(video.channel) === String(channelName)
+        : String(video.channel) === String(channelName))
     );
 
     return sortVideos(channelVideos, channelVideoSort);
