@@ -811,6 +811,16 @@ const toastTimeoutRef = useRef(null);
 
     const unsubscribe = subscribeToChannelData(activeChannelInfo, (channelData) => {
       if (channelData) {
+        const activeName = String(activeChannelInfo.name || activeChannelInfo.username || activeChannelInfo.channelName || '');
+        const dataName = String(channelData.name || channelData.username || channelData.channelName || activeName || '');
+        const activeId = String(activeChannelInfo.userId || '');
+        const dataId = String(channelData.userId || activeId || '');
+        const isSameActiveChannel =
+          (!activeId || !dataId || activeId === dataId) &&
+          (!activeName || !dataName || activeName === dataName || dataName === activeName);
+
+        if (!isSameActiveChannel) return;
+
         setLiveSubscriberCount(Number(channelData.subscriberCount ?? 0));
         setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
 
@@ -1516,7 +1526,7 @@ const toastTimeoutRef = useRef(null);
         liveSubscriberCount
       );
 
-      // 6) 關鍵修正：只要解析出 finalId，就把舊帳號 avatar / subscriberCount 合併回 Channels/{userId}
+      // 6) 只同步頻道基本資料。重要：瀏覽別人的頻道時，不寫 subscriberCount，避免把目前頻道/小葉的訂閱數污染到其他人。
       await setDoc(doc(db, 'Channels', finalId), {
         ...idData,
         name: idData.name || legacyData.name || finalName,
@@ -1524,21 +1534,21 @@ const toastTimeoutRef = useRef(null);
         channelName: idData.channelName || legacyData.channelName || legacyData.name || finalName,
         avatar: resolvedAvatar,
         userId: finalId,
-        subscriberCount: resolvedSubscriberCount,
+        ...(isViewingOwnChannel ? { subscriberCount: resolvedSubscriberCount } : {}),
         subscribers: deleteField(),
         subsCount: deleteField(),
         updatedAt: new Date().toISOString(),
         createdAt: idData.createdAt || legacyData.createdAt || new Date().toISOString()
       }, { merge: true });
 
-      // 🟡 先保留舊版 Channels/{username}，但補上 canonicalChannelId / userId / subscriberCount，方便 fallback 讀到新版資料
+      // 🟡 先保留舊版 Channels/{username}，但瀏覽別人頻道時不回寫 subscriberCount，避免訂閱數污染。
       if (legacyDocId && String(legacyDocId) !== String(finalId)) {
         await setDoc(doc(db, 'Channels', legacyDocId), {
           ...legacyData,
           canonicalChannelId: finalId,
           userId: legacyData.userId || finalId,
           avatar: legacyData.avatar || resolvedAvatar,
-          subscriberCount: pickSubscriberCount(legacyData.subscriberCount, resolvedSubscriberCount),
+          ...(isViewingOwnChannel ? { subscriberCount: pickSubscriberCount(legacyData.subscriberCount, resolvedSubscriberCount) } : {}),
           updatedAt: new Date().toISOString()
         }, { merge: true });
       }
@@ -2545,6 +2555,34 @@ useEffect(() => {
   };
 
 
+  const getTargetChannelSubscriberCount = () => {
+    const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
+    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
+    const isOwnChannel =
+      String(channelUserId || '') === String(currentUserId || '') ||
+      String(channelName || '') === String(localUsername || '');
+
+    if (isOwnChannel) return Number(liveSubscriberCount || targetChannel?.subscriberCount || 0);
+
+    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
+      return (
+        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+        String(video.channel ?? '') === String(channelName) ||
+        String(video.author ?? '') === String(channelName) ||
+        String(video.creatorName ?? '') === String(channelName) ||
+        String(video.username ?? '') === String(channelName)
+      );
+    });
+
+    return Number(
+      matchedVideo?.subscriberCount ??
+      targetChannel?.subscriberCount ??
+      liveSubscriberCount ??
+      0
+    );
+  };
+
+
   /* ------------------------------
     19. Render Entry / JSX 主畫面
   ------------------------------ */
@@ -2872,7 +2910,7 @@ useEffect(() => {
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
                               @{targetChannel?.userId || targetChannelUserId} •&nbsp;
-                              {formatSubscribers(liveSubscriberCount)}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
+                              {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
                           </div>
@@ -2985,7 +3023,7 @@ useEffect(() => {
                               {selectedVideo.channel || '小葉'}
                             </div>                          
                             <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
-                              {formatSubscribers(liveSubscriberCount)} 位訂閱者
+                              {formatSubscribers(selectedVideo?.subscriberCount ?? liveSubscriberCount)} 位訂閱者
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
