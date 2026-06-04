@@ -496,7 +496,8 @@ const toastTimeoutRef = useRef(null);
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   const bufferTimeoutRef = useRef(null);
   const youtubeCleanupRunningRef = useRef(false);
-  const hasRunInitialYoutubeCleanupRef = useRef(false); 
+  const hasRunInitialYoutubeCleanupRef = useRef(false);
+  const lastYoutubeCleanupSignatureRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
@@ -1654,11 +1655,30 @@ const toastTimeoutRef = useRef(null);
     const validFirebaseVideos = (Array.isArray(firebaseVideos) ? firebaseVideos : []).filter(isVideoVisible);
     setRawFirebaseVideos(validFirebaseVideos);
 
+    const justUploadedYoutubeId = String(justUploadedVideo?.youtubeId ?? '');
+    const uploadedVideoFromFirebase = justUploadedYoutubeId
+      ? validFirebaseVideos.find(video => String(video.youtubeId ?? '') === justUploadedYoutubeId)
+      : null;
+
+    const finishUploadBufferIfReady = () => {
+      if (!justUploadedYoutubeId || !uploadedVideoFromFirebase) return;
+
+      if (bufferTimeoutRef.current) {
+        clearTimeout(bufferTimeoutRef.current);
+      }
+
+      // 給 Firebase snapshot 一點緩衝時間，讓使用者看到 buffer 動畫後再顯示新影片。
+      bufferTimeoutRef.current = setTimeout(() => {
+        setIsPageLoading(false);
+        setJustUploadedVideo(null);
+      }, 700);
+    };
+
     const moveJustUploadedToFront = (list) => {
-      if (!justUploadedVideo?.youtubeId) return list;
+      if (!justUploadedYoutubeId) return list;
 
       const uploadedIndex = list.findIndex(video =>
-        String(video.youtubeId ?? '') === String(justUploadedVideo.youtubeId ?? '')
+        String(video.youtubeId ?? '') === justUploadedYoutubeId
       );
 
       if (uploadedIndex <= 0) return list;
@@ -1668,7 +1688,7 @@ const toastTimeoutRef = useRef(null);
       return [uploadedVideo, ...next];
     };
 
-    // 第一次初始化才洗牌；如果剛上傳影片，會把剛上傳的影片移到第一個。
+    // 第一次初始化才洗牌；如果剛上傳影片，會等 Firebase 真的回傳該影片後再關閉 buffer。
     if (isFirstInit) {
       let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
       shuffledAll = moveJustUploadedToFront(shuffledAll);
@@ -1676,9 +1696,13 @@ const toastTimeoutRef = useRef(null);
       setVideos(shuffledAll);
       setIsFirstInit(false);
 
-      setTimeout(() => {
-        setIsPageLoading(false);
-      }, 1);
+      if (justUploadedYoutubeId) {
+        finishUploadBufferIfReady();
+      } else {
+        setTimeout(() => {
+          setIsPageLoading(false);
+        }, 1);
+      }
     } else {
       // Firebase 重新抓到新影片時，把新出現的 Firebase 影片補到最前面；舊影片只更新資料、不重新洗牌。
       setVideos((prevVideos) => {
@@ -1695,6 +1719,8 @@ const toastTimeoutRef = useRef(null);
 
         return moveJustUploadedToFront(mergedVideos);
       });
+
+      finishUploadBufferIfReady();
     }
   });
 
@@ -1704,6 +1730,15 @@ const toastTimeoutRef = useRef(null);
 useEffect(() => {
   if (!Array.isArray(rawFirebaseVideos) || rawFirebaseVideos.length === 0) return;
 
+  // 只在「影片 id / youtubeId 清單真的改變」時檢查，避免 youtubeCheckedAt 更新後又觸發無限重查。
+  const cleanupSignature = rawFirebaseVideos
+    .map(video => `${video.id || ''}:${video.youtubeId || ''}`)
+    .sort()
+    .join('|');
+
+  if (lastYoutubeCleanupSignatureRef.current === cleanupSignature) return;
+  lastYoutubeCleanupSignatureRef.current = cleanupSignature;
+
   const shouldForceCheck = !hasRunInitialYoutubeCleanupRef.current;
 
   if (!hasRunInitialYoutubeCleanupRef.current) {
@@ -1711,12 +1746,6 @@ useEffect(() => {
   }
 
   cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, shouldForceCheck);
-
-  const timer = setInterval(() => {
-    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, false);
-  }, YOUTUBE_STATUS_CHECK_INTERVAL_MS);
-
-  return () => clearInterval(timer);
 }, [rawFirebaseVideos]);
 
   useEffect(() => {
@@ -2246,10 +2275,7 @@ useEffect(() => {
         return Date.now() - lastCheckedAt.getTime() > YOUTUBE_STATUS_CHECK_COOLDOWN_MS;
       });
 
-    if (candidates.length === 0) {
-      console.log('YouTube 影片檢查：沒有需要檢查的影片');
-      return;
-    }
+    if (candidates.length === 0) return;
 
     youtubeCleanupRunningRef.current = true;
 
@@ -2346,12 +2372,8 @@ useEffect(() => {
 
       await uploadVideoToFirebase(dataToUpload);
 
-      // 讓 subscribeToVideos 下一次收到 Firebase 最新資料時，把這支新影片移到第一個。
-      setJustUploadedVideo({
-        ...dataToUpload,
-        uploadedLocalAt: Date.now()
-      });
-
+      // 上傳成功後先回首頁並顯示 buffer；等 Firebase snapshot 真的抓到新影片後才顯示列表。
+      setIsPageLoading(true);
       setNewVideoTitle('');
       setNewVideoUrl('');
       setNewVideoCategory('未分類');
@@ -2360,7 +2382,13 @@ useEffect(() => {
       setSearchQuery('');
       setActiveCategory('全部');
       setCurrentView('home');
-      showToast('上傳成功！已抓取 YouTube 真實影片長度。', 'success');
+
+      setJustUploadedVideo({
+        ...dataToUpload,
+        uploadedLocalAt: Date.now()
+      });
+
+      showToast('上傳成功！正在同步 Firebase...', 'success');
     } catch (error) {
       console.error('上傳失敗：', error);
       showToast(error.message || '上傳失敗，請稍後再試！', 'error');
