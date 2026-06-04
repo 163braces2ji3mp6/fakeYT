@@ -495,7 +495,8 @@ const toastTimeoutRef = useRef(null);
   ------------------------------ */
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   const bufferTimeoutRef = useRef(null);
-  const youtubeCleanupRunningRef = useRef(false); 
+  const youtubeCleanupRunningRef = useRef(false);
+  const hasRunInitialYoutubeCleanupRef = useRef(false); 
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
@@ -1652,46 +1653,67 @@ const toastTimeoutRef = useRef(null);
   const unsubscribe = subscribeToVideos((firebaseVideos) => {
     const validFirebaseVideos = (Array.isArray(firebaseVideos) ? firebaseVideos : []).filter(isVideoVisible);
     setRawFirebaseVideos(validFirebaseVideos);
-    
-    // 💡 核心改進點：只有在第一次初始化（isFirstInit 為 true）時才進行洗牌（shuffle）
+
+    const moveJustUploadedToFront = (list) => {
+      if (!justUploadedVideo?.youtubeId) return list;
+
+      const uploadedIndex = list.findIndex(video =>
+        String(video.youtubeId ?? '') === String(justUploadedVideo.youtubeId ?? '')
+      );
+
+      if (uploadedIndex <= 0) return list;
+
+      const next = [...list];
+      const [uploadedVideo] = next.splice(uploadedIndex, 1);
+      return [uploadedVideo, ...next];
+    };
+
+    // 第一次初始化才洗牌；如果剛上傳影片，會把剛上傳的影片移到第一個。
     if (isFirstInit) {
       let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
-      if (justUploadedVideo) {
-        shuffledAll = shuffledAll.filter(v => v.id !== justUploadedVideo.id);
-        shuffledAll = [justUploadedVideo, ...shuffledAll];
-      }
+      shuffledAll = moveJustUploadedToFront(shuffledAll);
+
       setVideos(shuffledAll);
-      
-      setIsFirstInit(false); // 💡 立即防重，避免這段時間內 Firebase 重複觸發
-      
+      setIsFirstInit(false);
+
       setTimeout(() => {
         setIsPageLoading(false);
-      }, 1); 
+      }, 1);
     } else {
-      // 💡 重點：如果不是第一次（代表是使用者在點影片、點讚或增加觀看數而觸發更新）
-      // 我們要維持本來的影片排序，只去更新被點擊影片的數據（例如觀看次數），絕對不重新洗牌！
+      // Firebase 重新抓到新影片時，把新出現的 Firebase 影片補到最前面；舊影片只更新資料、不重新洗牌。
       setVideos((prevVideos) => {
-        return prevVideos.map((currentVideo) => {
-          // 在剛下載的最新 Firebase 資料中，找找看有沒有對應的這部影片
+        const safePrevVideos = Array.isArray(prevVideos) ? prevVideos : [];
+        const prevIds = new Set(safePrevVideos.map(video => video.id));
+
+        const updatedExistingVideos = safePrevVideos.map((currentVideo) => {
           const updatedInfo = validFirebaseVideos.find(v => v.id === currentVideo.id);
-          // 如果有找到更新的數據，就把它融合進去（更新觀看數），但留在原位；沒找到就維持原樣
           return updatedInfo ? { ...currentVideo, ...updatedInfo } : currentVideo;
         });
+
+        const newFirebaseVideos = validFirebaseVideos.filter(video => !prevIds.has(video.id));
+        const mergedVideos = [...newFirebaseVideos, ...updatedExistingVideos].filter(isVideoVisible);
+
+        return moveJustUploadedToFront(mergedVideos);
       });
     }
   });
-  
+
   return () => unsubscribe();
 }, [justUploadedVideo, isFirstInit]);
 
 useEffect(() => {
   if (!Array.isArray(rawFirebaseVideos) || rawFirebaseVideos.length === 0) return;
 
-  // 網頁載入 / Firebase 影片更新時先強制檢查一次，避免剛下架的影片卡在冷卻時間內不刪除。
-    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, true);
+  const shouldForceCheck = !hasRunInitialYoutubeCleanupRef.current;
+
+  if (!hasRunInitialYoutubeCleanupRef.current) {
+    hasRunInitialYoutubeCleanupRef.current = true;
+  }
+
+  cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, shouldForceCheck);
 
   const timer = setInterval(() => {
-    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos);
+    cleanupUnavailableYoutubeVideosFromClient(rawFirebaseVideos, false);
   }, YOUTUBE_STATUS_CHECK_INTERVAL_MS);
 
   return () => clearInterval(timer);
@@ -2255,6 +2277,18 @@ useEffect(() => {
           });
         } catch (error) {
           console.warn(`檢查 YouTube 影片失敗：${video.youtubeId}`, error);
+
+          const message = String(error?.message || '');
+          const shouldStopThisRound =
+            message.includes('referer') ||
+            message.includes('blocked') ||
+            message.includes('403') ||
+            message.includes('Forbidden');
+
+          if (shouldStopThisRound) {
+            console.warn('YouTube API Key 被網站限制擋住，已停止本輪檢查。請先修正 Google Cloud 網站限制。');
+            break;
+          }
         }
       }
     } finally {
@@ -2311,7 +2345,12 @@ useEffect(() => {
       };
 
       await uploadVideoToFirebase(dataToUpload);
-      setJustUploadedVideo(dataToUpload);
+
+      // 讓 subscribeToVideos 下一次收到 Firebase 最新資料時，把這支新影片移到第一個。
+      setJustUploadedVideo({
+        ...dataToUpload,
+        uploadedLocalAt: Date.now()
+      });
 
       setNewVideoTitle('');
       setNewVideoUrl('');
