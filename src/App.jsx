@@ -497,7 +497,8 @@ const toastTimeoutRef = useRef(null);
   const bufferTimeoutRef = useRef(null);
   const youtubeCleanupRunningRef = useRef(false);
   const hasRunInitialYoutubeCleanupRef = useRef(false);
-  const lastYoutubeCleanupSignatureRef = useRef(''); 
+  const lastYoutubeCleanupSignatureRef = useRef('');
+  const activeChannelSubscriptionKeyRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
@@ -809,37 +810,70 @@ const toastTimeoutRef = useRef(null);
 
     if (!activeChannelInfo?.name && !activeChannelInfo?.userId) return;
 
+    const makeChannelSubKey = (info = {}) => {
+      const id = String(info.userId || '').trim();
+      const name = String(info.name || info.username || info.channelName || '').trim();
+      return `${id}::${name}`;
+    };
+
+    const requestedChannelKey = makeChannelSubKey(activeChannelInfo);
+    activeChannelSubscriptionKeyRef.current = requestedChannelKey;
+
     const unsubscribe = subscribeToChannelData(activeChannelInfo, (channelData) => {
-      if (channelData) {
-        const activeName = String(activeChannelInfo.name || activeChannelInfo.username || activeChannelInfo.channelName || '');
-        const dataName = String(channelData.name || channelData.username || channelData.channelName || activeName || '');
-        const activeId = String(activeChannelInfo.userId || '');
-        const dataId = String(channelData.userId || activeId || '');
-        const isSameActiveChannel =
-          (!activeId || !dataId || activeId === dataId) &&
-          (!activeName || !dataName || activeName === dataName || dataName === activeName);
+      if (!channelData) return;
 
-        if (!isSameActiveChannel) return;
+      // 防止舊的 listener / 錯頻道 callback 把目前頻道的訂閱數蓋掉。
+      if (activeChannelSubscriptionKeyRef.current !== requestedChannelKey) return;
 
-        setLiveSubscriberCount(Number(channelData.subscriberCount ?? 0));
-        setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
+      const activeName = String(activeChannelInfo.name || activeChannelInfo.username || activeChannelInfo.channelName || '').trim();
+      const dataName = String(channelData.name || channelData.username || channelData.channelName || '').trim();
+      const activeId = String(activeChannelInfo.userId || '').trim();
+      const dataId = String(channelData.userId || '').trim();
 
-        if (currentView === 'channel') {
-          setTargetChannel(prev => ({
+      const idMatches = activeId && dataId ? activeId === dataId : true;
+      const nameMatches = activeName && dataName ? activeName === dataName : true;
+      const hasAnyReliableMatch =
+        (activeId && dataId && idMatches) ||
+        (activeName && dataName && nameMatches) ||
+        (!dataId && !dataName);
+
+      if (!idMatches || !nameMatches || !hasAnyReliableMatch) return;
+
+      const nextSubscriberCount = Number(channelData.subscriberCount ?? 0);
+      setLiveSubscriberCount(nextSubscriberCount);
+      setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
+
+      if (currentView === 'channel') {
+        setTargetChannel(prev => {
+          const prevName = String(prev?.name || prev?.username || prev?.channelName || '').trim();
+          const prevId = String(prev?.userId || '').trim();
+          const stillSameTarget =
+            (!prevId || !activeId || prevId === activeId) &&
+            (!prevName || !activeName || prevName === activeName);
+
+          if (!stillSameTarget) return prev;
+
+          return {
             ...prev,
             ...channelData,
+            subscriberCount: nextSubscriberCount,
             name: channelData.name || prev?.name || activeChannelInfo.name,
             avatar: channelData.avatar || prev?.avatar || activeChannelInfo.avatar || GUEST_AVATAR
-          }));
-        }
-
-        setTimeout(() => {
-          setIsChannelLoading(false);
-        }, 350);
+          };
+        });
       }
+
+      setTimeout(() => {
+        setIsChannelLoading(false);
+      }, 350);
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (activeChannelSubscriptionKeyRef.current === requestedChannelKey) {
+        activeChannelSubscriptionKeyRef.current = '';
+      }
+      unsubscribe();
+    };
   }, [currentView, targetChannel?.userId, targetChannelUserId, targetChannel?.name, targetChannel?.avatar, selectedVideo?.userId, selectedVideo?.channel]);
 
 
@@ -1425,7 +1459,8 @@ const toastTimeoutRef = useRef(null);
       channelName: finalName,
       avatar: finalAvatar,
       bio: initialBio,
-      userId: hintedUserId
+      userId: hintedUserId,
+      subscriberCount: matchedLocalVideo?.subscriberCount ?? 0
     };
     setTargetChannel(initialChannelData);
 
@@ -2562,7 +2597,9 @@ useEffect(() => {
       String(channelUserId || '') === String(currentUserId || '') ||
       String(channelName || '') === String(localUsername || '');
 
-    if (isOwnChannel) return Number(liveSubscriberCount || targetChannel?.subscriberCount || 0);
+    if (isOwnChannel) {
+      return Number(targetChannel?.subscriberCount ?? liveSubscriberCount ?? 0);
+    }
 
     const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
       return (
@@ -2574,10 +2611,10 @@ useEffect(() => {
       );
     });
 
+    // 重要：別人的頻道絕對不要 fallback 到 liveSubscriberCount，避免顯示成上一個頻道的訂閱數。
     return Number(
-      matchedVideo?.subscriberCount ??
       targetChannel?.subscriberCount ??
-      liveSubscriberCount ??
+      matchedVideo?.subscriberCount ??
       0
     );
   };
