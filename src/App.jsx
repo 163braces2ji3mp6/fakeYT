@@ -2433,7 +2433,7 @@ useEffect(() => {
         uploadedLocalAt: Date.now()
       });
 
-      showToast('上傳成功！正在同步 Firebase...', 'success');
+      showToast('上傳成功！', 'success');
     } catch (error) {
       console.error('上傳失敗：', error);
       showToast(error.message || '上傳失敗，請稍後再試！', 'error');
