@@ -787,6 +787,25 @@ const toastTimeoutRef = useRef(null);
     }
   };
 
+
+  const handleSearchSubmit = () => {
+    const cleanQuery = searchInputStr.trim();
+
+    setCurrentView('home');
+    setActiveCategory('全部');
+    setSearchQuery(cleanQuery);
+    setIsPageLoading(true);
+    forceScrollToTop();
+
+    setTimeout(() => {
+      setIsPageLoading(false);
+    }, 250);
+
+    if (cleanQuery) {
+      showToast(`正在搜尋：${cleanQuery}`, 'info');
+    }
+  };
+
   useEffect(() => {
     let activeChannelInfo = null;
 
@@ -1462,6 +1481,15 @@ const toastTimeoutRef = useRef(null);
       userId: hintedUserId,
       subscriberCount: matchedLocalVideo?.subscriberCount ?? 0
     };
+
+    const isInitialOwnChannel =
+      String(hintedUserId || '') === String(currentUserId || '') ||
+      String(finalName || '') === String(localUsername || '');
+
+    if (!isInitialOwnChannel) {
+      setLiveSubscriberCount(Number(matchedLocalVideo?.subscriberCount ?? 0));
+    }
+
     setTargetChannel(initialChannelData);
 
     let finalId = hintedUserId;
@@ -1550,16 +1578,32 @@ const toastTimeoutRef = useRef(null);
         resolvedAvatar ||
         GUEST_AVATAR;
 
-      resolvedSubscriberCount = pickSubscriberCount(
-        idData.subscriberCount,
-        idData.subscribers,
-        idData.subsCount,
-        legacyData.subscriberCount,
-        legacyData.subscribers,
-        legacyData.subsCount,
-        matchedLocalVideo?.subscriberCount,
-        liveSubscriberCount
-      );
+      const isViewingOwnChannel =
+        String(finalId || '') === String(currentUserId || '') ||
+        String(finalName || '') === String(localUsername || '');
+
+      // 重要：點進別人頻道時，不能把自己的 liveSubscriberCount 當 fallback。
+      // 否則流程會變成：先點自己頻道 → liveSubscriberCount 是自己的 → 再點別人頻道 → 別人頻道顯示/寫入自己的訂閱數。
+      resolvedSubscriberCount = isViewingOwnChannel
+        ? pickSubscriberCount(
+            idData.subscriberCount,
+            idData.subscribers,
+            idData.subsCount,
+            legacyData.subscriberCount,
+            legacyData.subscribers,
+            legacyData.subsCount,
+            matchedLocalVideo?.subscriberCount,
+            liveSubscriberCount
+          )
+        : pickSubscriberCount(
+            idData.subscriberCount,
+            idData.subscribers,
+            idData.subsCount,
+            legacyData.subscriberCount,
+            legacyData.subscribers,
+            legacyData.subsCount,
+            matchedLocalVideo?.subscriberCount
+          );
 
       // 6) 只同步頻道基本資料。重要：瀏覽別人的頻道時，不寫 subscriberCount，避免把目前頻道/小葉的訂閱數污染到其他人。
       await setDoc(doc(db, 'Channels', finalId), {
@@ -1626,6 +1670,18 @@ const toastTimeoutRef = useRef(null);
     }
 
     setTargetChannelUserId(finalId);
+    const displaySubscriberCount = isViewingOwnChannel
+      ? resolvedSubscriberCount
+      : pickSubscriberCount(
+          idData.subscriberCount,
+          idData.subscribers,
+          idData.subsCount,
+          legacyData.subscriberCount,
+          legacyData.subscribers,
+          legacyData.subsCount,
+          matchedLocalVideo?.subscriberCount
+        );
+
     const updatedChannelData = {
       name: finalName,
       username: finalName,
@@ -1633,7 +1689,7 @@ const toastTimeoutRef = useRef(null);
       avatar: resolvedAvatar,
       bio: initialBio,
       userId: finalId,
-      subscriberCount: resolvedSubscriberCount
+      subscriberCount: displaySubscriberCount
     };
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
@@ -2611,7 +2667,7 @@ useEffect(() => {
       );
     });
 
-    // 重要：別人的頻道絕對不要 fallback 到 liveSubscriberCount，避免顯示成上一個頻道的訂閱數。
+    // 別人的頻道永遠不 fallback 到 liveSubscriberCount，避免沿用上一個頻道的訂閱數。
     return Number(
       targetChannel?.subscriberCount ??
       matchedVideo?.subscriberCount ??
@@ -2650,10 +2706,15 @@ useEffect(() => {
               setSearchInputStr(e.target.value);
               if (currentView !== 'watch') setCurrentView('home');
             }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSearchSubmit();
+              }
+            }}
           />
           <button
             className="search-btn"
-            onClick={() => showToast(`正在搜尋：${searchQuery}`, 'info')}
+            onClick={handleSearchSubmit}
           >
             <svg viewBox="0 0 24 24" className="search-icon-svg">
               <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path>
