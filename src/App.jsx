@@ -68,11 +68,9 @@ const generateRandomAvatar = () => {
 
 const generateRandomIdentity = () => {
     const randomChineseName = getRandomUsername();
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const uniqueChineseName = `${randomChineseName}_${randomNum}`; 
     const randomHex = Math.random().toString(16).substring(2, 6); 
     const uniqueId = `user_${randomHex}`;
-    return { name: uniqueChineseName, id: uniqueId };
+    return { name: randomChineseName, id: uniqueId };
 };
 
 
