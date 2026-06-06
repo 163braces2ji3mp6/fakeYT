@@ -674,6 +674,30 @@ const toastTimeoutRef = useRef(null);
     return savedSubs ? JSON.parse(savedSubs) : ['我的 YouTube 頻道', '小葉'];
   }); 
 
+
+  const [subscribedChannelDetails, setSubscribedChannelDetails] = useState(() => {
+    const savedDetails = localStorage.getItem('leafhub_subscriptionDetails');
+    if (savedDetails) {
+      try {
+        const parsed = JSON.parse(savedDetails);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (error) {
+        console.warn('讀取訂閱頻道詳細資料失敗，改用舊版訂閱清單', error);
+      }
+    }
+
+    const savedSubs = localStorage.getItem('leafhub_subscriptions');
+    const names = savedSubs ? JSON.parse(savedSubs) : ['我的 YouTube 頻道', '小葉'];
+    return names.map((name, index) => ({
+      name,
+      username: name,
+      channelName: name,
+      userId: name === '小葉' ? 'shiauye_official' : '',
+      avatar: name === '小葉' ? avatarImage : GUEST_AVATAR,
+      subscribedAt: Date.now() - ((names.length - index) * 1000)
+    }));
+  });
+
   const [watchHistory, setWatchHistory] = useState(() => {
     const savedHistory = localStorage.getItem('leafhub_watchHistory');
     return savedHistory ? JSON.parse(savedHistory) : [];
@@ -1931,6 +1955,26 @@ useEffect(() => {
       return nextSubs;
     });
 
+    setSubscribedChannelDetails(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const nextDetails = isCurrentlySubbed
+        ? safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
+        : [
+            {
+              ...channelInfo,
+              name: channelInfo.name || channelName,
+              username: channelInfo.username || channelName,
+              channelName: channelInfo.channelName || channelName,
+              avatar: channelInfo.avatar || GUEST_AVATAR,
+              subscribedAt: Date.now()
+            },
+            ...safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
+          ];
+
+      localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(nextDetails));
+      return nextDetails;
+    });
+
     await toggleChannelSubscription(channelInfo, !isCurrentlySubbed);
   };
 
@@ -2646,6 +2690,57 @@ useEffect(() => {
   };
 
 
+  const getSubscribedChannelAvatar = (channel = {}) => {
+    const channelName = channel.name || channel.username || channel.channelName || '';
+    const channelUserId = channel.userId || '';
+
+    if (channelName === '小葉' || channelUserId === 'shiauye_official') return avatarImage;
+
+    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
+      return (
+        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+        String(video.channel ?? '') === String(channelName) ||
+        String(video.author ?? '') === String(channelName) ||
+        String(video.creatorName ?? '') === String(channelName) ||
+        String(video.username ?? '') === String(channelName)
+      );
+    });
+
+    return channel.avatar || matchedVideo?.avatar || matchedVideo?.creatorAvatar || matchedVideo?.channelAvatar || GUEST_AVATAR;
+  };
+
+  const getSortedSubscribedChannelDetails = () => {
+    const detailMap = new Map();
+
+    (Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : []).forEach((channel, index) => {
+      const channelName = channel.name || channel.username || channel.channelName;
+      if (!channelName) return;
+      detailMap.set(channelName, {
+        ...channel,
+        name: channelName,
+        subscribedAt: Number(channel.subscribedAt || 0) || (Date.now() - ((index + 1) * 1000))
+      });
+    });
+
+    (Array.isArray(subscribedChannels) ? subscribedChannels : []).forEach((channelName, index) => {
+      if (!channelName || detailMap.has(channelName)) return;
+      detailMap.set(channelName, {
+        name: channelName,
+        username: channelName,
+        channelName,
+        userId: channelName === '小葉' ? 'shiauye_official' : '',
+        avatar: channelName === '小葉' ? avatarImage : GUEST_AVATAR,
+        subscribedAt: Date.now() - (100000 + index)
+      });
+    });
+
+    return Array.from(detailMap.values())
+      .filter(channel => subscribedChannels.includes(channel.name || channel.username || channel.channelName))
+      .sort((a, b) => Number(b.subscribedAt || 0) - Number(a.subscribedAt || 0))
+      .slice(0, 6);
+  };
+
+
   const getTargetChannelSubscriberCount = () => {
     const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
     const channelUserId = targetChannel?.userId || targetChannelUserId || '';
@@ -2808,7 +2903,7 @@ useEffect(() => {
 
       <div className="main-wrapper">
         {currentView !== 'watch' && (
-          <aside className="sidebar">
+          <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
             <div className="sidebar-menu">
               <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={handleHomeNavigation}>🏠 首頁</button>
               <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => setCurrentView('subscriptions')}>📺 訂閱頻道</button>
@@ -2816,6 +2911,57 @@ useEffect(() => {
               <div className="sidebar-section-title">我的專區</div>
               <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>🕒 觀看紀錄</button>
               <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => setCurrentView('liked')}>🔥 喜歡的影片</button>
+            </div>
+
+            <div
+              className="sidebar-subscriptions-panel"
+              style={{
+                marginTop: '18px',
+                paddingTop: '14px',
+                borderTop: '1px solid #1f1f1f',
+                width: '100%'
+              }}
+            >
+              <div className="sidebar-section-title" style={{ marginBottom: '8px' }}>最近訂閱</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {getSortedSubscribedChannelDetails().length > 0 ? (
+                  getSortedSubscribedChannelDetails().map((channel) => {
+                    const channelName = channel.name || channel.username || channel.channelName;
+                    const channelAvatar = getSubscribedChannelAvatar(channel);
+
+                    return (
+                      <button
+                        key={`${channel.userId || channelName}-${channel.subscribedAt || ''}`}
+                        type="button"
+                        className="sidebar-btn sidebar-sub-channel"
+                        onClick={(e) => handleChannelNavigation(channelName, channelAvatar, e, channel.userId || '')}
+                        title={channelName}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-start',
+                          gap: '10px',
+                          textAlign: 'left',
+                          padding: '8px 10px',
+                          marginLeft: '5px',
+                          minWidth: 0
+                        }}
+                      >
+                        <img
+                          src={channelAvatar}
+                          alt={channelName}
+                          onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
+                          style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, display: 'block' }}
+                        />
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '28px' }}>{channelName}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div style={{ color: '#777', fontSize: '13px', padding: '8px 10px', lineHeight: '1.5' }}>尚未訂閱頻道</div>
+                )}
+              </div>
             </div>
           </aside>
         )}
@@ -3222,23 +3368,33 @@ useEffect(() => {
                               const replies = [...serverReplies, ...localPendingReplies];
                               const isMock = !comment.id || comment.id.length < 10;
                               const totalReplyCount = (comment.replyCount || serverReplies.length) + localPendingReplies.length;
+                              const commentChannelName = comment.author || comment.username || comment.channelName || '匿名使用者';
+                              const commentUserId = comment.userId || comment.uid || comment.authorId || '';
+                              const commentAvatarSrc =
+                                commentChannelName === '小葉' || commentUserId === 'shiauye_official' || commentUserId === '@shiauye_official'
+                                  ? avatarImage
+                                  : (comment.avatar || GUEST_AVATAR);
 
                               return (
                                 <div key={cid} className={`single-comment-card ${comment.isPending ? 'pending' : ''}`} style={{ opacity: comment.isPending ? 0.6 : 1, marginBottom: '20px' }}>
                                   <div style={{ display: 'flex', gap: '12px' }}>
                                     {/* 🟢 主留言頭貼改法：不論比對名字還是 ID，只要是小葉就上小葉頭貼 */}
                                     <img 
-                                      src={
-                                        comment.author === '小葉' || comment.userId === 'shiauye_official' || comment.userId === '@shiauye_official'
-                                          ? avatarImage 
-                                          : (comment.avatar || GUEST_AVATAR)
-                                      } 
+                                      src={commentAvatarSrc} 
                                       alt="comment-avatar" 
-                                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', marginTop: '2px' }} 
+                                      onClick={(e) => handleChannelNavigation(commentChannelName, commentAvatarSrc, e, commentUserId)}
+                                      onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
+                                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', marginTop: '2px', cursor: 'pointer' }} 
                                     />
                                     <div className="comment-content-body" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                       <div className="comment-user-meta" style={{ display: 'flex', alignItems: 'center' }}>
-                                        <span className="comment-author-name" style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px' }}>{comment.author}</span>
+                                        <span
+                                          className="comment-author-name"
+                                          onClick={(e) => handleChannelNavigation(commentChannelName, commentAvatarSrc, e, commentUserId)}
+                                          style={{ color: '#fff', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}
+                                        >
+                                          {comment.author}
+                                        </span>
                                         <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
                                           {comment.createdAt ? formatTimeAgo(comment.createdAt) : '剛剛'}
                                         </span>
@@ -3291,18 +3447,24 @@ useEffect(() => {
 
                                       {isExpanded && (
                                         <div style={{ paddingLeft: '20px', borderLeft: '2px solid #222', marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                          {replies.map((reply) => (
+                                          {replies.map((reply) => {
+                                            const replyChannelName = reply.author || reply.username || reply.channelName || '匿名使用者';
+                                            const replyUserId = reply.userId || reply.uid || reply.authorId || '';
+                                            const replyAvatarSrc =
+                                              replyChannelName === '小葉' || replyUserId === 'shiauye_official' || replyUserId === '@shiauye_official'
+                                                ? avatarImage
+                                                : (reply.avatar || GUEST_AVATAR);
+
+                                            return (
                                             <div key={reply.id} style={{ display: 'flex', gap: '10px', fontSize: '13px', background: '#0e0e0e', padding: '8px', borderRadius: '6px', opacity: reply.isPending ? 0.6 : 1 }}>
                                               <div style={{ position: 'relative', width: '28px', height: '28px', flexShrink: 0 }}>
                                                 {/* 🟢 回覆留言頭貼改法：同樣加入 ID 比對 */}
                                                 <img 
-                                                  src={
-                                                    reply.author === '小葉' || reply.userId === 'shiauye_official' || reply.userId === '@shiauye_official'
-                                                      ? avatarImage 
-                                                      : (reply.avatar || GUEST_AVATAR)
-                                                  } 
+                                                  src={replyAvatarSrc} 
                                                   alt="reply-avatar" 
-                                                  style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', display: 'block' }} 
+                                                  onClick={(e) => handleChannelNavigation(replyChannelName, replyAvatarSrc, e, replyUserId)}
+                                                  onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
+                                                  style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', display: 'block', cursor: 'pointer' }} 
                                                 />
                                                 {reply.isPending && (
                                                   <span style={{ position: 'absolute', right: '-4px', bottom: '-4px', fontSize: '10px', background: '#000', borderRadius: '50%', padding: '2px' }}>⏳</span>
@@ -3311,7 +3473,12 @@ useEffect(() => {
                                               
                                               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                  <span style={{ color: '#fff', fontWeight: 'bold' }}>{reply.author}</span>
+                                                  <span
+                                                    onClick={(e) => handleChannelNavigation(replyChannelName, replyAvatarSrc, e, replyUserId)}
+                                                    style={{ color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}
+                                                  >
+                                                    {reply.author}
+                                                  </span>
                                                   <span style={{ color: '#666', fontSize: '11px' }}>
                                                     {reply.createdAt ? formatTimeAgo(reply.createdAt) : '剛剛'}
                                                   </span>
@@ -3320,7 +3487,8 @@ useEffect(() => {
                                                 <p style={{ color: '#ccc', margin: '2px 0 0 0', lineHeight: '1.4' }}>{reply.text}</p>
                                               </div>
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                           <form onSubmit={(e) => handleAddReplySubmit(e, cid)} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
                                             <input type="text" placeholder="新增回覆..." ref={(el) => { replyInputRefs.current[cid] = el; }} value={replyInputs[cid] || ''} onChange={(e) => setReplyInputs(prev => ({ ...prev, [cid]: e.target.value }))} style={{ flex: 1, background: '#111', border: '1px solid #333', color: '#fff', padding: '6px 12px', borderRadius: '16px', fontSize: '13px' }} />
                                             <button type="submit" style={{ background: '#3ea6ff', color: '#000', border: 'none', padding: '4px 12px', borderRadius: '14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>回覆</button>
