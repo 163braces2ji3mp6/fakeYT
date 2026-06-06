@@ -174,7 +174,10 @@ const shuffleArray = (array) => {
 
 const CATEGORIES = ['全部', '音樂', '娛樂', '遊戲', 'VLOG'];
 const UPLOAD_CATEGORIES = ['未分類', '音樂', '娛樂', '遊戲', 'VLOG'];
-const LEGACY_DEFAULT_SUBSCRIPTIONS = ['我的 YouTube 頻道', '小葉']; // 舊版預設訂閱，現在不再自動加入
+// 舊版曾經自動建立的假頻道；永遠不允許加入訂閱清單。
+const INVALID_LEGACY_SUBSCRIPTION_CHANNELS = ['我的 YouTube 頻道'];
+// 舊版曾經預設塞入的訂閱；只用來清理「完全沒有詳細資料」的舊預設狀態。
+const LEGACY_DEFAULT_SUBSCRIPTIONS = ['我的 YouTube 頻道', '小葉'];
 
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
@@ -678,11 +681,31 @@ const toastTimeoutRef = useRef(null);
       const parsed = JSON.parse(savedSubs);
       if (!Array.isArray(parsed)) return [];
 
-      // 移除舊版自動塞入的「我的 YouTube 頻道」和「小葉」，避免新使用者預設訂閱任何人。
-      const cleaned = parsed.filter(name => !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name));
+      let savedDetails = [];
+      try {
+        savedDetails = JSON.parse(localStorage.getItem('leafhub_subscriptionDetails') || '[]');
+      } catch {
+        savedDetails = [];
+      }
+
+      const hasManualXiaoyeDetail = Array.isArray(savedDetails) && savedDetails.some(channel => {
+        const name = channel?.name || channel?.username || channel?.channelName || '';
+        return name === '小葉' && Number(channel?.subscribedAt || 0) > 0;
+      });
+
+      const looksLikeOldDefaultOnly =
+        parsed.length === LEGACY_DEFAULT_SUBSCRIPTIONS.length &&
+        LEGACY_DEFAULT_SUBSCRIPTIONS.every(name => parsed.includes(name)) &&
+        !hasManualXiaoyeDetail;
+
+      const cleaned = looksLikeOldDefaultOnly
+        ? []
+        : parsed.filter(name => !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(name));
+
       if (cleaned.length !== parsed.length) {
         localStorage.setItem('leafhub_subscriptions', JSON.stringify(cleaned));
       }
+
       return cleaned;
     } catch (error) {
       console.warn('讀取訂閱清單失敗，改為空清單', error);
@@ -696,9 +719,17 @@ const toastTimeoutRef = useRef(null);
       try {
         const parsed = JSON.parse(savedDetails);
         if (Array.isArray(parsed)) {
+          const savedSubs = JSON.parse(localStorage.getItem('leafhub_subscriptions') || '[]');
+          const looksLikeOldDefaultOnly =
+            Array.isArray(savedSubs) &&
+            savedSubs.length === LEGACY_DEFAULT_SUBSCRIPTIONS.length &&
+            LEGACY_DEFAULT_SUBSCRIPTIONS.every(name => savedSubs.includes(name));
+
           const cleaned = parsed.filter(channel => {
             const name = channel?.name || channel?.username || channel?.channelName || '';
-            return !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name);
+            if (INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(name)) return false;
+            if (looksLikeOldDefaultOnly && name === '小葉') return false;
+            return true;
           });
 
           if (cleaned.length !== parsed.length) {
@@ -712,7 +743,6 @@ const toastTimeoutRef = useRef(null);
       }
     }
 
-    // 沒有任何真實訂閱時，不建立「我的 YouTube 頻道」或「小葉」預設資料。
     return [];
   });
 
@@ -1940,7 +1970,7 @@ useEffect(() => {
   };
 
   const toggleSubscribe = async (channelName) => {
-    if (!channelName || LEGACY_DEFAULT_SUBSCRIPTIONS.includes(channelName)) return;
+    if (!channelName || INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(channelName)) return;
 
     const isCurrentlySubbed = subscribedChannels.includes(channelName);
 
@@ -1969,6 +1999,17 @@ useEffect(() => {
               avatar: targetChannel?.avatar || selectedVideo?.avatar || selectedVideo?.creatorAvatar || unifiedAvatar
             };
 
+    const normalizedChannelInfo = channelName === '小葉'
+      ? {
+          ...channelInfo,
+          userId: 'shiauye_official',
+          name: '小葉',
+          username: '小葉',
+          channelName: '小葉',
+          avatar: avatarImage
+        }
+      : channelInfo;
+
     setSubscribedChannels(prev => {
       const nextSubs = isCurrentlySubbed ? prev.filter(item => item !== channelName) : [...prev, channelName];
       localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
@@ -1981,11 +2022,11 @@ useEffect(() => {
         ? safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
         : [
             {
-              ...channelInfo,
-              name: channelInfo.name || channelName,
-              username: channelInfo.username || channelName,
-              channelName: channelInfo.channelName || channelName,
-              avatar: channelInfo.avatar || GUEST_AVATAR,
+              ...normalizedChannelInfo,
+              name: normalizedChannelInfo.name || channelName,
+              username: normalizedChannelInfo.username || channelName,
+              channelName: normalizedChannelInfo.channelName || channelName,
+              avatar: normalizedChannelInfo.avatar || GUEST_AVATAR,
               subscribedAt: Date.now()
             },
             ...safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
@@ -1995,7 +2036,7 @@ useEffect(() => {
       return nextDetails;
     });
 
-    await toggleChannelSubscription(channelInfo, !isCurrentlySubbed);
+    await toggleChannelSubscription(normalizedChannelInfo, !isCurrentlySubbed);
   };
 
 
@@ -2757,7 +2798,7 @@ useEffect(() => {
     return Array.from(detailMap.values())
       .filter(channel => {
         const name = channel.name || channel.username || channel.channelName;
-        return name && subscribedChannels.includes(name) && !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name);
+        return name && subscribedChannels.includes(name) && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(name);
       })
       .sort((a, b) => Number(b.subscribedAt || 0) - Number(a.subscribedAt || 0))
       .slice(0, 6);
