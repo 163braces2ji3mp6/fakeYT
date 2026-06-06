@@ -174,6 +174,7 @@ const shuffleArray = (array) => {
 
 const CATEGORIES = ['全部', '音樂', '娛樂', '遊戲', 'VLOG'];
 const UPLOAD_CATEGORIES = ['未分類', '音樂', '娛樂', '遊戲', 'VLOG'];
+const LEGACY_DEFAULT_SUBSCRIPTIONS = ['我的 YouTube 頻道', '小葉']; // 舊版預設訂閱，現在不再自動加入
 
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
@@ -671,31 +672,48 @@ const toastTimeoutRef = useRef(null);
 
   const [subscribedChannels, setSubscribedChannels] = useState(() => {
     const savedSubs = localStorage.getItem('leafhub_subscriptions');
-    return savedSubs ? JSON.parse(savedSubs) : ['我的 YouTube 頻道', '小葉'];
-  }); 
+    if (!savedSubs) return [];
 
+    try {
+      const parsed = JSON.parse(savedSubs);
+      if (!Array.isArray(parsed)) return [];
+
+      // 移除舊版自動塞入的「我的 YouTube 頻道」和「小葉」，避免新使用者預設訂閱任何人。
+      const cleaned = parsed.filter(name => !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name));
+      if (cleaned.length !== parsed.length) {
+        localStorage.setItem('leafhub_subscriptions', JSON.stringify(cleaned));
+      }
+      return cleaned;
+    } catch (error) {
+      console.warn('讀取訂閱清單失敗，改為空清單', error);
+      return [];
+    }
+  });
 
   const [subscribedChannelDetails, setSubscribedChannelDetails] = useState(() => {
     const savedDetails = localStorage.getItem('leafhub_subscriptionDetails');
     if (savedDetails) {
       try {
         const parsed = JSON.parse(savedDetails);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter(channel => {
+            const name = channel?.name || channel?.username || channel?.channelName || '';
+            return !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name);
+          });
+
+          if (cleaned.length !== parsed.length) {
+            localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(cleaned));
+          }
+
+          return cleaned;
+        }
       } catch (error) {
-        console.warn('讀取訂閱頻道詳細資料失敗，改用舊版訂閱清單', error);
+        console.warn('讀取訂閱頻道詳細資料失敗，改用空清單', error);
       }
     }
 
-    const savedSubs = localStorage.getItem('leafhub_subscriptions');
-    const names = savedSubs ? JSON.parse(savedSubs) : ['我的 YouTube 頻道', '小葉'];
-    return names.map((name, index) => ({
-      name,
-      username: name,
-      channelName: name,
-      userId: name === '小葉' ? 'shiauye_official' : '',
-      avatar: name === '小葉' ? avatarImage : GUEST_AVATAR,
-      subscribedAt: Date.now() - ((names.length - index) * 1000)
-    }));
+    // 沒有任何真實訂閱時，不建立「我的 YouTube 頻道」或「小葉」預設資料。
+    return [];
   });
 
   const [watchHistory, setWatchHistory] = useState(() => {
@@ -1922,6 +1940,8 @@ useEffect(() => {
   };
 
   const toggleSubscribe = async (channelName) => {
+    if (!channelName || LEGACY_DEFAULT_SUBSCRIPTIONS.includes(channelName)) return;
+
     const isCurrentlySubbed = subscribedChannels.includes(channelName);
 
     const channelInfo =
@@ -2735,7 +2755,10 @@ useEffect(() => {
     });
 
     return Array.from(detailMap.values())
-      .filter(channel => subscribedChannels.includes(channel.name || channel.username || channel.channelName))
+      .filter(channel => {
+        const name = channel.name || channel.username || channel.channelName;
+        return name && subscribedChannels.includes(name) && !LEGACY_DEFAULT_SUBSCRIPTIONS.includes(name);
+      })
       .sort((a, b) => Number(b.subscribedAt || 0) - Number(a.subscribedAt || 0))
       .slice(0, 6);
   };
@@ -2913,6 +2936,7 @@ useEffect(() => {
               <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => setCurrentView('liked')}>🔥 喜歡的影片</button>
             </div>
 
+            {getSortedSubscribedChannelDetails().length > 0 && (
             <div
               className="sidebar-subscriptions-panel"
               style={{
@@ -2963,6 +2987,7 @@ useEffect(() => {
                 )}
               </div>
             </div>
+            )}
           </aside>
         )}
 
