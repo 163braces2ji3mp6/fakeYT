@@ -1204,17 +1204,26 @@ const toastTimeoutRef = useRef(null);
     );
 
     try {
-      const idDocRef = doc(db, 'Channels', currentUserId);
-      const oldNameDocRef = doc(db, 'Channels', oldUsername);
+      // 頻道名稱和 ID 分開：改頻道名稱時，先用 currentUserId 找到原本的 Channels 文件。
+      // 如果文件 ID 不是 currentUserId，就用 userId 欄位查回真正的文件。
+      let channelDocRef = doc(db, 'Channels', currentUserId);
+      let channelDocSnap = await getDoc(channelDocRef);
 
-      // 🟢 關鍵修正：改名時訂閱數一定優先從 Channels/{userId} 讀
-      // 舊版 Channels/{username} 只當 fallback，避免舊名字文件 subscriberCount = 0 把正確訂閱數覆蓋掉
-      const idDocSnap = await getDoc(idDocRef);
-      const oldNameDocSnap = await getDoc(oldNameDocRef);
+      if (!channelDocSnap.exists()) {
+        const userIdQuery = query(
+          collection(db, 'Channels'),
+          where('userId', '==', currentUserId)
+        );
+        const userIdSnapshot = await getDocs(userIdQuery);
 
-      const idChannelData = idDocSnap.exists() ? idDocSnap.data() : {};
-      const oldNameChannelData = oldNameDocSnap.exists() ? oldNameDocSnap.data() : {};
-      const baseChannelData = idDocSnap.exists() ? idChannelData : oldNameChannelData;
+        if (!userIdSnapshot.empty) {
+          const matchedDoc = userIdSnapshot.docs[0];
+          channelDocRef = doc(db, 'Channels', matchedDoc.id);
+          channelDocSnap = await getDoc(channelDocRef);
+        }
+      }
+
+      const channelData = channelDocSnap.exists() ? channelDocSnap.data() : {};
 
       const getSafeSubscriberCount = (...values) => {
         for (const value of values) {
@@ -1227,51 +1236,43 @@ const toastTimeoutRef = useRef(null);
       };
 
       const preservedSubscriberCount = getSafeSubscriberCount(
-        idChannelData.subscriberCount,
-        idChannelData.subscribers,
-        idChannelData.subsCount,
-        oldNameChannelData.subscriberCount,
-        oldNameChannelData.subscribers,
-        oldNameChannelData.subsCount,
+        channelData.subscriberCount,
+        channelData.subscribers,
+        channelData.subsCount,
         liveSubscriberCount,
         0
       );
 
+      const hasUserIdField = Object.prototype.hasOwnProperty.call(channelData, 'userId');
+      const hasCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(channelData, 'canonicalChannelId');
+      const stableUserId = channelData.userId || currentUserId;
+
       const channelPayload = {
-        ...baseChannelData,
+        ...channelData,
+        // 只改頻道名稱，不改 ID。
+        ...(hasUserIdField ? { userId: stableUserId } : {}),
+        ...(hasCanonicalChannelIdField ? { canonicalChannelId: channelData.canonicalChannelId || stableUserId } : {}),
         name: newUsername,
         username: newUsername,
         channelName: newUsername,
         avatar: avatarUrl,
-        userId: currentUserId,
         subscriberCount: preservedSubscriberCount,
         subscribers: deleteField(),
         subsCount: deleteField(),
         updatedAt: new Date().toISOString()
       };
 
-      // 🟢 新資料只寫入 Channels/{userId}
-      await setDoc(idDocRef, channelPayload, { merge: true });
+      await setDoc(channelDocRef, channelPayload, { merge: true });
 
       await syncCurrentUserProfileEverywhere({
         avatarUrl,
         fromName: oldUsername,
-        fromUserId: currentUserId,
+        fromUserId: stableUserId,
         toName: newUsername,
-        toUserId: currentUserId,
+        toUserId: stableUserId,
         subscriberCount: preservedSubscriberCount,
         rename: !isSameUsername
       });
-
-      // 🟡 先保留舊版 Channels/{username} 文件，不刪除。
-      // 舊文件會繼續當 fallback；確認遷移穩定後再手動清理。
-      // if (
-      //   !isSameUsername &&
-      //   oldNameDocSnap.exists() &&
-      //   String(oldNameDocRef.id) !== String(currentUserId)
-      // ) {
-      //   await deleteDoc(oldNameDocRef);
-      // }
 
       setCurrentUserAvatar(avatarUrl);
       setLiveSubscriberCount(preservedSubscriberCount);
@@ -1279,15 +1280,17 @@ const toastTimeoutRef = useRef(null);
       setTargetChannel(prev =>
         prev && (
           prev.name === oldUsername ||
+          prev.userId === stableUserId ||
           prev.userId === currentUserId
         )
           ? {
               ...prev,
+              // 只改頻道名稱，不改 ID。
               name: newUsername,
               username: newUsername,
               channelName: newUsername,
               avatar: avatarUrl,
-              userId: currentUserId,
+              userId: prev.userId || stableUserId,
               subscriberCount: preservedSubscriberCount
             }
           : prev
@@ -1298,7 +1301,7 @@ const toastTimeoutRef = useRef(null);
 
       localStorage.setItem('device_user_name', newUsername);
       localStorage.setItem('device_user_avatar', avatarUrl);
-      localStorage.setItem('device_user_id', currentUserId);
+      localStorage.setItem('device_user_id', stableUserId);
 
       setSubscribedChannels(prev => {
         const nextSubs = prev.map(name =>
@@ -1309,7 +1312,7 @@ const toastTimeoutRef = useRef(null);
       });
 
       showToast(
-        isSameUsername ? '頭貼已更新！' : '帳號名稱與頭貼已同步更新！',
+        isSameUsername ? '頭貼已更新！' : '頻道名稱與頭貼已同步更新！',
         'success',
         () => {
           setIsPageLoading(false);
@@ -1321,15 +1324,6 @@ const toastTimeoutRef = useRef(null);
       showToast('更新失敗，請稍後再試', 'error');
       setIsPageLoading(false);
     }
-  };
-
-
-  const hashPasswordText = async (password) => {
-    const encoded = new TextEncoder().encode(String(password));
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map(byte => byte.toString(16).padStart(2, '0'))
-      .join('');
   };
 
   const handleIdLoginSubmit = async (e) => {
@@ -1564,7 +1558,7 @@ const toastTimeoutRef = useRef(null);
 
       const oldData = currentChannelSnap.exists() ? currentChannelSnap.data() : {};
 
-      // 這是頻道顯示名稱，絕對不要用 cleanNewId 覆蓋。
+      // 頻道顯示名稱，絕對不要用 cleanNewId 覆蓋。
       const displayName =
         oldData.name ||
         oldData.username ||
@@ -1582,15 +1576,15 @@ const toastTimeoutRef = useRef(null);
         0
       );
 
-      const hadUserIdField = Object.prototype.hasOwnProperty.call(oldData, 'userId');
-      const hadCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(oldData, 'canonicalChannelId');
+      const hasUserIdField = Object.prototype.hasOwnProperty.call(oldData, 'userId');
+      const hasCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(oldData, 'canonicalChannelId');
 
       const channelUpdates = {
         ...oldData,
         // 只改 ID，不改頻道名稱。
         // 如果舊資料本來沒有 userId / canonicalChannelId 欄位，就不要新增這些欄位。
-        ...(hadUserIdField ? { userId: cleanNewId } : {}),
-        ...(hadCanonicalChannelIdField ? { canonicalChannelId: cleanNewId } : {}),
+        ...(hasUserIdField ? { userId: cleanNewId } : {}),
+        ...(hasCanonicalChannelIdField ? { canonicalChannelId: cleanNewId } : {}),
         name: oldData.name || displayName,
         username: oldData.username || displayName,
         channelName: oldData.channelName || displayName,
