@@ -1,5 +1,7 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore"; // 確保有引入這個
+import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyBgu4wWGy6KjcKWIetMEbnA1SQbZlyrklg",
@@ -16,5 +18,5 @@ const app = initializeApp(firebaseConfig);
 
 // 關鍵在這裡：定義 db 並記得 export 出去！
 const db = getFirestore(app);
-
+export const auth = getAuth(app);
 export { db };

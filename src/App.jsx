@@ -11,8 +11,16 @@ import {
   toggleChannelSubscription,
   formatTimeAgo
 } from './firebaseService';
+import {
+  signInAnonymously,
+  onAuthStateChanged,
+  EmailAuthProvider,
+  linkWithCredential,
+  updateProfile,
+  updatePassword
+} from 'firebase/auth';
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
-import { db } from './firebase'; 
+import { db, auth } from './firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
@@ -176,7 +184,6 @@ const UPLOAD_CATEGORIES = ['未分類', '音樂', '娛樂', '遊戲', 'VLOG'];
 const INVALID_LEGACY_SUBSCRIPTION_CHANNELS = ['我的 YouTube 頻道'];
 // 舊版曾經預設塞入的訂閱；只用來清理「完全沒有詳細資料」的舊預設狀態。
 const LEGACY_DEFAULT_SUBSCRIPTIONS = ['我的 YouTube 頻道', '小葉'];
-
 function formatViews(views) {
   if (views === undefined || views === null) return '0次';
   if (typeof views === 'string') return views; 
@@ -282,6 +289,11 @@ export default function App() {
     show: false,
     message: '',
     type: 'success'
+  });
+  const [isIdLoginModalOpen, setIsIdLoginModalOpen] = useState(false);
+  const [loginIdInput, setLoginIdInput] = useState('');
+  const [isIdLoggedIn, setIsIdLoggedIn] = useState(() => {
+    return localStorage.getItem('leafhub_is_id_logged_in') === 'true';
   });
   const migrateChannelAvatars = async () => {
   try {
@@ -768,6 +780,16 @@ const toastTimeoutRef = useRef(null);
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [newVideoCategory, setNewVideoCategory] = useState('未分類'); 
   const [isAnalyzing, setIsAnalyzing] = useState(false); 
+  const [authUser, setAuthUser] = useState(null);
+  const [isSetPasswordModalOpen, setIsSetPasswordModalOpen] = useState(false);
+  const [passwordEmail, setPasswordEmail] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [isChangeIdModalOpen, setIsChangeIdModalOpen] = useState(false);
+  const [newIdInput, setNewIdInput] = useState('');
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
 
   const [comments, setComments] = useState([]);
   const [newCommentInput, setNewCommentInput] = useState('');
@@ -932,22 +954,30 @@ const toastTimeoutRef = useRef(null);
       setLiveSubscriberCount(nextSubscriberCount);
       setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
 
-      if (currentView === 'channel') {
-        setTargetChannel(prev => {
-          const prevName = String(prev?.name || prev?.username || prev?.channelName || '').trim();
-          const prevId = String(prev?.userId || '').trim();
-          const stillSameTarget =
-            (!prevId || !activeId || prevId === activeId) &&
-            (!prevName || !activeName || prevName === activeName);
+      // 修正播放頁訂閱數：Firebase 讀到正確頻道資料後，同步更新 selectedVideo
+      if (currentView === 'watch') {
+        setSelectedVideo(prev => {
+          if (!prev) return prev;
 
-          if (!stillSameTarget) return prev;
+          const prevChannelName = String(prev.channel || prev.author || prev.creatorName || prev.username || '').trim();
+          const prevUserId = String(prev.userId || '').trim();
+
+          const activeName = String(activeChannelInfo.name || activeChannelInfo.username || activeChannelInfo.channelName || '').trim();
+          const activeUserId = String(activeChannelInfo.userId || '').trim();
+
+          const sameChannel =
+            (prevUserId && activeUserId && prevUserId === activeUserId) ||
+            (prevChannelName && activeName && prevChannelName === activeName);
+
+          if (!sameChannel) return prev;
 
           return {
             ...prev,
-            ...channelData,
+            userId: channelData.userId || prev.userId,
             subscriberCount: nextSubscriberCount,
-            name: channelData.name || prev?.name || activeChannelInfo.name,
-            avatar: channelData.avatar || prev?.avatar || activeChannelInfo.avatar || GUEST_AVATAR
+            avatar: channelData.avatar || prev.avatar,
+            creatorAvatar: channelData.avatar || prev.creatorAvatar,
+            channelAvatar: channelData.avatar || prev.channelAvatar
           };
         });
       }
@@ -1288,6 +1318,291 @@ const toastTimeoutRef = useRef(null);
     }
   };
 
+  const handleIdLoginSubmit = async (e) => {
+  e.preventDefault();
+
+  const cleanId = loginIdInput.trim();
+
+  if (!cleanId) {
+    showToast('請輸入 ID', 'warning');
+    return;
+  }
+
+  if (cleanId.includes('/')) {
+    showToast('ID 不能包含 / 符號', 'error');
+    return;
+  }
+
+  try {
+    const channelRef = doc(db, 'Channels', cleanId);
+    const channelSnap = await getDoc(channelRef);
+
+    const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+
+    const avatarUrl =
+      oldChannelData.avatar ||
+      currentUserAvatar ||
+      GUEST_AVATAR;
+
+    const oldSubscriberCount = Number(
+      oldChannelData.subscriberCount ??
+      oldChannelData.subscribers ??
+      oldChannelData.subsCount ??
+      0
+    );
+
+    // 重點：
+    // 如果 Channels/{cleanId} 已存在，就直接覆蓋這個舊文件裡的 userId。
+    // 不建立 user_xxxx 新文件。
+    await setDoc(channelRef, {
+      ...oldChannelData,
+      userId: cleanId,
+      name: oldChannelData.name || cleanId,
+      username: oldChannelData.username || cleanId,
+      channelName: oldChannelData.channelName || cleanId,
+      avatar: avatarUrl,
+      subscriberCount: oldSubscriberCount,
+      updatedAt: new Date().toISOString(),
+      createdAt: oldChannelData.createdAt || new Date().toISOString()
+    }, { merge: true });
+
+    setCurrentUserId(cleanId);
+    setLocalUsername(oldChannelData.name || cleanId);
+    setInputUsername(oldChannelData.name || cleanId);
+    setCurrentUserAvatar(avatarUrl);
+    setLiveSubscriberCount(oldSubscriberCount);
+
+    localStorage.setItem('device_user_id', cleanId);
+    localStorage.setItem('device_user_name', oldChannelData.name || cleanId);
+    localStorage.setItem('device_user_avatar', avatarUrl);
+
+    setTargetChannel({
+      userId: cleanId,
+      name: oldChannelData.name || cleanId,
+      username: oldChannelData.username || oldChannelData.name || cleanId,
+      channelName: oldChannelData.channelName || oldChannelData.name || cleanId,
+      avatar: avatarUrl,
+      bio: oldChannelData.bio || getRandomBio(),
+      subscriberCount: oldSubscriberCount
+    });
+
+    setTargetChannelUserId(cleanId);
+
+    setIsIdLoggedIn(true);
+    localStorage.setItem('leafhub_is_id_logged_in', 'true');
+
+    setIsIdLoginModalOpen(false);
+    setLoginIdInput('');
+
+    showToast(`已登入 ID：${cleanId}`, 'success');
+  } catch (error) {
+    console.error('ID 登入失敗:', error);
+    showToast('ID 登入失敗，請稍後再試', 'error');
+  }
+};
+
+  const handleLogoutId = () => {
+    localStorage.removeItem('leafhub_is_id_logged_in');
+
+    const randomUser = generateRandomIdentity();
+    const avatarUrl = generateRandomAvatar();
+
+    setIsIdLoggedIn(false);
+    setLocalUsername(randomUser.name);
+    setInputUsername(randomUser.name);
+    setCurrentUserId(randomUser.id);
+    setCurrentUserAvatar(avatarUrl);
+    setLiveSubscriberCount(0);
+
+    localStorage.setItem('device_user_avatar', avatarUrl);
+    localStorage.setItem('device_user_name', randomUser.name);
+    localStorage.setItem('device_user_id', randomUser.id);
+
+    setIsProfileOpen(false);
+    showToast('已登出，已切換成訪客帳號', 'success');
+  };
+
+  const handleChangeIdSubmit = async (e) => {
+    e.preventDefault();
+
+    const cleanNewId = newIdInput.trim();
+
+    if (!cleanNewId) {
+      showToast('請輸入新的 ID', 'warning');
+      return;
+    }
+
+    if (cleanNewId.includes('/')) {
+      showToast('ID 不能包含 / 符號', 'error');
+      return;
+    }
+
+    try {
+      const oldId = currentUserId;
+      const oldName = localUsername;
+
+      const normalizeText = (value) => {
+        return String(value ?? '').trim().toLowerCase();
+      };
+
+      const newIdNormalized = normalizeText(cleanNewId);
+      const oldIdNormalized = normalizeText(oldId);
+      const oldNameNormalized = normalizeText(oldName);
+
+      // 檢查是否有其他頻道已經使用這個 ID。
+      // 不只檢查文件 ID，也檢查 userId / name / username / channelName。
+      const channelsSnapshot = await getDocs(collection(db, 'Channels'));
+
+      const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
+        const data = channelDoc.data();
+
+        const channelDocId = normalizeText(channelDoc.id);
+        const channelUserId = normalizeText(data.userId);
+        const channelName = normalizeText(data.name);
+        const channelUsername = normalizeText(data.username);
+        const channelChannelName = normalizeText(data.channelName);
+
+        const isCurrentAccountChannel =
+          channelDocId === oldIdNormalized ||
+          channelUserId === oldIdNormalized ||
+          channelName === oldNameNormalized ||
+          channelUsername === oldNameNormalized ||
+          channelChannelName === oldNameNormalized;
+
+        if (isCurrentAccountChannel) {
+          return false;
+        }
+
+        return (
+          channelDocId === newIdNormalized ||
+          channelUserId === newIdNormalized ||
+          channelName === newIdNormalized ||
+          channelUsername === newIdNormalized ||
+          channelChannelName === newIdNormalized
+        );
+      });
+
+      if (duplicatedChannel) {
+        showToast('這個 ID 已經有人使用了，請換一個', 'error');
+        return;
+      }
+
+      const oldChannelRef = doc(db, 'Channels', oldId);
+      const oldSnap = await getDoc(oldChannelRef);
+      const oldData = oldSnap.exists() ? oldSnap.data() : {};
+
+      const avatarUrl = oldData.avatar || currentUserAvatar || GUEST_AVATAR;
+      const subscriberCount = Number(
+        oldData.subscriberCount ??
+        oldData.subscribers ??
+        oldData.subsCount ??
+        liveSubscriberCount ??
+        0
+      );
+
+      // 依照目前需求：直接覆蓋目前 Channels/{舊ID} 文件裡面的 userId，不另外建立新文件。
+      await setDoc(oldChannelRef, {
+        ...oldData,
+        userId: cleanNewId,
+        name: cleanNewId,
+        username: cleanNewId,
+        channelName: cleanNewId,
+        avatar: avatarUrl,
+        subscriberCount,
+        updatedAt: new Date().toISOString(),
+        createdAt: oldData.createdAt || new Date().toISOString()
+      }, { merge: true });
+
+      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+
+      for (const videoDoc of videosSnapshot.docs) {
+        const videoData = videoDoc.data();
+        const isMyVideo =
+          String(videoData.userId ?? '') === String(oldId) ||
+          String(videoData.channel ?? '') === String(oldName);
+
+        if (!isMyVideo) continue;
+
+        await setDoc(doc(db, 'Videos', videoDoc.id), {
+          ...videoData,
+          userId: cleanNewId,
+          channel: cleanNewId,
+          creatorName: cleanNewId,
+          username: cleanNewId,
+          channelName: cleanNewId,
+          author: cleanNewId
+        }, { merge: true });
+      }
+
+      setCurrentUserId(cleanNewId);
+      setLocalUsername(cleanNewId);
+      setInputUsername(cleanNewId);
+      setTargetChannelUserId(cleanNewId);
+      setLiveSubscriberCount(subscriberCount);
+
+      setTargetChannel(prev => ({
+        ...prev,
+        userId: cleanNewId,
+        name: cleanNewId,
+        username: cleanNewId,
+        channelName: cleanNewId,
+        avatar: avatarUrl,
+        subscriberCount
+      }));
+
+      localStorage.setItem('device_user_id', cleanNewId);
+      localStorage.setItem('device_user_name', cleanNewId);
+      localStorage.setItem('device_user_avatar', avatarUrl);
+      localStorage.setItem('leafhub_is_id_logged_in', 'true');
+
+      setIsIdLoggedIn(true);
+      setIsChangeIdModalOpen(false);
+      setNewIdInput('');
+
+      showToast(`ID 已修改為：${cleanNewId}`, 'success');
+    } catch (error) {
+      console.error('修改 ID 失敗:', error);
+      showToast('修改 ID 失敗，請稍後再試', 'error');
+    }
+  };
+
+  const handleChangePasswordSubmit = async (e) => {
+    e.preventDefault();
+
+    if (newPasswordInput.length < 6) {
+      showToast('密碼至少需要 6 個字', 'warning');
+      return;
+    }
+
+    if (newPasswordInput !== confirmNewPasswordInput) {
+      showToast('兩次輸入的密碼不一致', 'error');
+      return;
+    }
+
+    try {
+      if (auth.currentUser && !auth.currentUser.isAnonymous) {
+        await updatePassword(auth.currentUser, newPasswordInput);
+      } else {
+        localStorage.setItem(`leafhub_password_${currentUserId}`, newPasswordInput);
+      }
+
+      setIsChangePasswordModalOpen(false);
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
+
+      showToast('密碼已更新', 'success');
+    } catch (error) {
+      console.error('修改密碼失敗:', error);
+
+      if (error.code === 'auth/requires-recent-login') {
+        showToast('需要重新登入後才能修改密碼', 'error');
+      } else if (error.code === 'auth/weak-password') {
+        showToast('密碼太弱，請使用至少 6 個字', 'error');
+      } else {
+        showToast('修改密碼失敗，請稍後再試', 'error');
+      }
+    }
+  };
 
   // 🟢 當點擊隨機換帳號登出時，同步建立一組全新的資料庫對應關係
   const handleRandomizeUser = async () => {
@@ -1338,6 +1653,64 @@ const toastTimeoutRef = useRef(null);
       });
     }
   }, [currentUserAvatar]);
+
+  useEffect(() => {
+    const applyLocalDisplayIdentity = () => {
+      let savedId = localStorage.getItem('device_user_id');
+      let savedName = localStorage.getItem('device_user_name');
+      let savedAvatar = localStorage.getItem('device_user_avatar');
+
+      // 不要把 Firebase Auth 的 uid 顯示成使用者 ID。
+      // 若舊資料把 Firebase uid 存進 device_user_id，且使用者不是手動用 ID 登入，改用顯示名稱或重新建立 user_xxxx。
+      const isManualIdLogin = localStorage.getItem('leafhub_is_id_logged_in') === 'true';
+      const looksLikeFirebaseUid = savedId && /^[A-Za-z0-9]{20,}$/.test(savedId) && !String(savedId).startsWith('user_');
+
+      if (!savedId || savedId === 'loading...' || (looksLikeFirebaseUid && !isManualIdLogin)) {
+        if (savedName && savedName !== '載入中...' && !/^[A-Za-z0-9]{20,}$/.test(savedName)) {
+          savedId = savedName;
+        } else {
+          const randomUser = generateRandomIdentity();
+          savedId = randomUser.id;
+          savedName = randomUser.name;
+        }
+
+        savedAvatar = savedAvatar || generateRandomAvatar();
+
+        localStorage.setItem('device_user_id', savedId);
+        localStorage.setItem('device_user_name', savedName || savedId);
+        localStorage.setItem('device_user_avatar', savedAvatar);
+      }
+
+      setCurrentUserId(savedId);
+      setLocalUsername(savedName || savedId);
+      setInputUsername(savedName || savedId);
+
+      if (savedAvatar) {
+        setCurrentUserAvatar(savedAvatar);
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setAuthUser(user);
+        localStorage.setItem('firebase_auth_uid', user.uid);
+        applyLocalDisplayIdentity();
+        return;
+      }
+
+      try {
+        const result = await signInAnonymously(auth);
+        setAuthUser(result.user);
+        localStorage.setItem('firebase_auth_uid', result.user.uid);
+        applyLocalDisplayIdentity();
+      } catch (error) {
+        console.error('匿名登入失敗:', error);
+        showToast('帳號初始化失敗，請重新整理頁面', 'error');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (
@@ -1630,7 +2003,7 @@ const toastTimeoutRef = useRef(null);
       if (!finalId) {
         finalId = finalName === localUsername
           ? currentUserId
-          : `user_${Math.random().toString(16).substring(2, 6)}`;
+          : finalName;
       }
 
       // 如果前面解出 finalId 後，補讀 Channels/{userId}
@@ -1934,7 +2307,11 @@ useEffect(() => {
     14. Video Actions / 觀看、按讚、訂閱
   ------------------------------ */
   const handleVideoClick = async (video) => {
-    setIsVideoLoading(true); 
+    setIsVideoLoading(true);
+
+    // 先把播放頁訂閱數重設成這支影片自己的，避免沿用上一個頻道
+    setLiveSubscriberCount(Number(video?.subscriberCount ?? 0));
+
     setSelectedVideo(video);
     setCurrentView('watch');
     forceScrollToTop();
@@ -2529,8 +2906,13 @@ useEffect(() => {
   const handleUploadVideo = async (e) => {
     e.preventDefault();
     const ytId = extractYoutubeId(newVideoUrl);
+    
+    if (!auth.currentUser) {
+      showToast('帳號尚未準備完成，請稍後再試', 'warning');
+      return;
+    }
 
-    if (!newVideoTitle.trim() || !ytId) {
+    if (!ytId) {
       showToast('請輸入完整資訊，並確認是有效的 YouTube 網址！', 'error');
       return;
     }
@@ -2599,9 +2981,88 @@ useEffect(() => {
     } finally {
       setIsAnalyzing(false);
     }
+    
+    if (auth.currentUser?.isAnonymous) {
+      setIsSetPasswordModalOpen(true);
+    }
+
   };
 
+  const handleSetPasswordAfterUpload = async (e) => {
+    e.preventDefault();
 
+    if (!auth.currentUser) {
+      showToast('找不到目前帳號，請重新整理頁面', 'error');
+      return;
+    }
+
+    if (!auth.currentUser.isAnonymous) {
+      showToast('這個帳號已經設定過登入方式', 'info');
+      setIsSetPasswordModalOpen(false);
+      return;
+    }
+
+    if (!passwordEmail.trim()) {
+      showToast('請輸入 Email', 'warning');
+      return;
+    }
+
+    if (passwordInput.length < 6) {
+      showToast('密碼至少需要 6 個字', 'warning');
+      return;
+    }
+
+    if (passwordInput !== confirmPasswordInput) {
+      showToast('兩次輸入的密碼不一樣', 'error');
+      return;
+    }
+
+    try {
+      const credential = EmailAuthProvider.credential(
+        passwordEmail.trim(),
+        passwordInput
+      );
+
+      const result = await linkWithCredential(auth.currentUser, credential);
+
+      await updateProfile(result.user, {
+        displayName: localUsername
+      });
+
+      await setDoc(doc(db, 'Channels', result.user.uid), {
+        userId: result.user.uid,
+        name: localUsername,
+        username: localUsername,
+        channelName: localUsername,
+        avatar: unifiedAvatar,
+        subscriberCount: liveSubscriberCount,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setAuthUser(result.user);
+      setCurrentUserId(result.user.uid);
+      localStorage.setItem('device_user_id', result.user.uid);
+
+      setIsSetPasswordModalOpen(false);
+      setPasswordEmail('');
+      setPasswordInput('');
+      setConfirmPasswordInput('');
+
+      showToast('密碼設定成功！下次可以用 Email 登入', 'success');
+    } catch (error) {
+      console.error('設定密碼失敗:', error);
+
+      if (error.code === 'auth/email-already-in-use') {
+        showToast('這個 Email 已經被使用了', 'error');
+      } else if (error.code === 'auth/weak-password') {
+        showToast('密碼太弱，請使用至少 6 個字', 'error');
+      } else if (error.code === 'auth/invalid-email') {
+        showToast('Email 格式錯誤', 'error');
+      } else {
+        showToast('設定密碼失敗，請稍後再試', 'error');
+      }
+    }
+  };
   /* ------------------------------
     18. Render Helpers / 篩選、頭貼、影片卡片
   ------------------------------ */
@@ -2917,7 +3378,7 @@ useEffect(() => {
                     </div>
 
                     <div className="dropdown-email">
-                      @{currentUserId}
+                      @{localUsername && localUsername !== '載入中...' ? localUsername : currentUserId}
                     </div>
                   </div>
                 </div>
@@ -2950,12 +3411,25 @@ useEffect(() => {
                     ⚙️ 帳號設定
                   </button>
 
-                  <button
-                    className="dropdown-item-btn"
-                    onClick={handleRandomizeUser}
-                  >
-                    🚪 隨機換帳號登出
-                  </button>
+                  {isIdLoggedIn ? (
+                    <button
+                      className="dropdown-item-btn"
+                      onClick={handleLogoutId}
+                    >
+                      🚪 登出
+                    </button>
+                  ) : (
+                    <button
+                      className="dropdown-item-btn"
+                      onClick={() => {
+                        setLoginIdInput('');
+                        setIsIdLoginModalOpen(true);
+                        setIsProfileOpen(false);
+                      }}
+                    >
+                      🔑 登入
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -3217,7 +3691,7 @@ useEffect(() => {
                             </div>
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel?.userId || targetChannelUserId} •&nbsp;
+                              @{targetChannel?.name || targetChannel?.username || targetChannel?.channelName || targetChannel?.userId || targetChannelUserId} •&nbsp;
                               {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
@@ -3331,7 +3805,7 @@ useEffect(() => {
                               {selectedVideo.channel || '小葉'}
                             </div>                          
                             <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
-                              {formatSubscribers(selectedVideo?.subscriberCount ?? liveSubscriberCount)} 位訂閱者
+                              {formatSubscribers(Number(selectedVideo?.subscriberCount ?? 0))} 位訂閱者
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
@@ -3619,11 +4093,10 @@ useEffect(() => {
                 <input
                   className="comment-text-input"
                   type="text"
-                  placeholder="請輸入吸引人的影片標題..."
+                  placeholder="請輸入影片標題... (若未輸入為原影片標題)"
                   value={newVideoTitle}
                   onChange={(e) => setNewVideoTitle(e.target.value)}
                   disabled={isAnalyzing}
-                  required
                 />
               </div>
                   
@@ -3746,6 +4219,49 @@ useEffect(() => {
                       >
                         🎲 隨機頭像
                       </button>
+
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewIdInput(currentUserId === 'loading...' ? '' : currentUserId);
+                            setIsChangeIdModalOpen(true);
+                            setIsSettingsModalOpen(false);
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            background: '#272727',
+                            color: '#fff',
+                            fontSize: '14px'
+                          }}
+                        >
+                          🔑 修改 ID
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewPasswordInput('');
+                            setConfirmNewPasswordInput('');
+                            setIsChangePasswordModalOpen(true);
+                            setIsSettingsModalOpen(false);
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            borderRadius: '8px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            background: '#272727',
+                            color: '#fff',
+                            fontSize: '14px'
+                          }}
+                        >
+                          🔐 修改密碼
+                        </button>
+                      </div>
                     </div>
                       
                     {/* 名稱設定 */}
@@ -3800,6 +4316,432 @@ useEffect(() => {
                       >
                         確認儲存
                       </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* ==============================
+              Set Password Modal / 上傳後設定密碼提示
+            ============================== */}
+            {isSetPasswordModalOpen && (
+              <div
+                className="modal-overlay"
+                onClick={() => setIsSetPasswordModalOpen(false)}
+              >
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: '#141414',
+                    border: '1px solid #222',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    width: '450px',
+                    maxWidth: '90%'
+                  }}
+                >
+                  <div
+                    className="modal-header"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '20px'
+                    }}
+                  >
+                    <h2
+                      style={{
+                        color: '#fff',
+                        fontSize: '18px',
+                        margin: 0
+                      }}
+                    >
+                      🔐 要新增帳號密碼嗎？
+                    </h2>
+
+                    <button
+                      className="close-modal-btn"
+                      onClick={() => {
+                        setIsSetPasswordModalOpen(false);
+                        setPasswordEmail('');
+                        setPasswordInput('');
+                        setConfirmPasswordInput('');
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#aaa',
+                        fontSize: '24px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <p
+                    style={{
+                      color: '#aaa',
+                      fontSize: '14px',
+                      lineHeight: '1.6',
+                      marginBottom: '18px'
+                    }}
+                  >
+                    影片已經上傳成功。你可以現在設定 Email 和密碼，
+                    之後就能用同一個帳號登入，不會遺失你的頻道和影片。
+                  </p>
+
+                  <form
+                    onSubmit={handleSetPasswordAfterUpload}
+                    className="modal-body-form"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '16px'
+                    }}
+                  >
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: '#aaa',
+                          fontSize: '14px'
+                        }}
+                      >
+                        Email
+                      </label>
+
+                      <input
+                        className="comment-text-input"
+                        type="email"
+                        placeholder="請輸入 Email..."
+                        value={passwordEmail}
+                        onChange={(e) => setPasswordEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: '#aaa',
+                          fontSize: '14px'
+                        }}
+                      >
+                        設定密碼
+                      </label>
+
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="請輸入密碼，至少 6 個字..."
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: '#aaa',
+                          fontSize: '14px'
+                        }}
+                      >
+                        再次輸入密碼
+                      </label>
+
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="請再次輸入密碼..."
+                        value={confirmPasswordInput}
+                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div
+                      className="modal-footer-actions"
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => {
+                          setIsSetPasswordModalOpen(false);
+                          setPasswordEmail('');
+                          setPasswordInput('');
+                          setConfirmPasswordInput('');
+                        }}
+                      >
+                        先不要
+                      </button>
+
+                      <button
+                        type="submit"
+                        className="comment-submit-btn"
+                        style={{
+                          height: '36px'
+                        }}
+                      >
+                        設定密碼
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            {/* ==============================
+              ID Login Modal / 輸入 ID 登入
+            ============================== */}
+            {isIdLoginModalOpen && (
+              <div
+                className="modal-overlay"
+                onClick={() => setIsIdLoginModalOpen(false)}
+              >
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: '#141414',
+                    border: '1px solid #222',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    width: '450px',
+                    maxWidth: '90%'
+                  }}
+                >
+                  <div
+                    className="modal-header"
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '20px'
+                    }}
+                  >
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>
+                      🔑 輸入 ID 登入
+                    </h2>
+
+                    <button
+                      className="close-modal-btn"
+                      onClick={() => setIsIdLoginModalOpen(false)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#aaa',
+                        fontSize: '24px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <p
+                    style={{
+                      color: '#aaa',
+                      fontSize: '14px',
+                      lineHeight: '1.6',
+                      marginBottom: '18px'
+                    }}
+                  >
+                    請輸入你要使用的 ID。登入後，畫面會直接顯示這個 ID。
+                  </p>
+
+                  <form
+                    onSubmit={handleIdLoginSubmit}
+                    className="modal-body-form"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '16px'
+                    }}
+                  >
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>
+                        使用者 ID
+                      </label>
+
+                      <input
+                        className="comment-text-input"
+                        type="text"
+                        placeholder="例如：user_1234"
+                        value={loginIdInput}
+                        onChange={(e) => setLoginIdInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div
+                      className="modal-footer-actions"
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => {
+                          setIsIdLoginModalOpen(false);
+                          setLoginIdInput('');
+                        }}
+                      >
+                        取消
+                      </button>
+
+                      <button
+                        type="submit"
+                        className="comment-submit-btn"
+                        style={{ height: '36px' }}
+                      >
+                        登入
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+
+            {/* ==============================
+              Change ID Modal / 修改 ID
+            ============================== */}
+            {isChangeIdModalOpen && (
+              <div className="modal-overlay" onClick={() => setIsChangeIdModalOpen(false)}>
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
+                >
+                  <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔑 修改 ID</h2>
+                    <button className="close-modal-btn" onClick={() => setIsChangeIdModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  </div>
+
+                  <form onSubmit={handleChangeIdSubmit} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>新 ID</label>
+                      <input
+                        className="comment-text-input"
+                        type="text"
+                        placeholder="請輸入新的 ID..."
+                        value={newIdInput}
+                        onChange={(e) => setNewIdInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => {
+                          setIsChangeIdModalOpen(false);
+                          setNewIdInput('');
+                        }}
+                      >
+                        取消
+                      </button>
+                      <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認修改</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* ==============================
+              Change Password Modal / 修改密碼
+            ============================== */}
+            {isChangePasswordModalOpen && (
+              <div className="modal-overlay" onClick={() => setIsChangePasswordModalOpen(false)}>
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
+                >
+                  <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔐 修改密碼</h2>
+                    <button className="close-modal-btn" onClick={() => setIsChangePasswordModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  </div>
+
+                  <form onSubmit={handleChangePasswordSubmit} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>新密碼</label>
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="請輸入新密碼，至少 6 個字..."
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>再次輸入新密碼</label>
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="請再次輸入新密碼..."
+                        value={confirmNewPasswordInput}
+                        onChange={(e) => setConfirmNewPasswordInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        onClick={() => {
+                          setIsChangePasswordModalOpen(false);
+                          setNewPasswordInput('');
+                          setConfirmNewPasswordInput('');
+                        }}
+                      >
+                        取消
+                      </button>
+                      <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認修改</button>
                     </div>
                   </form>
                 </div>
