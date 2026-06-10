@@ -797,7 +797,6 @@ const toastTimeoutRef = useRef(null);
   const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
 
   const [comments, setComments] = useState([]);
-  const [channelSubscriberCounts, setChannelSubscriberCounts] = useState({});
   const [newCommentInput, setNewCommentInput] = useState('');
   
   const [isCommentsLoading, setIsCommentsLoading] = useState(true);
@@ -811,46 +810,6 @@ const toastTimeoutRef = useRef(null);
   useEffect(() => {
   setPreviewAvatar(unifiedAvatar);
   }, [currentUserAvatar]);
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'Channels'), (snapshot) => {
-      const nextCounts = {};
-
-      snapshot.docs.forEach(channelDoc => {
-        const data = channelDoc.data() || {};
-        const count = Number(
-          data.subscriberCount ??
-          data.subscribers ??
-          data.subsCount ??
-          0
-        );
-
-        const keys = [
-          channelDoc.id,
-          data.userId,
-          data.canonicalChannelId,
-          data.name,
-          data.username,
-          data.channelName
-        ];
-
-        keys.forEach(key => {
-          const cleanKey = String(key ?? '').trim();
-          if (cleanKey) {
-            nextCounts[cleanKey] = count;
-          }
-        });
-      });
-
-      // channelSubscriberCountsRefreshedAt：只是避免之後誤刪這個 listener 的標記。
-      nextCounts.channelSubscriberCountsRefreshedAt = Date.now();
-      setChannelSubscriberCounts(nextCounts);
-    }, (error) => {
-      console.error('訂閱數快取同步失敗:', error);
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   /* ------------------------------
     08. Account Helpers / 帳號與名稱檢查
@@ -987,18 +946,16 @@ const toastTimeoutRef = useRef(null);
       const activeId = String(activeChannelInfo.userId || '').trim();
       const dataId = String(channelData.userId || '').trim();
 
-      const hasReliableId = Boolean(activeId && dataId);
-      const hasReliableName = Boolean(activeName && dataName);
-      const idMatches = hasReliableId && activeId === dataId;
-      const nameMatches = hasReliableName && activeName === dataName;
+      const idMatches = activeId && dataId ? activeId === dataId : true;
+      const nameMatches = activeName && dataName ? activeName === dataName : true;
+      const hasAnyReliableMatch =
+        (activeId && dataId && idMatches) ||
+        (activeName && dataName && nameMatches) ||
+        (!dataId && !dataName);
 
-      // ID 和頻道名稱已分開，且頻道名稱可以重複。
-      // 只要 ID 對上就採用；沒有 ID 時才用名稱 fallback。
-      const hasAnyReliableMatch = idMatches || (!hasReliableId && nameMatches) || (!dataId && !dataName);
+      if (!idMatches || !nameMatches || !hasAnyReliableMatch) return;
 
-      if (!hasAnyReliableMatch) return;
-
-      const nextSubscriberCount = getLiveSubscriberCountForChannel(channelData);
+      const nextSubscriberCount = Number(channelData.subscriberCount ?? 0);
       setLiveSubscriberCount(nextSubscriberCount);
       setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
 
@@ -1437,9 +1394,14 @@ const toastTimeoutRef = useRef(null);
       0
     );
 
+    const {
+      userId: _loginRemovedUserId,
+      canonicalChannelId: _loginRemovedCanonicalChannelId,
+      ...loginChannelBaseData
+    } = oldChannelData;
+
     await setDoc(channelRef, {
-      ...oldChannelData,
-      userId: cleanId,
+      ...loginChannelBaseData,
       name: oldChannelData.name || cleanId,
       username: oldChannelData.username || cleanId,
       channelName: oldChannelData.channelName || cleanId,
@@ -1447,7 +1409,7 @@ const toastTimeoutRef = useRef(null);
       subscriberCount: oldSubscriberCount,
       updatedAt: new Date().toISOString(),
       createdAt: oldChannelData.createdAt || new Date().toISOString()
-    }, { merge: true });
+    });
 
     setCurrentUserId(cleanId);
     setLocalUsername(oldChannelData.name || cleanId);
@@ -1619,15 +1581,16 @@ const toastTimeoutRef = useRef(null);
         0
       );
 
-      const hasUserIdField = Object.prototype.hasOwnProperty.call(oldData, 'userId');
-      const hasCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(oldData, 'canonicalChannelId');
+      // 不要把 userId / canonicalChannelId 帶到新文件。
+      // 帳號 ID 就是 Channels/{文件ID} 本身，不另外新增 userId 欄位。
+      const {
+        userId: _removedUserId,
+        canonicalChannelId: _removedCanonicalChannelId,
+        ...channelBaseData
+      } = oldData;
 
       const channelUpdates = {
-        ...oldData,
-        // 只改 ID，不改頻道名稱。
-        // 如果舊資料本來沒有 userId / canonicalChannelId 欄位，就不要新增這些欄位。
-        ...(hasUserIdField ? { userId: cleanNewId } : {}),
-        ...(hasCanonicalChannelIdField ? { canonicalChannelId: cleanNewId } : {}),
+        ...channelBaseData,
         name: oldData.name || displayName,
         username: oldData.username || displayName,
         channelName: oldData.channelName || displayName,
@@ -1655,7 +1618,7 @@ const toastTimeoutRef = useRef(null);
       // Firestore 文件 ID 不能直接改名，所以用「建立新 ID 文件 → 刪除舊文件」模擬改名。
       // 最後只會留下 Channels/{新ID} 這份頻道文件。
       const newChannelRef = doc(db, 'Channels', cleanNewId);
-      await setDoc(newChannelRef, channelUpdates, { merge: true });
+      await setDoc(newChannelRef, channelUpdates);
 
       if (currentDocId !== cleanNewId) {
         await deleteDoc(currentChannelRef);
@@ -2477,10 +2440,7 @@ useEffect(() => {
     // 先把播放頁訂閱數重設成這支影片自己的，避免沿用上一個頻道
     setLiveSubscriberCount(Number(video?.subscriberCount ?? 0));
 
-    setSelectedVideo({
-      ...video,
-      subscriberCount: getLiveSubscriberCountForChannel(video)
-    });
+    setSelectedVideo(video);
     setCurrentView('watch');
     forceScrollToTop();
 
@@ -3432,44 +3392,33 @@ useEffect(() => {
   };
 
 
-  const getLiveSubscriberCountForChannel = (info = {}) => {
-    const keys = [
-      info.userId,
-      info.id,
-      info.canonicalChannelId,
-      info.channelId,
-      info.name,
-      info.username,
-      info.channelName,
-      info.channel,
-      info.author,
-      info.creatorName
-    ];
+  const getTargetChannelSubscriberCount = () => {
+    const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
+    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
+    const isOwnChannel =
+      String(channelUserId || '') === String(currentUserId || '') ||
+      String(channelName || '') === String(localUsername || '');
 
-    for (const key of keys) {
-      const cleanKey = String(key ?? '').trim();
-      if (cleanKey && channelSubscriberCounts[cleanKey] !== undefined) {
-        return Number(channelSubscriberCounts[cleanKey] ?? 0);
-      }
+    if (isOwnChannel) {
+      return Number(targetChannel?.subscriberCount ?? liveSubscriberCount ?? 0);
     }
 
+    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
+      return (
+        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+        String(video.channel ?? '') === String(channelName) ||
+        String(video.author ?? '') === String(channelName) ||
+        String(video.creatorName ?? '') === String(channelName) ||
+        String(video.username ?? '') === String(channelName)
+      );
+    });
+
+    // 別人的頻道永遠不 fallback 到 liveSubscriberCount，避免沿用上一個頻道的訂閱數。
     return Number(
-      info.subscriberCount ??
-      info.subscribers ??
-      info.subsCount ??
+      targetChannel?.subscriberCount ??
+      matchedVideo?.subscriberCount ??
       0
     );
-  };
-
-  const getTargetChannelSubscriberCount = () => {
-    return getLiveSubscriberCountForChannel({
-      userId: targetChannel?.userId || targetChannelUserId,
-      canonicalChannelId: targetChannel?.canonicalChannelId,
-      name: targetChannel?.name,
-      username: targetChannel?.username,
-      channelName: targetChannel?.channelName,
-      subscriberCount: targetChannel?.subscriberCount
-    });
   };
 
 
@@ -3997,7 +3946,7 @@ useEffect(() => {
                               {selectedVideo.channel || '小葉'}
                             </div>                          
                             <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
-                              {formatSubscribers(getLiveSubscriberCountForChannel(selectedVideo))} 位訂閱者
+                              {formatSubscribers(Number(selectedVideo?.subscriberCount ?? 0))} 位訂閱者
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
