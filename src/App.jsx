@@ -1526,6 +1526,39 @@ const toastTimeoutRef = useRef(null);
         }
       }
 
+      // 若舊版資料沒有 userId 欄位、而 currentUserId 又不是文件 ID，
+      // 再用目前頻道名稱找一次，並優先選訂閱數最高的那份，避免改 ID 後訂閱數歸零。
+      if (!currentChannelSnap.exists() && oldName) {
+        const candidateSnapshots = [];
+        const nameFields = ['name', 'username', 'channelName'];
+
+        for (const fieldName of nameFields) {
+          const nameQuery = query(
+            collection(db, 'Channels'),
+            where(fieldName, '==', oldName)
+          );
+          const nameSnapshot = await getDocs(nameQuery);
+          candidateSnapshots.push(...nameSnapshot.docs);
+        }
+
+        if (candidateSnapshots.length > 0) {
+          const uniqueCandidates = Array.from(
+            new Map(candidateSnapshots.map(channelDoc => [channelDoc.id, channelDoc])).values()
+          );
+
+          const bestCandidate = uniqueCandidates.sort((a, b) => {
+            const aData = a.data() || {};
+            const bData = b.data() || {};
+            const aCount = Number(aData.subscriberCount ?? aData.subscribers ?? aData.subsCount ?? 0);
+            const bCount = Number(bData.subscriberCount ?? bData.subscribers ?? bData.subsCount ?? 0);
+            return bCount - aCount;
+          })[0];
+
+          currentChannelRef = doc(db, 'Channels', bestCandidate.id);
+          currentChannelSnap = await getDoc(currentChannelRef);
+        }
+      }
+
       const currentDocId = currentChannelRef.id;
       const currentDocIdNormalized = normalizeText(currentDocId);
 
@@ -1573,11 +1606,20 @@ const toastTimeoutRef = useRef(null);
         oldId;
 
       const avatarUrl = oldData.avatar || currentUserAvatar || GUEST_AVATAR;
-      const subscriberCount = Number(
-        oldData.subscriberCount ??
-        oldData.subscribers ??
-        oldData.subsCount ??
-        liveSubscriberCount ??
+
+      const getSafeSubscriberNumber = (value) => {
+        const num = Number(value);
+        return Number.isNaN(num) ? 0 : num;
+      };
+
+      // 改 ID 時一定保留原訂閱數。
+      // 取所有可能來源的最大值，避免因某個來源是 0 而把正確訂閱數蓋掉。
+      const subscriberCount = Math.max(
+        getSafeSubscriberNumber(oldData.subscriberCount),
+        getSafeSubscriberNumber(oldData.subscribers),
+        getSafeSubscriberNumber(oldData.subsCount),
+        getSafeSubscriberNumber(targetChannel?.subscriberCount),
+        getSafeSubscriberNumber(liveSubscriberCount),
         0
       );
 
@@ -1619,6 +1661,14 @@ const toastTimeoutRef = useRef(null);
       // 最後只會留下 Channels/{新ID} 這份頻道文件。
       const newChannelRef = doc(db, 'Channels', cleanNewId);
       await setDoc(newChannelRef, channelUpdates);
+
+      // 再保險補一次訂閱數，避免任何舊資料/非同步流程把新 ID 文件訂閱數寫成 0。
+      await setDoc(newChannelRef, {
+        subscriberCount,
+        subscribers: deleteField(),
+        subsCount: deleteField(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
 
       if (currentDocId !== cleanNewId) {
         await deleteDoc(currentChannelRef);
