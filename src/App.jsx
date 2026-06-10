@@ -38,10 +38,6 @@ const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
 const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
 
-// ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
-// 只要登入時輸入這組密碼，就可以登入任何已存在的頻道 ID。
-const TEMP_MASTER_LOGIN_PASSWORD = 'leafhub-master-2026';
-
 
 /* ==============================
   03. Asset Helpers / 頭貼與身份判斷工具
@@ -1367,19 +1363,18 @@ const toastTimeoutRef = useRef(null);
     const savedLocalPassword = localStorage.getItem(`leafhub_password_${cleanId}`);
     const savedPasswordHash = oldChannelData.passwordHash || '';
     const legacyPlainPassword = oldChannelData.password || oldChannelData.loginPassword || '';
-    const isUsingMasterPassword = Boolean(TEMP_MASTER_LOGIN_PASSWORD) && cleanPassword === TEMP_MASTER_LOGIN_PASSWORD;
 
-    let isPasswordCorrect = isUsingMasterPassword;
+    let isPasswordCorrect = false;
 
-    if (!isPasswordCorrect && savedPasswordHash) {
+    if (savedPasswordHash) {
       const inputHash = await hashPasswordText(cleanPassword);
       isPasswordCorrect = inputHash === savedPasswordHash;
-    } else if (!isPasswordCorrect && savedLocalPassword) {
+    } else if (savedLocalPassword) {
       isPasswordCorrect = cleanPassword === savedLocalPassword;
-    } else if (!isPasswordCorrect && legacyPlainPassword) {
+    } else if (legacyPlainPassword) {
       isPasswordCorrect = cleanPassword === legacyPlainPassword;
-    } else if (!isPasswordCorrect) {
-      showToast('這個帳號尚未設定密碼，請使用正確密碼或臨時萬能密碼', 'error');
+    } else {
+      showToast('這個帳號尚未設定密碼，請先用原本裝置設定密碼', 'error');
       return;
     }
 
@@ -1441,7 +1436,7 @@ const toastTimeoutRef = useRef(null);
     setLoginIdInput('');
     setLoginPasswordInput('');
 
-    showToast(isUsingMasterPassword ? `已用臨時萬能密碼登入：${cleanId}` : `已登入 ID：${cleanId}`, 'success');
+    showToast(`已登入 ID：${cleanId}`, 'success');
   } catch (error) {
     console.error('ID 登入失敗:', error);
     showToast('ID 登入失敗，請稍後再試', 'error');
@@ -1473,6 +1468,7 @@ const toastTimeoutRef = useRef(null);
     e.preventDefault();
 
     const cleanNewId = newIdInput.trim();
+    const wantsPasswordChange = Boolean(newPasswordInput || confirmNewPasswordInput);
 
     if (!cleanNewId) {
       showToast('請輸入新的 ID', 'warning');
@@ -1482,6 +1478,18 @@ const toastTimeoutRef = useRef(null);
     if (cleanNewId.includes('/')) {
       showToast('ID 不能包含 / 符號', 'error');
       return;
+    }
+
+    if (wantsPasswordChange) {
+      if (newPasswordInput.length < 6) {
+        showToast('密碼至少需要 6 個字', 'warning');
+        return;
+      }
+
+      if (newPasswordInput !== confirmNewPasswordInput) {
+        showToast('兩次輸入的密碼不一致', 'error');
+        return;
+      }
     }
 
     try {
@@ -1547,8 +1555,7 @@ const toastTimeoutRef = useRef(null);
         0
       );
 
-      // 依照目前需求：直接覆蓋目前 Channels/{舊ID} 文件裡面的 userId，不另外建立新文件。
-      await setDoc(oldChannelRef, {
+      const channelUpdates = {
         ...oldData,
         userId: cleanNewId,
         name: cleanNewId,
@@ -1558,7 +1565,22 @@ const toastTimeoutRef = useRef(null);
         subscriberCount,
         updatedAt: new Date().toISOString(),
         createdAt: oldData.createdAt || new Date().toISOString()
-      }, { merge: true });
+      };
+
+      if (wantsPasswordChange) {
+        const passwordHash = await hashPasswordText(newPasswordInput);
+        channelUpdates.passwordHash = passwordHash;
+        channelUpdates.passwordUpdatedAt = new Date().toISOString();
+
+        if (auth.currentUser && !auth.currentUser.isAnonymous) {
+          await updatePassword(auth.currentUser, newPasswordInput);
+        }
+
+        localStorage.setItem(`leafhub_password_${cleanNewId}`, newPasswordInput);
+      }
+
+      // 依照目前需求：直接覆蓋目前 Channels/{舊ID} 文件裡面的 userId，不另外建立新文件。
+      await setDoc(oldChannelRef, channelUpdates, { merge: true });
 
       const videosSnapshot = await getDocs(collection(db, 'Videos'));
 
@@ -1605,11 +1627,24 @@ const toastTimeoutRef = useRef(null);
       setIsIdLoggedIn(true);
       setIsChangeIdModalOpen(false);
       setNewIdInput('');
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
 
-      showToast(`ID 已修改為：${cleanNewId}`, 'success');
+      if (wantsPasswordChange) {
+        showToast(`ID 與密碼已更新：${cleanNewId}`, 'success');
+      } else {
+        showToast(`ID 已修改為：${cleanNewId}`, 'success');
+      }
     } catch (error) {
-      console.error('修改 ID 失敗:', error);
-      showToast('修改 ID 失敗，請稍後再試', 'error');
+      console.error('修改帳號資料失敗:', error);
+
+      if (error.code === 'auth/requires-recent-login') {
+        showToast('需要重新登入後才能修改密碼', 'error');
+      } else if (error.code === 'auth/weak-password') {
+        showToast('密碼太弱，請使用至少 6 個字', 'error');
+      } else {
+        showToast('修改帳號資料失敗，請稍後再試', 'error');
+      }
     }
   };
 
@@ -4277,48 +4312,27 @@ useEffect(() => {
                         🎲 隨機頭像
                       </button>
 
-                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewIdInput(currentUserId === 'loading...' ? '' : currentUserId);
-                            setIsChangeIdModalOpen(true);
-                            setIsSettingsModalOpen(false);
-                          }}
-                          style={{
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            background: '#272727',
-                            color: '#fff',
-                            fontSize: '14px'
-                          }}
-                        >
-                          🔑 修改 ID
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewPasswordInput('');
-                            setConfirmNewPasswordInput('');
-                            setIsChangePasswordModalOpen(true);
-                            setIsSettingsModalOpen(false);
-                          }}
-                          style={{
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            background: '#272727',
-                            color: '#fff',
-                            fontSize: '14px'
-                          }}
-                        >
-                          🔐 修改密碼
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewIdInput(currentUserId === 'loading...' ? '' : currentUserId);
+                          setNewPasswordInput('');
+                          setConfirmNewPasswordInput('');
+                          setIsChangeIdModalOpen(true);
+                          setIsSettingsModalOpen(false);
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: '#272727',
+                          color: '#fff',
+                          fontSize: '14px'
+                        }}
+                      >
+                        🔑 修改 ID / 密碼
+                      </button>
                     </div>
                       
                     {/* 名稱設定 */}
@@ -4724,7 +4738,7 @@ useEffect(() => {
 
 
             {/* ==============================
-              Change ID Modal / 修改 ID
+              Account Edit Modal / 修改 ID 與密碼
             ============================== */}
             {isChangeIdModalOpen && (
               <div className="modal-overlay" onClick={() => setIsChangeIdModalOpen(false)}>
@@ -4734,7 +4748,7 @@ useEffect(() => {
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
                   <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔑 修改 ID</h2>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔑 修改 ID / 密碼</h2>
                     <button className="close-modal-btn" onClick={() => setIsChangeIdModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                   </div>
 
@@ -4751,6 +4765,28 @@ useEffect(() => {
                       />
                     </div>
 
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>新密碼</label>
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="不修改密碼可留空"
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>再次輸入新密碼</label>
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="不修改密碼可留空"
+                        value={confirmNewPasswordInput}
+                        onChange={(e) => setConfirmNewPasswordInput(e.target.value)}
+                      />
+                    </div>
+
                     <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                       <button
                         type="button"
@@ -4758,6 +4794,8 @@ useEffect(() => {
                         onClick={() => {
                           setIsChangeIdModalOpen(false);
                           setNewIdInput('');
+                          setNewPasswordInput('');
+                          setConfirmNewPasswordInput('');
                         }}
                       >
                         取消
