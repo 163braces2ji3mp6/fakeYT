@@ -797,6 +797,7 @@ const toastTimeoutRef = useRef(null);
   const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
 
   const [comments, setComments] = useState([]);
+  const [channelSubscriberCounts, setChannelSubscriberCounts] = useState({});
   const [newCommentInput, setNewCommentInput] = useState('');
   
   const [isCommentsLoading, setIsCommentsLoading] = useState(true);
@@ -811,12 +812,82 @@ const toastTimeoutRef = useRef(null);
   setPreviewAvatar(unifiedAvatar);
   }, [currentUserAvatar]);
 
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'Channels'), (snapshot) => {
+      const nextCounts = {};
+
+      snapshot.docs.forEach(channelDoc => {
+        const data = channelDoc.data() || {};
+        const count = Number(
+          data.subscriberCount ??
+          data.subscribers ??
+          data.subsCount ??
+          0
+        );
+
+        const keys = [
+          channelDoc.id,
+          data.userId,
+          data.canonicalChannelId,
+          data.name,
+          data.username,
+          data.channelName
+        ];
+
+        keys.forEach(key => {
+          const cleanKey = String(key ?? '').trim();
+          if (cleanKey) {
+            nextCounts[cleanKey] = count;
+          }
+        });
+      });
+
+      // channelSubscriberCountsRefreshedAt：只是避免之後誤刪這個 listener 的標記。
+      nextCounts.channelSubscriberCountsRefreshedAt = Date.now();
+      setChannelSubscriberCounts(nextCounts);
+    }, (error) => {
+      console.error('訂閱數快取同步失敗:', error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   /* ------------------------------
     08. Account Helpers / 帳號與名稱檢查
   ------------------------------ */
   // 🟢 名稱查重：新架構 Channels/{userId}，所以不能只用 doc id 查 username
-  // 使用者名稱/頻道名稱可以重複，只有 ID 不能重複。
-  const checkUsernameExists = async () => {
+  const checkUsernameExists = async (username) => {
+    const cleanUsername = String(username ?? '').trim();
+    if (!cleanUsername) return false;
+
+    // 舊資料 fallback：Channels/{username}
+    const legacyRef = doc(db, 'Channels', cleanUsername);
+    const legacySnap = await getDoc(legacyRef);
+    if (
+      legacySnap.exists() &&
+      String(legacySnap.data()?.userId ?? '') !== String(currentUserId ?? '')
+    ) {
+      return true;
+    }
+
+    // 新資料：Channels/{userId}，用欄位查重
+    const fieldsToCheck = ['username', 'name', 'channelName'];
+
+    for (const fieldName of fieldsToCheck) {
+      const usernameQuery = query(
+        collection(db, 'Channels'),
+        where(fieldName, '==', cleanUsername)
+      );
+      const usernameSnapshot = await getDocs(usernameQuery);
+
+      const hasOtherUser = usernameSnapshot.docs.some(channelDoc => {
+        const data = channelDoc.data();
+        return String(data?.userId ?? channelDoc.id) !== String(currentUserId ?? '');
+      });
+
+      if (hasOtherUser) return true;
+    }
+
     return false;
   };
   
@@ -916,16 +987,18 @@ const toastTimeoutRef = useRef(null);
       const activeId = String(activeChannelInfo.userId || '').trim();
       const dataId = String(channelData.userId || '').trim();
 
-      const idMatches = activeId && dataId ? activeId === dataId : true;
-      const nameMatches = activeName && dataName ? activeName === dataName : true;
-      const hasAnyReliableMatch =
-        (activeId && dataId && idMatches) ||
-        (activeName && dataName && nameMatches) ||
-        (!dataId && !dataName);
+      const hasReliableId = Boolean(activeId && dataId);
+      const hasReliableName = Boolean(activeName && dataName);
+      const idMatches = hasReliableId && activeId === dataId;
+      const nameMatches = hasReliableName && activeName === dataName;
 
-      if (!idMatches || !nameMatches || !hasAnyReliableMatch) return;
+      // ID 和頻道名稱已分開，且頻道名稱可以重複。
+      // 只要 ID 對上就採用；沒有 ID 時才用名稱 fallback。
+      const hasAnyReliableMatch = idMatches || (!hasReliableId && nameMatches) || (!dataId && !dataName);
 
-      const nextSubscriberCount = Number(channelData.subscriberCount ?? 0);
+      if (!hasAnyReliableMatch) return;
+
+      const nextSubscriberCount = getLiveSubscriberCountForChannel(channelData);
       setLiveSubscriberCount(nextSubscriberCount);
       setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
 
@@ -1494,7 +1567,8 @@ const toastTimeoutRef = useRef(null);
       const currentDocId = currentChannelRef.id;
       const currentDocIdNormalized = normalizeText(currentDocId);
 
-      // 只有 ID 需要唯一；頻道名稱可以重複，所以不檢查 name / username / channelName。
+      // 檢查是否有其他頻道已經使用這個 ID。
+      // 只檢查「ID 欄位」相關資料，不檢查 name / username / channelName。
       const channelsSnapshot = await getDocs(collection(db, 'Channels'));
 
       const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
@@ -2403,7 +2477,10 @@ useEffect(() => {
     // 先把播放頁訂閱數重設成這支影片自己的，避免沿用上一個頻道
     setLiveSubscriberCount(Number(video?.subscriberCount ?? 0));
 
-    setSelectedVideo(video);
+    setSelectedVideo({
+      ...video,
+      subscriberCount: getLiveSubscriberCountForChannel(video)
+    });
     setCurrentView('watch');
     forceScrollToTop();
 
@@ -3355,33 +3432,44 @@ useEffect(() => {
   };
 
 
-  const getTargetChannelSubscriberCount = () => {
-    const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
-    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
-    const isOwnChannel =
-      String(channelUserId || '') === String(currentUserId || '') ||
-      String(channelName || '') === String(localUsername || '');
+  const getLiveSubscriberCountForChannel = (info = {}) => {
+    const keys = [
+      info.userId,
+      info.id,
+      info.canonicalChannelId,
+      info.channelId,
+      info.name,
+      info.username,
+      info.channelName,
+      info.channel,
+      info.author,
+      info.creatorName
+    ];
 
-    if (isOwnChannel) {
-      return Number(targetChannel?.subscriberCount ?? liveSubscriberCount ?? 0);
+    for (const key of keys) {
+      const cleanKey = String(key ?? '').trim();
+      if (cleanKey && channelSubscriberCounts[cleanKey] !== undefined) {
+        return Number(channelSubscriberCounts[cleanKey] ?? 0);
+      }
     }
 
-    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
-      return (
-        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
-        String(video.channel ?? '') === String(channelName) ||
-        String(video.author ?? '') === String(channelName) ||
-        String(video.creatorName ?? '') === String(channelName) ||
-        String(video.username ?? '') === String(channelName)
-      );
-    });
-
-    // 別人的頻道永遠不 fallback 到 liveSubscriberCount，避免沿用上一個頻道的訂閱數。
     return Number(
-      targetChannel?.subscriberCount ??
-      matchedVideo?.subscriberCount ??
+      info.subscriberCount ??
+      info.subscribers ??
+      info.subsCount ??
       0
     );
+  };
+
+  const getTargetChannelSubscriberCount = () => {
+    return getLiveSubscriberCountForChannel({
+      userId: targetChannel?.userId || targetChannelUserId,
+      canonicalChannelId: targetChannel?.canonicalChannelId,
+      name: targetChannel?.name,
+      username: targetChannel?.username,
+      channelName: targetChannel?.channelName,
+      subscriberCount: targetChannel?.subscriberCount
+    });
   };
 
 
@@ -3398,26 +3486,6 @@ useEffect(() => {
     }
 
     return value || name || 'guest';
-  };
-
-  const getTargetChannelIdForDisplay = () => {
-    const id = String(targetChannel?.userId || targetChannelUserId || '').trim();
-    const fallbackName = String(
-      targetChannel?.name ||
-      targetChannel?.username ||
-      targetChannel?.channelName ||
-      ''
-    ).trim();
-
-    // 頻道頁 @ 後面要顯示使用者 ID，不要顯示頻道名稱。
-    // 如果拿到 Firebase Auth 的超長 UID，就避免直接顯示，改用 fallback。
-    const looksLikeFirebaseUid = id && /^[A-Za-z0-9]{20,}$/.test(id) && !id.startsWith('user_');
-
-    if (id && !looksLikeFirebaseUid) {
-      return id;
-    }
-
-    return fallbackName || id || 'guest';
   };
 
   const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
@@ -3815,7 +3883,7 @@ useEffect(() => {
                             </div>
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{getTargetChannelIdForDisplay()} •&nbsp;
+                              @{targetChannel?.name || targetChannel?.username || targetChannel?.channelName || targetChannel?.userId || targetChannelUserId} •&nbsp;
                               {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
@@ -3929,7 +3997,7 @@ useEffect(() => {
                               {selectedVideo.channel || '小葉'}
                             </div>                          
                             <div className="channel-subs-count" style={{ color: '#aaa', fontSize: '12px' }}>
-                              {formatSubscribers(Number(selectedVideo?.subscriberCount ?? 0))} 位訂閱者
+                              {formatSubscribers(getLiveSubscriberCountForChannel(selectedVideo))} 位訂閱者
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
