@@ -292,6 +292,7 @@ export default function App() {
   });
   const [isIdLoginModalOpen, setIsIdLoginModalOpen] = useState(false);
   const [loginIdInput, setLoginIdInput] = useState('');
+  const [loginPasswordInput, setLoginPasswordInput] = useState('');
   const [isIdLoggedIn, setIsIdLoggedIn] = useState(() => {
     return localStorage.getItem('leafhub_is_id_logged_in') === 'true';
   });
@@ -1318,13 +1319,28 @@ const toastTimeoutRef = useRef(null);
     }
   };
 
+
+  const hashPasswordText = async (password) => {
+    const encoded = new TextEncoder().encode(String(password));
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map(byte => byte.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
   const handleIdLoginSubmit = async (e) => {
   e.preventDefault();
 
   const cleanId = loginIdInput.trim();
+  const cleanPassword = loginPasswordInput;
 
   if (!cleanId) {
     showToast('請輸入 ID', 'warning');
+    return;
+  }
+
+  if (!cleanPassword) {
+    showToast('請輸入密碼', 'warning');
     return;
   }
 
@@ -1337,7 +1353,35 @@ const toastTimeoutRef = useRef(null);
     const channelRef = doc(db, 'Channels', cleanId);
     const channelSnap = await getDoc(channelRef);
 
-    const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+    if (!channelSnap.exists()) {
+      showToast('找不到這個帳號 ID', 'error');
+      return;
+    }
+
+    const oldChannelData = channelSnap.data() || {};
+
+    const savedLocalPassword = localStorage.getItem(`leafhub_password_${cleanId}`);
+    const savedPasswordHash = oldChannelData.passwordHash || '';
+    const legacyPlainPassword = oldChannelData.password || oldChannelData.loginPassword || '';
+
+    let isPasswordCorrect = false;
+
+    if (savedPasswordHash) {
+      const inputHash = await hashPasswordText(cleanPassword);
+      isPasswordCorrect = inputHash === savedPasswordHash;
+    } else if (savedLocalPassword) {
+      isPasswordCorrect = cleanPassword === savedLocalPassword;
+    } else if (legacyPlainPassword) {
+      isPasswordCorrect = cleanPassword === legacyPlainPassword;
+    } else {
+      showToast('這個帳號尚未設定密碼，請先用原本裝置設定密碼', 'error');
+      return;
+    }
+
+    if (!isPasswordCorrect) {
+      showToast('密碼錯誤，無法登入', 'error');
+      return;
+    }
 
     const avatarUrl =
       oldChannelData.avatar ||
@@ -1351,9 +1395,6 @@ const toastTimeoutRef = useRef(null);
       0
     );
 
-    // 重點：
-    // 如果 Channels/{cleanId} 已存在，就直接覆蓋這個舊文件裡的 userId。
-    // 不建立 user_xxxx 新文件。
     await setDoc(channelRef, {
       ...oldChannelData,
       userId: cleanId,
@@ -1393,6 +1434,7 @@ const toastTimeoutRef = useRef(null);
 
     setIsIdLoginModalOpen(false);
     setLoginIdInput('');
+    setLoginPasswordInput('');
 
     showToast(`已登入 ID：${cleanId}`, 'success');
   } catch (error) {
@@ -1580,11 +1622,20 @@ const toastTimeoutRef = useRef(null);
     }
 
     try {
+      const passwordHash = await hashPasswordText(newPasswordInput);
+
       if (auth.currentUser && !auth.currentUser.isAnonymous) {
         await updatePassword(auth.currentUser, newPasswordInput);
-      } else {
-        localStorage.setItem(`leafhub_password_${currentUserId}`, newPasswordInput);
       }
+
+      await setDoc(doc(db, 'Channels', currentUserId), {
+        passwordHash,
+        passwordUpdatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      // 保留本機密碼，讓目前瀏覽器也能登入舊帳號。
+      localStorage.setItem(`leafhub_password_${currentUserId}`, newPasswordInput);
 
       setIsChangePasswordModalOpen(false);
       setNewPasswordInput('');
@@ -3423,6 +3474,7 @@ useEffect(() => {
                       className="dropdown-item-btn"
                       onClick={() => {
                         setLoginIdInput('');
+                        setLoginPasswordInput('');
                         setIsIdLoginModalOpen(true);
                         setIsProfileOpen(false);
                       }}
@@ -4525,7 +4577,7 @@ useEffect(() => {
             {isIdLoginModalOpen && (
               <div
                 className="modal-overlay"
-                onClick={() => setIsIdLoginModalOpen(false)}
+                onClick={() => { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); }}
               >
                 <div
                   className="upload-modal-window"
@@ -4549,12 +4601,12 @@ useEffect(() => {
                     }}
                   >
                     <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>
-                      🔑 輸入 ID 登入
+                      🔑 帳號登入
                     </h2>
 
                     <button
                       className="close-modal-btn"
-                      onClick={() => setIsIdLoginModalOpen(false)}
+                      onClick={() => { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); }}
                       style={{
                         background: 'transparent',
                         border: 'none',
@@ -4575,7 +4627,7 @@ useEffect(() => {
                       marginBottom: '18px'
                     }}
                   >
-                    請輸入你要使用的 ID。登入後，畫面會直接顯示這個 ID。
+                    請輸入帳號 ID 和密碼，密碼正確才可以登入。
                   </p>
 
                   <form
@@ -4610,6 +4662,28 @@ useEffect(() => {
                     </div>
 
                     <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>
+                        密碼
+                      </label>
+
+                      <input
+                        className="comment-text-input"
+                        type="password"
+                        placeholder="請輸入密碼"
+                        value={loginPasswordInput}
+                        onChange={(e) => setLoginPasswordInput(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div
                       className="modal-footer-actions"
                       style={{
                         display: 'flex',
@@ -4624,6 +4698,7 @@ useEffect(() => {
                         onClick={() => {
                           setIsIdLoginModalOpen(false);
                           setLoginIdInput('');
+                          setLoginPasswordInput('');
                         }}
                       >
                         取消
