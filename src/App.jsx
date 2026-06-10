@@ -38,6 +38,10 @@ const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
 const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
 
+// ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
+// 只要登入時輸入這組密碼，就可以登入任何已存在的頻道 ID。
+const TEMP_MASTER_LOGIN_PASSWORD = 'leafhub-master-2026';
+
 
 /* ==============================
   03. Asset Helpers / 頭貼與身份判斷工具
@@ -1363,18 +1367,19 @@ const toastTimeoutRef = useRef(null);
     const savedLocalPassword = localStorage.getItem(`leafhub_password_${cleanId}`);
     const savedPasswordHash = oldChannelData.passwordHash || '';
     const legacyPlainPassword = oldChannelData.password || oldChannelData.loginPassword || '';
+    const isUsingMasterPassword = Boolean(TEMP_MASTER_LOGIN_PASSWORD) && cleanPassword === TEMP_MASTER_LOGIN_PASSWORD;
 
-    let isPasswordCorrect = false;
+    let isPasswordCorrect = isUsingMasterPassword;
 
-    if (savedPasswordHash) {
+    if (!isPasswordCorrect && savedPasswordHash) {
       const inputHash = await hashPasswordText(cleanPassword);
       isPasswordCorrect = inputHash === savedPasswordHash;
-    } else if (savedLocalPassword) {
+    } else if (!isPasswordCorrect && savedLocalPassword) {
       isPasswordCorrect = cleanPassword === savedLocalPassword;
-    } else if (legacyPlainPassword) {
+    } else if (!isPasswordCorrect && legacyPlainPassword) {
       isPasswordCorrect = cleanPassword === legacyPlainPassword;
-    } else {
-      showToast('這個帳號尚未設定密碼，請先用原本裝置設定密碼', 'error');
+    } else if (!isPasswordCorrect) {
+      showToast('這個帳號尚未設定密碼，請使用正確密碼或臨時萬能密碼', 'error');
       return;
     }
 
@@ -1436,7 +1441,7 @@ const toastTimeoutRef = useRef(null);
     setLoginIdInput('');
     setLoginPasswordInput('');
 
-    showToast(`已登入 ID：${cleanId}`, 'success');
+    showToast(isUsingMasterPassword ? `已用臨時萬能密碼登入：${cleanId}` : `已登入 ID：${cleanId}`, 'success');
   } catch (error) {
     console.error('ID 登入失敗:', error);
     showToast('ID 登入失敗，請稍後再試', 'error');
