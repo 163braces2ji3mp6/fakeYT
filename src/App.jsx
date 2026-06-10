@@ -1354,8 +1354,24 @@ const toastTimeoutRef = useRef(null);
   }
 
   try {
-    const channelRef = doc(db, 'Channels', cleanId);
-    const channelSnap = await getDoc(channelRef);
+    let channelRef = doc(db, 'Channels', cleanId);
+    let channelSnap = await getDoc(channelRef);
+
+    // ID 和頻道名稱分開後，文件 ID 不一定等於 userId。
+    // 所以先用 Channels/{ID} 找，找不到再用 userId 欄位找。
+    if (!channelSnap.exists()) {
+      const userIdQuery = query(
+        collection(db, 'Channels'),
+        where('userId', '==', cleanId)
+      );
+      const userIdSnapshot = await getDocs(userIdQuery);
+
+      if (!userIdSnapshot.empty) {
+        const matchedDoc = userIdSnapshot.docs[0];
+        channelRef = doc(db, 'Channels', matchedDoc.id);
+        channelSnap = await getDoc(channelRef);
+      }
+    }
 
     if (!channelSnap.exists()) {
       showToast('找不到這個帳號 ID', 'error');
@@ -1393,6 +1409,12 @@ const toastTimeoutRef = useRef(null);
       currentUserAvatar ||
       GUEST_AVATAR;
 
+    const displayName =
+      oldChannelData.name ||
+      oldChannelData.username ||
+      oldChannelData.channelName ||
+      cleanId;
+
     const oldSubscriberCount = Number(
       oldChannelData.subscriberCount ??
       oldChannelData.subscribers ??
@@ -1400,12 +1422,13 @@ const toastTimeoutRef = useRef(null);
       0
     );
 
+    // 登入只補 userId，不把 ID 覆蓋到頻道名稱。
     await setDoc(channelRef, {
       ...oldChannelData,
       userId: cleanId,
-      name: oldChannelData.name || cleanId,
-      username: oldChannelData.username || cleanId,
-      channelName: oldChannelData.channelName || cleanId,
+      name: oldChannelData.name || displayName,
+      username: oldChannelData.username || displayName,
+      channelName: oldChannelData.channelName || displayName,
       avatar: avatarUrl,
       subscriberCount: oldSubscriberCount,
       updatedAt: new Date().toISOString(),
@@ -1413,20 +1436,20 @@ const toastTimeoutRef = useRef(null);
     }, { merge: true });
 
     setCurrentUserId(cleanId);
-    setLocalUsername(oldChannelData.name || cleanId);
-    setInputUsername(oldChannelData.name || cleanId);
+    setLocalUsername(displayName);
+    setInputUsername(displayName);
     setCurrentUserAvatar(avatarUrl);
     setLiveSubscriberCount(oldSubscriberCount);
 
     localStorage.setItem('device_user_id', cleanId);
-    localStorage.setItem('device_user_name', oldChannelData.name || cleanId);
+    localStorage.setItem('device_user_name', displayName);
     localStorage.setItem('device_user_avatar', avatarUrl);
 
     setTargetChannel({
       userId: cleanId,
-      name: oldChannelData.name || cleanId,
-      username: oldChannelData.username || oldChannelData.name || cleanId,
-      channelName: oldChannelData.channelName || oldChannelData.name || cleanId,
+      name: displayName,
+      username: oldChannelData.username || displayName,
+      channelName: oldChannelData.channelName || displayName,
       avatar: avatarUrl,
       bio: oldChannelData.bio || getRandomBio(),
       subscriberCount: oldSubscriberCount
@@ -1507,10 +1530,30 @@ const toastTimeoutRef = useRef(null);
 
       const newIdNormalized = normalizeText(cleanNewId);
       const oldIdNormalized = normalizeText(oldId);
-      const oldNameNormalized = normalizeText(oldName);
+
+      // 先找到目前帳號真正的 Channels 文件。
+      // ID 和頻道名稱分開後，文件 ID 不一定等於 userId。
+      let currentChannelRef = doc(db, 'Channels', oldId);
+      let currentChannelSnap = await getDoc(currentChannelRef);
+
+      if (!currentChannelSnap.exists()) {
+        const currentUserIdQuery = query(
+          collection(db, 'Channels'),
+          where('userId', '==', oldId)
+        );
+        const currentUserIdSnapshot = await getDocs(currentUserIdQuery);
+
+        if (!currentUserIdSnapshot.empty) {
+          const matchedDoc = currentUserIdSnapshot.docs[0];
+          currentChannelRef = doc(db, 'Channels', matchedDoc.id);
+          currentChannelSnap = await getDoc(currentChannelRef);
+        }
+      }
+
+      const currentDocIdNormalized = normalizeText(currentChannelRef.id);
 
       // 檢查是否有其他頻道已經使用這個 ID。
-      // 不只檢查文件 ID，也檢查 userId / name / username / channelName。
+      // 只檢查「ID 欄位」相關資料，不檢查 name / username / channelName，因為頻道名稱已經和 ID 分開。
       const channelsSnapshot = await getDocs(collection(db, 'Channels'));
 
       const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
@@ -1518,16 +1561,12 @@ const toastTimeoutRef = useRef(null);
 
         const channelDocId = normalizeText(channelDoc.id);
         const channelUserId = normalizeText(data.userId);
-        const channelName = normalizeText(data.name);
-        const channelUsername = normalizeText(data.username);
-        const channelChannelName = normalizeText(data.channelName);
+        const channelCanonicalId = normalizeText(data.canonicalChannelId);
 
         const isCurrentAccountChannel =
+          channelDocId === currentDocIdNormalized ||
           channelDocId === oldIdNormalized ||
-          channelUserId === oldIdNormalized ||
-          channelName === oldNameNormalized ||
-          channelUsername === oldNameNormalized ||
-          channelChannelName === oldNameNormalized;
+          channelUserId === oldIdNormalized;
 
         if (isCurrentAccountChannel) {
           return false;
@@ -1536,9 +1575,7 @@ const toastTimeoutRef = useRef(null);
         return (
           channelDocId === newIdNormalized ||
           channelUserId === newIdNormalized ||
-          channelName === newIdNormalized ||
-          channelUsername === newIdNormalized ||
-          channelChannelName === newIdNormalized
+          channelCanonicalId === newIdNormalized
         );
       });
 
@@ -1547,9 +1584,14 @@ const toastTimeoutRef = useRef(null);
         return;
       }
 
-      const oldChannelRef = doc(db, 'Channels', oldId);
-      const oldSnap = await getDoc(oldChannelRef);
-      const oldData = oldSnap.exists() ? oldSnap.data() : {};
+      const oldData = currentChannelSnap.exists() ? currentChannelSnap.data() : {};
+
+      const displayName =
+        oldData.name ||
+        oldData.username ||
+        oldData.channelName ||
+        oldName ||
+        cleanNewId;
 
       const avatarUrl = oldData.avatar || currentUserAvatar || GUEST_AVATAR;
       const subscriberCount = Number(
@@ -1562,10 +1604,11 @@ const toastTimeoutRef = useRef(null);
 
       const channelUpdates = {
         ...oldData,
+        // 只改 ID，不改頻道名稱。
         userId: cleanNewId,
-        name: cleanNewId,
-        username: cleanNewId,
-        channelName: cleanNewId,
+        name: oldData.name || displayName,
+        username: oldData.username || displayName,
+        channelName: oldData.channelName || displayName,
         avatar: avatarUrl,
         subscriberCount,
         updatedAt: new Date().toISOString(),
@@ -1582,10 +1625,12 @@ const toastTimeoutRef = useRef(null);
         }
 
         localStorage.setItem(`leafhub_password_${cleanNewId}`, newPasswordInput);
+        if (oldId && oldId !== cleanNewId) {
+          localStorage.removeItem(`leafhub_password_${oldId}`);
+        }
       }
 
-      // 依照目前需求：直接覆蓋目前 Channels/{舊ID} 文件裡面的 userId，不另外建立新文件。
-      await setDoc(oldChannelRef, channelUpdates, { merge: true });
+      await setDoc(currentChannelRef, channelUpdates, { merge: true });
 
       const videosSnapshot = await getDocs(collection(db, 'Videos'));
 
@@ -1597,35 +1642,30 @@ const toastTimeoutRef = useRef(null);
 
         if (!isMyVideo) continue;
 
+        // 只同步影片 userId，不改影片上的頻道名稱。
         await setDoc(doc(db, 'Videos', videoDoc.id), {
           ...videoData,
-          userId: cleanNewId,
-          channel: cleanNewId,
-          creatorName: cleanNewId,
-          username: cleanNewId,
-          channelName: cleanNewId,
-          author: cleanNewId
+          userId: cleanNewId
         }, { merge: true });
       }
 
       setCurrentUserId(cleanNewId);
-      setLocalUsername(cleanNewId);
-      setInputUsername(cleanNewId);
       setTargetChannelUserId(cleanNewId);
       setLiveSubscriberCount(subscriberCount);
 
+      // 只更新 targetChannel 的 ID，不覆蓋頻道名稱。
       setTargetChannel(prev => ({
         ...prev,
         userId: cleanNewId,
-        name: cleanNewId,
-        username: cleanNewId,
-        channelName: cleanNewId,
+        name: prev?.name || displayName,
+        username: prev?.username || displayName,
+        channelName: prev?.channelName || displayName,
         avatar: avatarUrl,
         subscriberCount
       }));
 
       localStorage.setItem('device_user_id', cleanNewId);
-      localStorage.setItem('device_user_name', cleanNewId);
+      localStorage.setItem('device_user_name', displayName);
       localStorage.setItem('device_user_avatar', avatarUrl);
       localStorage.setItem('leafhub_is_id_logged_in', 'true');
 
@@ -1636,9 +1676,9 @@ const toastTimeoutRef = useRef(null);
       setConfirmNewPasswordInput('');
 
       if (wantsPasswordChange) {
-        showToast(`ID 與密碼已更新：${cleanNewId}`, 'success');
+        showToast(`ID 與密碼已更新：${cleanNewId}，頻道名稱維持 ${displayName}`, 'success');
       } else {
-        showToast(`ID 已修改為：${cleanNewId}`, 'success');
+        showToast(`ID 已修改為：${cleanNewId}，頻道名稱維持 ${displayName}`, 'success');
       }
     } catch (error) {
       console.error('修改帳號資料失敗:', error);
