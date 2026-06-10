@@ -815,38 +815,8 @@ const toastTimeoutRef = useRef(null);
     08. Account Helpers / 帳號與名稱檢查
   ------------------------------ */
   // 🟢 名稱查重：新架構 Channels/{userId}，所以不能只用 doc id 查 username
-  const checkUsernameExists = async (username) => {
-    const cleanUsername = String(username ?? '').trim();
-    if (!cleanUsername) return false;
-
-    // 舊資料 fallback：Channels/{username}
-    const legacyRef = doc(db, 'Channels', cleanUsername);
-    const legacySnap = await getDoc(legacyRef);
-    if (
-      legacySnap.exists() &&
-      String(legacySnap.data()?.userId ?? '') !== String(currentUserId ?? '')
-    ) {
-      return true;
-    }
-
-    // 新資料：Channels/{userId}，用欄位查重
-    const fieldsToCheck = ['username', 'name', 'channelName'];
-
-    for (const fieldName of fieldsToCheck) {
-      const usernameQuery = query(
-        collection(db, 'Channels'),
-        where(fieldName, '==', cleanUsername)
-      );
-      const usernameSnapshot = await getDocs(usernameQuery);
-
-      const hasOtherUser = usernameSnapshot.docs.some(channelDoc => {
-        const data = channelDoc.data();
-        return String(data?.userId ?? channelDoc.id) !== String(currentUserId ?? '');
-      });
-
-      if (hasOtherUser) return true;
-    }
-
+  // 使用者名稱/頻道名稱可以重複，只有 ID 不能重複。
+  const checkUsernameExists = async () => {
     return false;
   };
   
@@ -1524,8 +1494,7 @@ const toastTimeoutRef = useRef(null);
       const currentDocId = currentChannelRef.id;
       const currentDocIdNormalized = normalizeText(currentDocId);
 
-      // 檢查是否有其他頻道已經使用這個 ID。
-      // 只檢查「ID 欄位」相關資料，不檢查 name / username / channelName。
+      // 只有 ID 需要唯一；頻道名稱可以重複，所以不檢查 name / username / channelName。
       const channelsSnapshot = await getDocs(collection(db, 'Channels'));
 
       const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
@@ -3431,6 +3400,26 @@ useEffect(() => {
     return value || name || 'guest';
   };
 
+  const getTargetChannelIdForDisplay = () => {
+    const id = String(targetChannel?.userId || targetChannelUserId || '').trim();
+    const fallbackName = String(
+      targetChannel?.name ||
+      targetChannel?.username ||
+      targetChannel?.channelName ||
+      ''
+    ).trim();
+
+    // 頻道頁 @ 後面要顯示使用者 ID，不要顯示頻道名稱。
+    // 如果拿到 Firebase Auth 的超長 UID，就避免直接顯示，改用 fallback。
+    const looksLikeFirebaseUid = id && /^[A-Za-z0-9]{20,}$/.test(id) && !id.startsWith('user_');
+
+    if (id && !looksLikeFirebaseUid) {
+      return id;
+    }
+
+    return fallbackName || id || 'guest';
+  };
+
   const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
 
   return (
@@ -3826,7 +3815,7 @@ useEffect(() => {
                             </div>
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel?.name || targetChannel?.username || targetChannel?.channelName || targetChannel?.userId || targetChannelUserId} •&nbsp;
+                              @{getTargetChannelIdForDisplay()} •&nbsp;
                               {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
