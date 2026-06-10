@@ -4669,7 +4669,7 @@ useEffect(() => {
                     }}
                   >
                     <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>
-                      🔑 帳號登入
+                      🔑 登入現有帳號
                     </h2>
 
                     <button
