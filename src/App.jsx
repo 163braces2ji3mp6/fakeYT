@@ -1507,10 +1507,31 @@ const toastTimeoutRef = useRef(null);
 
       const newIdNormalized = normalizeText(cleanNewId);
       const oldIdNormalized = normalizeText(oldId);
-      const oldNameNormalized = normalizeText(oldName);
+
+      // 先找到目前帳號真正的 Channels 文件。
+      // ID 和頻道名稱分開後，文件 ID 不一定等於 userId。
+      let currentChannelRef = doc(db, 'Channels', oldId);
+      let currentChannelSnap = await getDoc(currentChannelRef);
+
+      if (!currentChannelSnap.exists()) {
+        const currentUserIdQuery = query(
+          collection(db, 'Channels'),
+          where('userId', '==', oldId)
+        );
+        const currentUserIdSnapshot = await getDocs(currentUserIdQuery);
+
+        if (!currentUserIdSnapshot.empty) {
+          const matchedDoc = currentUserIdSnapshot.docs[0];
+          currentChannelRef = doc(db, 'Channels', matchedDoc.id);
+          currentChannelSnap = await getDoc(currentChannelRef);
+        }
+      }
+
+      const currentDocId = currentChannelRef.id;
+      const currentDocIdNormalized = normalizeText(currentDocId);
 
       // 檢查是否有其他頻道已經使用這個 ID。
-      // 不只檢查文件 ID，也檢查 userId / name / username / channelName。
+      // 只檢查「ID 欄位」相關資料，不檢查 name / username / channelName。
       const channelsSnapshot = await getDocs(collection(db, 'Channels'));
 
       const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
@@ -1518,16 +1539,12 @@ const toastTimeoutRef = useRef(null);
 
         const channelDocId = normalizeText(channelDoc.id);
         const channelUserId = normalizeText(data.userId);
-        const channelName = normalizeText(data.name);
-        const channelUsername = normalizeText(data.username);
-        const channelChannelName = normalizeText(data.channelName);
+        const channelCanonicalId = normalizeText(data.canonicalChannelId);
 
         const isCurrentAccountChannel =
+          channelDocId === currentDocIdNormalized ||
           channelDocId === oldIdNormalized ||
-          channelUserId === oldIdNormalized ||
-          channelName === oldNameNormalized ||
-          channelUsername === oldNameNormalized ||
-          channelChannelName === oldNameNormalized;
+          channelUserId === oldIdNormalized;
 
         if (isCurrentAccountChannel) {
           return false;
@@ -1536,9 +1553,7 @@ const toastTimeoutRef = useRef(null);
         return (
           channelDocId === newIdNormalized ||
           channelUserId === newIdNormalized ||
-          channelName === newIdNormalized ||
-          channelUsername === newIdNormalized ||
-          channelChannelName === newIdNormalized
+          channelCanonicalId === newIdNormalized
         );
       });
 
@@ -1547,9 +1562,16 @@ const toastTimeoutRef = useRef(null);
         return;
       }
 
-      const oldChannelRef = doc(db, 'Channels', oldId);
-      const oldSnap = await getDoc(oldChannelRef);
-      const oldData = oldSnap.exists() ? oldSnap.data() : {};
+      const oldData = currentChannelSnap.exists() ? currentChannelSnap.data() : {};
+
+      // 這是頻道顯示名稱，絕對不要用 cleanNewId 覆蓋。
+      const displayName =
+        oldData.name ||
+        oldData.username ||
+        oldData.channelName ||
+        oldName ||
+        currentDocId ||
+        oldId;
 
       const avatarUrl = oldData.avatar || currentUserAvatar || GUEST_AVATAR;
       const subscriberCount = Number(
@@ -1560,12 +1582,18 @@ const toastTimeoutRef = useRef(null);
         0
       );
 
+      const hadUserIdField = Object.prototype.hasOwnProperty.call(oldData, 'userId');
+      const hadCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(oldData, 'canonicalChannelId');
+
       const channelUpdates = {
         ...oldData,
-        userId: cleanNewId,
-        name: cleanNewId,
-        username: cleanNewId,
-        channelName: cleanNewId,
+        // 只改 ID，不改頻道名稱。
+        // 如果舊資料本來沒有 userId / canonicalChannelId 欄位，就不要新增這些欄位。
+        ...(hadUserIdField ? { userId: cleanNewId } : {}),
+        ...(hadCanonicalChannelIdField ? { canonicalChannelId: cleanNewId } : {}),
+        name: oldData.name || displayName,
+        username: oldData.username || displayName,
+        channelName: oldData.channelName || displayName,
         avatar: avatarUrl,
         subscriberCount,
         updatedAt: new Date().toISOString(),
@@ -1582,10 +1610,19 @@ const toastTimeoutRef = useRef(null);
         }
 
         localStorage.setItem(`leafhub_password_${cleanNewId}`, newPasswordInput);
+        if (oldId && oldId !== cleanNewId) {
+          localStorage.removeItem(`leafhub_password_${oldId}`);
+        }
       }
 
-      // 依照目前需求：直接覆蓋目前 Channels/{舊ID} 文件裡面的 userId，不另外建立新文件。
-      await setDoc(oldChannelRef, channelUpdates, { merge: true });
+      // Firestore 文件 ID 不能直接改名，所以用「建立新 ID 文件 → 刪除舊文件」模擬改名。
+      // 最後只會留下 Channels/{新ID} 這份頻道文件。
+      const newChannelRef = doc(db, 'Channels', cleanNewId);
+      await setDoc(newChannelRef, channelUpdates, { merge: true });
+
+      if (currentDocId !== cleanNewId) {
+        await deleteDoc(currentChannelRef);
+      }
 
       const videosSnapshot = await getDocs(collection(db, 'Videos'));
 
@@ -1597,35 +1634,30 @@ const toastTimeoutRef = useRef(null);
 
         if (!isMyVideo) continue;
 
+        // 只同步影片 userId，不改影片上的頻道名稱 / 作者名稱。
         await setDoc(doc(db, 'Videos', videoDoc.id), {
           ...videoData,
-          userId: cleanNewId,
-          channel: cleanNewId,
-          creatorName: cleanNewId,
-          username: cleanNewId,
-          channelName: cleanNewId,
-          author: cleanNewId
+          userId: cleanNewId
         }, { merge: true });
       }
 
+      // React 狀態：只改 ID，不改 localUsername / inputUsername。
       setCurrentUserId(cleanNewId);
-      setLocalUsername(cleanNewId);
-      setInputUsername(cleanNewId);
       setTargetChannelUserId(cleanNewId);
       setLiveSubscriberCount(subscriberCount);
 
       setTargetChannel(prev => ({
         ...prev,
         userId: cleanNewId,
-        name: cleanNewId,
-        username: cleanNewId,
-        channelName: cleanNewId,
+        name: prev?.name || displayName,
+        username: prev?.username || displayName,
+        channelName: prev?.channelName || displayName,
         avatar: avatarUrl,
         subscriberCount
       }));
 
       localStorage.setItem('device_user_id', cleanNewId);
-      localStorage.setItem('device_user_name', cleanNewId);
+      localStorage.setItem('device_user_name', displayName);
       localStorage.setItem('device_user_avatar', avatarUrl);
       localStorage.setItem('leafhub_is_id_logged_in', 'true');
 
@@ -1636,9 +1668,9 @@ const toastTimeoutRef = useRef(null);
       setConfirmNewPasswordInput('');
 
       if (wantsPasswordChange) {
-        showToast(`ID 與密碼已更新：${cleanNewId}`, 'success');
+        showToast(`ID 與密碼已更新：${cleanNewId}，頻道名稱維持 ${displayName}`, 'success');
       } else {
-        showToast(`ID 已修改為：${cleanNewId}`, 'success');
+        showToast(`ID 已修改為：${cleanNewId}，頻道名稱維持 ${displayName}`, 'success');
       }
     } catch (error) {
       console.error('修改帳號資料失敗:', error);
@@ -3393,26 +3425,6 @@ useEffect(() => {
   /* ------------------------------
     19. Render Entry / JSX 主畫面
   ------------------------------ */
-  const getTargetChannelIdForDisplay = () => {
-    const id = String(targetChannel?.userId || targetChannelUserId || '').trim();
-    const fallbackName = String(
-      targetChannel?.name ||
-      targetChannel?.username ||
-      targetChannel?.channelName ||
-      ''
-    ).trim();
-
-    // 頻道頁的 @ 後面要顯示使用者 ID，不要顯示頻道名稱。
-    // 如果拿到的是 Firebase Auth 的超長 UID，就避免直接顯示，改用 fallback。
-    const looksLikeFirebaseUid = id && /^[A-Za-z0-9]{20,}$/.test(id) && !id.startsWith('user_');
-
-    if (id && !looksLikeFirebaseUid) {
-      return id;
-    }
-
-    return fallbackName || id || 'guest';
-  };
-
   const getPublicUserIdForDisplay = () => {
     const value = String(currentUserId || '').trim();
     const name = String(localUsername || '').trim();
@@ -3820,7 +3832,7 @@ useEffect(() => {
                             </div>
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{getTargetChannelIdForDisplay()} •&nbsp;
+                              @{targetChannel?.name || targetChannel?.username || targetChannel?.channelName || targetChannel?.userId || targetChannelUserId} •&nbsp;
                               {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
