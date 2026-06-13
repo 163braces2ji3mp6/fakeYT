@@ -912,6 +912,10 @@ const toastTimeoutRef = useRef(null);
   const [videoToDelete, setVideoToDelete] = useState(null);
   const [isDeleteVideoModalOpen, setIsDeleteVideoModalOpen] = useState(false);
   const [isDeletingVideo, setIsDeletingVideo] = useState(false);
+  const [videoToEditTitle, setVideoToEditTitle] = useState(null);
+  const [editVideoTitleInput, setEditVideoTitleInput] = useState('');
+  const [isEditVideoTitleModalOpen, setIsEditVideoTitleModalOpen] = useState(false);
+  const [isUpdatingVideoTitle, setIsUpdatingVideoTitle] = useState(false);
 
   const [comments, setComments] = useState([]);
   const [newCommentInput, setNewCommentInput] = useState('');
@@ -2751,7 +2755,13 @@ useEffect(() => {
       if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
         setIsProfileOpen(false);
       }
+
+      const videoOptionsRoot = event.target.closest?.('[data-video-options-root="true"]');
+      if (!videoOptionsRoot) {
+        setOpenVideoOptionsId(null);
+      }
     }
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -2932,6 +2942,109 @@ useEffect(() => {
         String(video?.username || '') === String(localUsername || '')
       )
     );
+  };
+
+  const handleOpenEditVideoTitle = (video, e) => {
+    if (e) e.stopPropagation();
+
+    if (!canManageVideo(video)) {
+      showToast('只能修改自己頻道的影片', 'error');
+      return;
+    }
+
+    setOpenVideoOptionsId(null);
+    setVideoToEditTitle(video);
+    setEditVideoTitleInput(video?.title || '');
+    setIsEditVideoTitleModalOpen(true);
+  };
+
+  const handleCancelEditVideoTitle = () => {
+    if (isUpdatingVideoTitle) return;
+    setIsEditVideoTitleModalOpen(false);
+    setVideoToEditTitle(null);
+    setEditVideoTitleInput('');
+  };
+
+  const handleConfirmEditVideoTitle = async (e) => {
+    e.preventDefault();
+
+    if (!videoToEditTitle?.id) {
+      showToast('找不到影片 ID，無法更新 Firebase', 'error');
+      return;
+    }
+
+    if (!canManageVideo(videoToEditTitle)) {
+      showToast('只能修改自己頻道的影片', 'error');
+      handleCancelEditVideoTitle();
+      return;
+    }
+
+    const cleanTitle = editVideoTitleInput.trim();
+
+    if (!cleanTitle) {
+      showToast('請輸入影片標題', 'warning');
+      return;
+    }
+
+    if (cleanTitle === String(videoToEditTitle.title || '').trim()) {
+      showToast('標題沒有變更', 'info');
+      return;
+    }
+
+    setIsUpdatingVideoTitle(true);
+
+    try {
+      const videoId = String(videoToEditTitle.id);
+      const nowIso = new Date().toISOString();
+      const videoRef = doc(db, 'Videos', videoId);
+
+      // ✅ 真的寫回 Firebase：更新 Videos/{videoId}.title。
+      // 使用 updateDoc 是為了避免不小心用錯 id 時建立一筆空白影片文件。
+      await updateDoc(videoRef, {
+        title: cleanTitle,
+        updatedAt: nowIso,
+        titleUpdatedAt: nowIso,
+        titleUpdatedBy: currentUserId || localUsername || 'unknown'
+      });
+
+      const patchTitle = (video) =>
+        String(video?.id) === String(videoId)
+          ? { ...video, title: cleanTitle, updatedAt: nowIso, titleUpdatedAt: nowIso }
+          : video;
+
+      // Firebase listener 之後也會推送新資料；這裡先樂觀更新畫面，避免使用者以為沒反應。
+      setRawFirebaseVideos(prev => Array.isArray(prev) ? prev.map(patchTitle) : prev);
+      setVideos(prev => Array.isArray(prev) ? prev.map(patchTitle) : prev);
+
+      setWatchHistory(prev => {
+        const nextHistory = Array.isArray(prev) ? prev.map(patchTitle) : [];
+        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+        return nextHistory;
+      });
+
+      if (selectedVideo && String(selectedVideo.id) === String(videoId)) {
+        setSelectedVideo(prev => prev ? { ...prev, title: cleanTitle, updatedAt: nowIso, titleUpdatedAt: nowIso } : prev);
+      }
+
+      setIsEditVideoTitleModalOpen(false);
+      setVideoToEditTitle(null);
+      setEditVideoTitleInput('');
+      setOpenVideoOptionsId(null);
+
+      showToast('影片標題已更新到 Firebase', 'success');
+    } catch (error) {
+      console.error('修改影片標題失敗：', error);
+
+      if (error?.code === 'not-found') {
+        showToast('Firebase 找不到這支影片文件，請確認影片是從 Firebase 上傳的', 'error');
+      } else if (error?.code === 'permission-denied') {
+        showToast('Firebase 權限不足，請檢查 Firestore Rules 是否允許修改自己的影片', 'error');
+      } else {
+        showToast('修改影片標題失敗，請稍後再試', 'error');
+      }
+    } finally {
+      setIsUpdatingVideoTitle(false);
+    }
   };
 
   const handleOpenDeleteVideoConfirm = (video, e) => {
@@ -3713,9 +3826,6 @@ useEffect(() => {
         className="video-card"
         onClick={() => handleVideoClick(video)}
         style={{ position: 'relative' }}
-        onMouseLeave={() => {
-          if (openVideoOptionsId === video.id) setOpenVideoOptionsId(null);
-        }}
       >
         <div className="thumbnail-wrapper">
           <img
@@ -3745,9 +3855,9 @@ useEffect(() => {
               {canShowOwnerActions && (
                 <div
                   className="video-owner-actions"
+                  data-video-options-root="true"
                   style={{ position: 'relative', flexShrink: 0 }}
                   onClick={(e) => e.stopPropagation()}
-                  onMouseEnter={() => setOpenVideoOptionsId(video.id)}
                 >
                   <button
                     type="button"
@@ -3782,16 +3892,34 @@ useEffect(() => {
                       style={{
                         position: 'absolute',
                         right: 0,
-                        top: '32px',
-                        minWidth: '128px',
+                        bottom: '32px',
+                        minWidth: '160px',
                         background: '#1b1b1b',
                         border: '1px solid #333',
                         borderRadius: '10px',
                         boxShadow: '0 10px 24px rgba(0,0,0,0.45)',
                         padding: '6px',
-                        zIndex: 50
+                        zIndex: 9999
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenEditVideoTitle(video, e)}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          background: 'transparent',
+                          color: '#f5f5f5',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                          marginBottom: '4px'
+                        }}
+                      >
+                        ✏️ 修改標題
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => handleOpenDeleteVideoConfirm(video, e)}
@@ -5518,6 +5646,66 @@ useEffect(() => {
               </div>
             )}
 
+
+            {/* ==============================
+              Edit Video Title Modal / 修改影片標題
+            ============================== */}
+            {isEditVideoTitleModalOpen && videoToEditTitle && (
+              <div className="modal-overlay" onClick={handleCancelEditVideoTitle}>
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: '#141414', border: '1px solid #2a2a2a', padding: '24px', borderRadius: '12px', width: '460px', maxWidth: '90%' }}
+                >
+                  <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>修改影片標題</h2>
+                    <button
+                      className="close-modal-btn"
+                      disabled={isUpdatingVideoTitle}
+                      onClick={handleCancelEditVideoTitle}
+                      style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: isUpdatingVideoTitle ? 'not-allowed' : 'pointer' }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleConfirmEditVideoTitle} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ color: '#aaa', fontSize: '14px' }}>影片標題</label>
+                      <input
+                        className="comment-text-input"
+                        type="text"
+                        value={editVideoTitleInput}
+                        onChange={(e) => setEditVideoTitleInput(e.target.value)}
+                        placeholder="請輸入新的影片標題..."
+                        disabled={isUpdatingVideoTitle}
+                        autoFocus
+                        required
+                      />
+                    </div>
+
+                    <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                      <button
+                        type="button"
+                        className="clear-btn"
+                        disabled={isUpdatingVideoTitle}
+                        onClick={handleCancelEditVideoTitle}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="submit"
+                        className="comment-submit-btn"
+                        disabled={isUpdatingVideoTitle}
+                        style={{ height: '36px', opacity: isUpdatingVideoTitle ? 0.65 : 1 }}
+                      >
+                        {isUpdatingVideoTitle ? '更新中...' : '確認修改'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
 
             {/* ==============================
               Delete Video Confirm Modal / 刪除影片確認
