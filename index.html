@@ -5,7 +5,27 @@
     <link rel="icon" type="image/svg+xml" href="/fakeYT/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Leaf Hub</title>
-    <script type="module" crossorigin src="/fakeYT/assets/index-D-E0df4_.js"></script>
+    <script>
+      // GitHub Pages SPA fallback：把 404.html 暫存到 query 的路徑還原成正常前端路由。
+      (function(l) {
+        if (l.search[1] === '/') {
+          var decoded = l.search
+            .slice(1)
+            .split('&')
+            .map(function(s) {
+              return s.replace(/~and~/g, '&')
+            })
+            .join('?');
+
+          window.history.replaceState(
+            null,
+            null,
+            l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location))
+    </script>
+    <script type="module" crossorigin src="/fakeYT/assets/index-uHgb2rrj.js"></script>
     <link rel="stylesheet" crossorigin href="/fakeYT/assets/index-DfR_r9kM.css">
   </head>
   <body>

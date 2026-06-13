@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Leaf Hub</title>
+    <script>
+      // GitHub Pages 專案頁面：保留第一段路徑，也就是 repo 名稱：fakeYT
+      var pathSegmentsToKeep = 1;
+
+      var l = window.location;
+      var redirectUrl =
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') +
+        '/?/' +
+        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/') +
+        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+        l.hash;
+
+      window.location.replace(redirectUrl);
+    </script>
+  </head>
+  <body></body>
+</html>
