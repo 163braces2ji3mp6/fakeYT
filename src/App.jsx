@@ -309,7 +309,7 @@ const sortComments = (commentList, sortType = 'likes') => {
 ========================================================= */
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/" element={<LeafHubApp />} />
         <Route path="/subscriptions" element={<LeafHubApp />} />
@@ -317,9 +317,50 @@ export default function App() {
         <Route path="/liked" element={<LeafHubApp />} />
         <Route path="/channel/:channelKey" element={<LeafHubApp />} />
         <Route path="/watch/:videoId" element={<LeafHubApp />} />
-        <Route path="*" element={<LeafHubApp />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
+  );
+}
+
+
+function NotFoundPage() {
+  const navigate = useNavigate();
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: '#0f0f0f',
+      color: '#fff',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center',
+      textAlign: 'center',
+      padding: '24px'
+    }}>
+      <h1 style={{ fontSize: '72px', margin: 0 }}>404</h1>
+      <h2>找不到這個頁面</h2>
+      <p style={{ color: '#aaa', maxWidth: '520px', lineHeight: 1.7 }}>
+        這個連結可能不存在、已被移除，或網址輸入錯誤。
+      </p>
+      <button
+        type="button"
+        onClick={() => navigate('/')}
+        style={{
+          marginTop: '20px',
+          padding: '12px 20px',
+          borderRadius: '999px',
+          border: 'none',
+          background: '#ff7a00',
+          color: '#fff',
+          fontWeight: 'bold',
+          cursor: 'pointer'
+        }}
+      >
+        回到首頁
+      </button>
+    </div>
   );
 }
 
@@ -2650,7 +2691,9 @@ useEffect(() => {
   ------------------------------ */
   const getCurrentVideoShareUrl = () => {
     const ytId = getYoutubeIdFromVideo(selectedVideo);
-    return ytId ? `${window.location.origin}/watch/${ytId}` : window.location.href;
+    const basePath = import.meta.env.BASE_URL || '/';
+    const normalizedBasePath = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+    return ytId ? `${window.location.origin}${normalizedBasePath}/watch/${ytId}` : window.location.href;
   };
 
   const handleShareVideo = async () => {

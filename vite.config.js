@@ -1,11 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
+// GitHub Pages 專案頁面網址： https://你的帳號.github.io/fakeYT/
+// 所以 base 必須是 repo 名稱 /fakeYT/。
 export default defineConfig({
-  plugins: [
-    react(),
-  ],
-  // 💡 設定正確的 GitHub Pages 專案路徑，這樣線上打包才找得到 src/assets 的圖片
-  base: '/fakeYT/', 
+  plugins: [react()],
+  base: '/fakeYT/',
 })
