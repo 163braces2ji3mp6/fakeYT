@@ -1486,7 +1486,7 @@ const toastTimeoutRef = useRef(null);
     } else if (!isPasswordCorrect && legacyPlainPassword) {
       isPasswordCorrect = cleanPassword === legacyPlainPassword;
     } else if (!isPasswordCorrect) {
-      showToast('這個帳號尚未設定密碼，請使用正確密碼或臨時萬能密碼', 'error');
+      showToast('這個帳號尚未設定密碼，請使用正確密碼', 'error');
       return;
     }
 
@@ -3794,6 +3794,40 @@ useEffect(() => {
     return value || name || 'guest';
   };
 
+
+  const getTargetChannelPublicIdForDisplay = () => {
+    const cleanHandle = (value) => String(value ?? '').trim().replace(/^@+/, '');
+    const looksLikeFirebaseUid = (value) => {
+      const cleanValue = cleanHandle(value);
+      return cleanValue && /^[A-Za-z0-9]{20,}$/.test(cleanValue) && !cleanValue.startsWith('user_');
+    };
+
+    const channelName = cleanHandle(targetChannel?.name || targetChannel?.channelName || '');
+    const channelUsername = cleanHandle(targetChannel?.username || '');
+    const channelUserId = cleanHandle(targetChannel?.userId || targetChannelUserId || '');
+
+    const isOwnChannel =
+      String(channelUserId || '') === String(currentUserId || '') ||
+      String(channelName || '') === String(localUsername || '') ||
+      String(channelUsername || '') === String(localUsername || '');
+
+    // 自己的頻道一定跟右上角選單顯示同一個公開 ID。
+    if (isOwnChannel) {
+      return getPublicUserIdForDisplay();
+    }
+
+    // 別人的頻道優先顯示真正 ID，不要優先顯示頻道名稱。
+    if (channelUserId && !looksLikeFirebaseUid(channelUserId)) return channelUserId;
+    if (channelUsername && !looksLikeFirebaseUid(channelUsername)) return channelUsername;
+
+    // 如果只拿到 Firebase UID，那就不要把長 UID 顯示出來，改用頻道名稱當備援。
+    if (channelName) return channelName;
+    if (channelUsername) return channelUsername;
+    if (channelUserId) return channelUserId;
+
+    return 'guest';
+  };
+
   const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
 
   return (
@@ -4201,7 +4235,7 @@ useEffect(() => {
                             </div>
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
-                              @{targetChannel?.name || targetChannel?.username || targetChannel?.channelName || targetChannel?.userId || targetChannelUserId} •&nbsp;
+                              @{getTargetChannelPublicIdForDisplay()} •&nbsp;
                               {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
                             </p>
                             <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
