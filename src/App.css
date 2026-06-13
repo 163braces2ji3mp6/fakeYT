@@ -2380,3 +2380,165 @@ html, body, #root {
     padding-left: 8px !important;
   }
 }
+
+/* =========================================================
+   Glassmorphism Windows Override / 只把視窗改成毛玻璃效果
+   ✅ 保留原本黑橘主題
+   ✅ 只影響 Modal、頭像選單、影片三點選單、Toast
+   ✅ 不改首頁、影片卡、頻道頁整體版型
+========================================================= */
+
+/* 背後遮罩：更柔和的暗色 + 背景模糊 */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.46) !important;
+  backdrop-filter: blur(14px) saturate(135%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(135%) !important;
+  z-index: 9999 !important;
+}
+
+/* 所有主要彈窗：上傳、帳號設定、修改密碼、修改標題、刪除確認等 */
+.upload-modal-window {
+  background: linear-gradient(
+    145deg,
+    rgba(28, 28, 28, 0.78),
+    rgba(12, 12, 12, 0.66)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-top-color: rgba(255, 255, 255, 0.26) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 26px rgba(255, 106, 0, 0.08) !important;
+  backdrop-filter: blur(22px) saturate(155%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(155%) !important;
+}
+
+/* 彈窗標題區更有層次 */
+.upload-modal-window .modal-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding-bottom: 14px !important;
+}
+
+/* 關閉 X */
+.close-modal-btn {
+  color: rgba(255, 255, 255, 0.72) !important;
+  transition: color 0.18s ease, transform 0.18s ease, background 0.18s ease !important;
+  border-radius: 999px !important;
+}
+
+.close-modal-btn:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  transform: scale(1.06) !important;
+}
+
+/* 輸入框也做成半透明，不然會跟毛玻璃視窗不搭 */
+.upload-modal-window .comment-text-input,
+.upload-modal-window input,
+.upload-modal-window textarea,
+.upload-modal-window select {
+  background: rgba(255, 255, 255, 0.075) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+.upload-modal-window .comment-text-input:focus,
+.upload-modal-window input:focus,
+.upload-modal-window textarea:focus,
+.upload-modal-window select:focus {
+  border-color: rgba(255, 106, 0, 0.72) !important;
+  box-shadow:
+    0 0 0 3px rgba(255, 106, 0, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 頭像下拉選單：毛玻璃 */
+.profile-dropdown-menu {
+  background: linear-gradient(
+    145deg,
+    rgba(31, 31, 31, 0.78),
+    rgba(12, 12, 12, 0.68)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.25) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 18px 52px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(20px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(150%) !important;
+}
+
+.dropdown-divider {
+  border-top-color: rgba(255, 255, 255, 0.09) !important;
+}
+
+.dropdown-item-btn {
+  border-radius: 12px !important;
+  margin: 2px 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+.dropdown-item-btn:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  color: #ffffff !important;
+}
+
+/* 自己影片三點選單：修改標題 / 刪除影片 */
+.video-options-menu {
+  background: linear-gradient(
+    145deg,
+    rgba(34, 34, 34, 0.82),
+    rgba(12, 12, 12, 0.72)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-top-color: rgba(255, 255, 255, 0.24) !important;
+  border-radius: 16px !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(18px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(145%) !important;
+}
+
+.video-options-menu button {
+  border-radius: 11px !important;
+}
+
+.video-options-menu button:hover {
+  background: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* Toast 通知也稍微毛玻璃，但保留原本成功/錯誤色條 */
+.toast-notification {
+  background: rgba(255, 255, 255, 0.78) !important;
+  color: #111111 !important;
+  border: 1px solid rgba(255, 255, 255, 0.42) !important;
+  box-shadow:
+    0 14px 42px rgba(0, 0, 0, 0.30),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(18px) saturate(155%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(155%) !important;
+}
+
+/* 手機版：毛玻璃效果保留，但不要太透明，避免閱讀困難 */
+@media (max-width: 768px) {
+  .modal-overlay {
+    background: rgba(0, 0, 0, 0.54) !important;
+    backdrop-filter: blur(12px) saturate(130%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(130%) !important;
+  }
+
+  .upload-modal-window,
+  .profile-dropdown-menu,
+  .video-options-menu {
+    background: rgba(18, 18, 18, 0.86) !important;
+    backdrop-filter: blur(18px) saturate(145%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(145%) !important;
+  }
+}
+
