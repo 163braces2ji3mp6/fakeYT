@@ -33,6 +33,7 @@ import { db, auth } from './firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
+import { useAdvancedSearch, getSearchSuggestions } from './hooks/useAdvancedSearch';
 
 /* ==============================
   02. Constants / 共用常數
@@ -660,6 +661,20 @@ const toastTimeoutRef = useRef(null);
   const [activeCategory, setActiveCategory] = useState('全部');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchInputStr, setSearchInputStr] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [searchHistory, setSearchHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('leafhub_search_history');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter(Boolean).slice(0, 10) : [];
+    } catch {
+      return [];
+    }
+  });
+  const HOT_SEARCHES = ['Minecraft 建築', '音樂', '遊戲實況', 'VLOG', 'Shorts', '最新上傳'];
+  const [searchResultType, setSearchResultType] = useState('all'); // all | videos | channels
+  const [searchSortType, setSearchSortType] = useState('relevance'); // relevance | latest | views
 
   const [videos, setVideos] = useState([]); 
   const [rawFirebaseVideos, setRawFirebaseVideos] = useState([]);
@@ -989,21 +1004,32 @@ const toastTimeoutRef = useRef(null);
   };
   
   useEffect(() => {
-    if (currentView !== 'home') return;
-
-    if (!searchInputStr.trim()) {
+    const cleanQuery = searchInputStr.trim();
+    if (!cleanQuery) {
+      setSuggestions([]);
       return;
     }
 
-    setIsPageLoading(true);
+    const queryLower = cleanQuery.toLowerCase();
+    const toSearchText = (value) => {
+      if (typeof value === 'string') return value;
+      if (!value || typeof value !== 'object') return '';
+      return String(value.title || value.name || value.channel || value.author || value.creatorName || value.username || value.query || '').trim();
+    };
 
-    const delayDebounceFn = setTimeout(() => {
-      setSearchQuery(searchInputStr);
-      setIsPageLoading(false);
-    }, 350);
+    const videoSuggestions = getSearchSuggestions(videos, cleanQuery)
+      .map(toSearchText)
+      .filter(Boolean);
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchInputStr, currentView]);
+    const channelSuggestions = (Array.isArray(videos) ? videos : [])
+      .map(video => video?.channel || video?.author || video?.creatorName || video?.username || '')
+      .filter(name => String(name).trim().toLowerCase().includes(queryLower));
+
+    setSuggestions(Array.from(new Set([
+      ...videoSuggestions,
+      ...channelSuggestions
+    ])).slice(0, 8));
+  }, [searchInputStr, videos]);
 
 
   /* ------------------------------
@@ -1023,15 +1049,60 @@ const toastTimeoutRef = useRef(null);
   };
 
 
-  const handleSearchSubmit = () => {
-    const cleanQuery = searchInputStr.trim();
+  const getSearchTextValue = (value) => {
+    // onClick 會傳進 React event；不能把 event 直接 String()，不然會變成 [object Object]。
+    if (value && typeof value === 'object' && ('preventDefault' in value || 'nativeEvent' in value)) {
+      return searchInputStr;
+    }
+
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object') return searchInputStr;
+
+    return String(
+      value.title ||
+      value.name ||
+      value.channel ||
+      value.author ||
+      value.creatorName ||
+      value.username ||
+      value.query ||
+      searchInputStr ||
+      ''
+    );
+  };
+
+  const saveSearchHistory = (queryText) => {
+    const cleanQuery = getSearchTextValue(queryText).trim();
+    if (!cleanQuery) return;
+
+    setSearchHistory(prev => {
+      const nextHistory = [
+        cleanQuery,
+        ...prev.filter(item => getSearchTextValue(item).trim() !== cleanQuery)
+      ].slice(0, 10);
+      localStorage.setItem('leafhub_search_history', JSON.stringify(nextHistory));
+      return nextHistory;
+    });
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    localStorage.removeItem('leafhub_search_history');
+  };
+
+  const handleSearchSubmit = (queryOverride = null) => {
+    const cleanQuery = getSearchTextValue(queryOverride).trim();
 
     if (location.pathname !== '/') navigate('/');
     setCurrentView('home');
     setActiveCategory('全部');
+    setSearchInputStr(cleanQuery);
     setSearchQuery(cleanQuery);
+    setShowSearchDropdown(false);
     setIsPageLoading(true);
     forceScrollToTop();
+
+    if (cleanQuery) saveSearchHistory(cleanQuery);
 
     setTimeout(() => {
       setIsPageLoading(false);
@@ -3793,21 +3864,31 @@ useEffect(() => {
     return video.deletedFromPublicList !== true && video.isYoutubePlayable !== false;
   };
 
-  const getFilteredVideos = () => {
-    const currentVideos = Array.isArray(videos) ? videos : [];
-    return currentVideos.filter(video => {
-      if (!isVideoVisible(video)) return false;
+  const advancedFilteredVideos = useAdvancedSearch({
+    videos,
+    searchQuery,
+    activeCategory,
+    isVideoVisible
+  });
 
-      const matchesSearch = !searchQuery.trim() || 
-                            video.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            video.channel?.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      const matchesCategory = activeCategory === '全部' || 
-                              (video.category ? video.category === activeCategory : (video.title?.includes(activeCategory) || video.channel?.includes(activeCategory)));
-      
-      return matchesSearch && matchesCategory;
-    });
-  };
+  const filteredVideos = (() => {
+    const cleanQuery = searchQuery.trim().toLowerCase();
+    if (!cleanQuery) return advancedFilteredVideos;
+
+    const existingIds = new Set(advancedFilteredVideos.map(video => video.id));
+    const channelMatchedVideos = (Array.isArray(videos) ? videos : [])
+      .filter(video => isVideoVisible(video))
+      .filter(video => activeCategory === '全部' || video.category === activeCategory)
+      .filter(video => String(video?.channel || video?.author || video?.creatorName || video?.username || '').toLowerCase().includes(cleanQuery))
+      .filter(video => {
+        if (!video?.id) return true;
+        if (existingIds.has(video.id)) return false;
+        existingIds.add(video.id);
+        return true;
+      });
+
+    return [...advancedFilteredVideos, ...channelMatchedVideos];
+  })();
 
   const isSameText = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
 
@@ -3831,6 +3912,46 @@ useEffect(() => {
     if (isOwnVideo) return unifiedAvatar;
     return video.avatar || video.creatorAvatar || GUEST_AVATAR;
   };
+
+
+  const matchedSearchChannels = (() => {
+    const cleanQuery = searchQuery.trim().toLowerCase();
+    if (!cleanQuery) return [];
+
+    const channelMap = new Map();
+    (Array.isArray(videos) ? videos : [])
+      .filter(isVideoVisible)
+      .forEach(video => {
+        const channelName = getVideoDisplayName(video);
+        if (!String(channelName).toLowerCase().includes(cleanQuery)) return;
+
+        const key = String(video.userId || channelName).trim();
+        if (!key) return;
+
+        const current = channelMap.get(key) || {
+          name: channelName,
+          userId: video.userId || '',
+          avatar: getVideoAvatarSrc(video),
+          subscriberCount: preserveSubscriberCount(video.subscriberCount, video.subscribers, video.subsCount),
+          videoCount: 0
+        };
+
+        current.videoCount += 1;
+        channelMap.set(key, current);
+      });
+
+    return Array.from(channelMap.values()).slice(0, 5);
+  })();
+
+  const sortedSearchVideos = (() => {
+    if (!searchQuery.trim()) return filteredVideos;
+    if (searchSortType === 'latest') return sortVideos(filteredVideos, 'latest');
+    if (searchSortType === 'views') return sortVideos(filteredVideos, 'views');
+    return filteredVideos;
+  })();
+
+  const visibleSearchVideos = searchResultType === 'channels' ? [] : sortedSearchVideos;
+  const visibleSearchChannels = searchResultType === 'videos' ? [] : matchedSearchChannels;
 
   const renderVideoCard = (video) => {
     const displayName = getVideoDisplayName(video);
@@ -4164,6 +4285,138 @@ useEffect(() => {
     return 'guest';
   };
 
+  const SidebarIcon = ({ type }) => {
+    const iconProps = {
+      width: 22,
+      height: 22,
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.9,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      style: { flexShrink: 0, opacity: 0.95 }
+    };
+
+    if (type === 'home') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <path d="M3.5 10.5 12 3.8l8.5 6.7" />
+          <path d="M5.5 9.8V20h13V9.8" />
+          <path d="M9.3 20v-6.1h5.4V20" />
+        </svg>
+      );
+    }
+
+    if (type === 'subscriptions') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <rect x="4" y="6.5" width="16" height="11" rx="2.3" />
+          <path d="M10.5 10.2 15 12l-4.5 1.8v-3.6Z" fill="currentColor" stroke="none" />
+          <path d="M8 3.8h8" />
+        </svg>
+      );
+    }
+
+    if (type === 'history') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <path d="M4.2 12a7.8 7.8 0 1 0 2.3-5.5" />
+          <path d="M4.2 5.2v4h4" />
+          <path d="M12 7.8V12l3 1.8" />
+        </svg>
+      );
+    }
+
+    if (type === 'liked') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <path d="M12 20.2s-7.2-4.4-8.8-9.1C2.1 7.8 4.1 5 7.2 5c1.8 0 3.2 1 4.1 2.3C12.2 6 13.6 5 15.4 5c3.1 0 5.1 2.8 4 6.1C17.8 15.8 12 20.2 12 20.2Z" />
+        </svg>
+      );
+    }
+
+    if (type === 'user') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <circle cx="12" cy="8" r="3.4" />
+          <path d="M5.5 20c.8-4 3.2-6.2 6.5-6.2s5.7 2.2 6.5 6.2" />
+        </svg>
+      );
+    }
+
+    if (type === 'settings') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a8 8 0 0 0 .1-1.6l2-1.5-2-3.5-2.4 1a7.6 7.6 0 0 0-1.4-.8L15.4 6h-4l-.3 2.6c-.5.2-1 .5-1.4.8l-2.4-1-2 3.5 2 1.5a8 8 0 0 0 .1 1.6l-2 1.5 2 3.5 2.4-1c.4.3.9.6 1.4.8l.3 2.6h4l.3-2.6c.5-.2 1-.5 1.4-.8l2.4 1 2-3.5-2.2-1.5Z" />
+        </svg>
+      );
+    }
+
+    if (type === 'lock') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <rect x="5.5" y="10" width="13" height="10" rx="2.4" />
+          <path d="M8.5 10V7.7a3.5 3.5 0 0 1 7 0V10" />
+          <path d="M12 14v2" />
+        </svg>
+      );
+    }
+
+    if (type === 'key') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <circle cx="7.5" cy="12.5" r="3.2" />
+          <path d="M10.2 10.8 20 1.2" />
+          <path d="M15.8 5.2 18.2 7.6" />
+          <path d="M13.7 7.3 16 9.6" />
+        </svg>
+      );
+    }
+
+    if (type === 'logout') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <path d="M10 5H6.8A1.8 1.8 0 0 0 5 6.8v10.4A1.8 1.8 0 0 0 6.8 19H10" />
+          <path d="M14 8l4 4-4 4" />
+          <path d="M18 12H9" />
+        </svg>
+      );
+    }
+
+    if (type === 'dice') {
+      return (
+        <svg {...iconProps} aria-hidden="true">
+          <rect x="5" y="5" width="14" height="14" rx="3" />
+          <circle cx="9" cy="9" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="9" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="15" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="15" r=".9" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    }
+
+    return null;
+  };
+
+  const SidebarMenuLabel = ({ icon, children }) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+      <SidebarIcon type={icon} />
+      <span>{children}</span>
+    </span>
+  );
+
+  const IconLabel = ({ icon, children, gap = 10, iconSize = 20 }) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap, minWidth: 0 }}>
+      <span style={{ width: iconSize, height: iconSize, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'currentColor' }}>
+        <SidebarIcon type={icon} />
+      </span>
+      <span>{children}</span>
+    </span>
+  );
+
   const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
 
   return (
@@ -4181,30 +4434,143 @@ useEffect(() => {
           <span className="logo-badge-orange">hub</span>
         </div>
         
-        <div className="search-bar">
+        <div className="search-bar" style={{ position: 'relative' }}>
           <input 
             type="text" 
             placeholder="搜尋影片、頻道..." 
             className="search-input" 
             value={searchInputStr}
+            autoComplete="off"
             onChange={(e) => {
               setSearchInputStr(e.target.value);
+              setShowSearchDropdown(true);
               if (currentView !== 'watch') setCurrentView('home');
+            }}
+            onFocus={() => {
+              setShowSearchDropdown(true);
+            }}
+            onBlur={() => {
+              setTimeout(() => setShowSearchDropdown(false), 160);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 handleSearchSubmit();
               }
+              if (e.key === 'Escape') {
+                setShowSearchDropdown(false);
+              }
             }}
           />
           <button
             className="search-btn"
-            onClick={handleSearchSubmit}
+            style={{ color: '#ff7a00' }}
+            onClick={() => handleSearchSubmit()}
           >
             <svg viewBox="0 0 24 24" className="search-icon-svg">
               <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path>
             </svg>
           </button>
+
+          {showSearchDropdown && (searchInputStr.trim() || searchHistory.length > 0 || HOT_SEARCHES.length > 0) && (
+            <div
+              className="search-suggestions-dropdown"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                left: 0,
+                right: 0,
+                background: '#1f1f1f',
+                border: '1px solid #333',
+                borderRadius: '14px',
+                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.45)',
+                overflow: 'hidden',
+                zIndex: 2000,
+                padding: '8px 0',
+                maxHeight: '70vh',
+                overflowY: 'auto'
+              }}
+            >
+              {searchInputStr.trim() && suggestions.length > 0 && (
+                <div>
+                  <div style={{ color: '#aaa', fontSize: '12px', fontWeight: 700, padding: '8px 16px 6px' }}>搜尋建議</div>
+                  {suggestions.map((item, index) => (
+                    <button
+                      key={`suggestion-${item}-${index}`}
+                      type="button"
+                      className="search-suggestion-item"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSearchSubmit(item);
+                      }}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span aria-hidden="true">🔍</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {searchHistory.length > 0 && (
+                <div style={{ borderTop: searchInputStr.trim() && suggestions.length > 0 ? '1px solid #333' : 'none', paddingTop: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px 6px' }}>
+                    <span style={{ color: '#aaa', fontSize: '12px', fontWeight: 700 }}>搜尋紀錄</span>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        clearSearchHistory();
+                      }}
+                      style={{ border: 0, background: 'transparent', color: '#3ea6ff', cursor: 'pointer', fontSize: '12px' }}
+                    >
+                      清除
+                    </button>
+                  </div>
+                  {searchHistory.map((item, index) => (
+                    <button
+                      key={`history-${item}-${index}`}
+                      type="button"
+                      className="search-suggestion-item"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSearchSubmit(item);
+                      }}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span aria-hidden="true">🕘</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ borderTop: (searchHistory.length > 0 || (searchInputStr.trim() && suggestions.length > 0)) ? '1px solid #333' : 'none', paddingTop: '4px' }}>
+                <div style={{ color: '#aaa', fontSize: '12px', fontWeight: 700, padding: '8px 16px 6px' }}>熱門搜尋</div>
+                {HOT_SEARCHES.map((item, index) => (
+                  <button
+                    key={`hot-${item}-${index}`}
+                    type="button"
+                    className="search-suggestion-item"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handleSearchSubmit(item);
+                    }}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <span aria-hidden="true">🔥</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
           
         {/* 💡 核心修正 1：移除 style 的 gap，由 className="navbar-actions" 在 CSS 統籌控制 */}
@@ -4257,7 +4623,7 @@ useEffect(() => {
                     className="dropdown-item-btn"
                     onClick={handleMyChannelClick}
                   >
-                    👤 我的頻道
+                    <IconLabel icon="user">我的頻道</IconLabel>
                   </button>
 
                   <button
@@ -4275,7 +4641,7 @@ useEffect(() => {
                       setIsProfileOpen(false);
                     }}
                   >
-                    ⚙️ 帳號設定
+                    <IconLabel icon="settings">帳號設定</IconLabel>
                   </button>
 
                   <button
@@ -4287,7 +4653,7 @@ useEffect(() => {
                       setIsProfileOpen(false);
                     }}
                   >
-                    {isIdLoggedIn ? '🔐 修改密碼' : '🔐 新增登入密碼'}
+                    <IconLabel icon="lock">{isIdLoggedIn ? '修改密碼' : '新增登入密碼'}</IconLabel>
                   </button>
 
                   {isIdLoggedIn ? (
@@ -4295,7 +4661,7 @@ useEffect(() => {
                       className="dropdown-item-btn"
                       onClick={handleLogoutId}
                     >
-                      🚪 登出
+                      <IconLabel icon="logout">登出</IconLabel>
                     </button>
                   ) : (
                     <button
@@ -4307,7 +4673,7 @@ useEffect(() => {
                         setIsProfileOpen(false);
                       }}
                     >
-                      🔑 登入
+                      <IconLabel icon="key">登入</IconLabel>
                     </button>
                   )}
                 </div>
@@ -4321,12 +4687,20 @@ useEffect(() => {
         {currentView !== 'watch' && (
           <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
             <div className="sidebar-menu">
-              <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={handleHomeNavigation}>🏠 首頁</button>
-              <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('subscriptions', '/subscriptions')}>📺 訂閱頻道</button>
+              <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={handleHomeNavigation}>
+                <SidebarMenuLabel icon="home">首頁</SidebarMenuLabel>
+              </button>
+              <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('subscriptions', '/subscriptions')}>
+                <SidebarMenuLabel icon="subscriptions">訂閱頻道</SidebarMenuLabel>
+              </button>
               <hr style={{ border: 'none', borderTop: '1px solid #1f1f1f', margin: '12px 0' }} />
               <div className="sidebar-section-title">我的專區</div>
-              <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('history', '/history')}>🕒 觀看紀錄</button>
-              <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('liked', '/liked')}>🔥 喜歡的影片</button>
+              <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('history', '/history')}>
+                <SidebarMenuLabel icon="history">觀看紀錄</SidebarMenuLabel>
+              </button>
+              <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('liked', '/liked')}>
+                <SidebarMenuLabel icon="liked">喜歡的影片</SidebarMenuLabel>
+              </button>
             </div>
 
             {getSortedSubscribedChannelDetails().length > 0 && (
@@ -4388,17 +4762,19 @@ useEffect(() => {
         <main className="content-area main-content" ref={contentAreaRef}>
           {currentView === 'home' && (
             <>
-              <div className="category-bar">
-                {CATEGORIES.map((category) => (
-                  <button 
-                    key={category} 
-                    onClick={() => handleCategoryChange(category)} 
-                    className={`category-btn ${activeCategory === category ? 'active' : ''}`}
-                  >
-                    {category}
-                  </button>
-                ))}
-              </div>
+              {!searchQuery.trim() && (
+                <div className="category-bar">
+                  {CATEGORIES.map((category) => (
+                    <button 
+                      key={category} 
+                      onClick={() => handleCategoryChange(category)} 
+                      className={`category-btn ${activeCategory === category ? 'active' : ''}`}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {(isPageLoading || isFirstInit) ? (
                 <div className="video-grid">
@@ -4416,9 +4792,145 @@ useEffect(() => {
                   ))}
                 </div>
               ) : (
+                searchQuery.trim() ? (
+                  <div className="search-results-list" style={{ display: 'flex', flexDirection: 'column', gap: '18px', padding: '4px 0 40px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        {[
+                          { key: 'all', label: '全部' },
+                          { key: 'videos', label: '影片' },
+                          { key: 'channels', label: '頻道' }
+                        ].map(tab => (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setSearchResultType(tab.key)}
+                            style={{
+                              border: 0,
+                              borderRadius: '999px',
+                              padding: '10px 18px',
+                              background: searchResultType === tab.key ? '#ff7a00' : '#222',
+                              color: searchResultType === tab.key ? '#fff' : '#ddd',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                              boxShadow: searchResultType === tab.key ? '0 0 18px rgba(255, 122, 0, 0.35)' : 'none'
+                            }}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <select
+                        value={searchSortType}
+                        onChange={(e) => setSearchSortType(e.target.value)}
+                        style={{
+                          background: '#222',
+                          color: '#fff',
+                          border: '1px solid #ff7a00',
+                          borderRadius: '999px',
+                          padding: '10px 14px',
+                          outline: 'none',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="relevance">最相關</option>
+                        <option value="latest">最新上傳</option>
+                        <option value="views">觀看次數</option>
+                      </select>
+                    </div>
+
+                    {visibleSearchChannels.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {visibleSearchChannels.map(channel => (
+                          <div
+                            key={`search-channel-${channel.userId || channel.name}`}
+                            className="search-channel-result"
+                            style={{ display: 'grid', gridTemplateColumns: '170px 1fr auto', alignItems: 'center', gap: '26px', padding: '12px 0 20px', borderBottom: '1px solid #2a2a2a' }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              <img
+                                src={channel.avatar || GUEST_AVATAR}
+                                alt={channel.name}
+                                onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
+                                onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId)}
+                                style={{ width: '132px', height: '132px', borderRadius: '50%', objectFit: 'cover', cursor: 'pointer' }}
+                              />
+                            </div>
+                            <div
+                              onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId)}
+                              style={{ minWidth: 0, cursor: 'pointer' }}
+                            >
+                              <h2 style={{ margin: '0 0 8px', color: '#f1f1f1', fontSize: '20px', fontWeight: 700 }}>{channel.name}</h2>
+                              <p style={{ margin: 0, color: '#aaa', fontSize: '13px' }}>
+                                @{channel.userId || channel.name} • {formatSubscribers(channel.subscriberCount)}位訂閱者 • {channel.videoCount}部影片
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleSubscribe(channel.name)}
+                              style={{ border: 0, borderRadius: '999px', padding: '10px 18px', background: subscribedChannels.includes(channel.name) ? '#272727' : '#f1f1f1', color: subscribedChannels.includes(channel.name) ? '#f1f1f1' : '#0f0f0f', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              {subscribedChannels.includes(channel.name) ? '已訂閱' : '訂閱'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {visibleSearchVideos.length > 0 ? (
+                      visibleSearchVideos.map((video) => {
+                        const displayName = getVideoDisplayName(video);
+                        const avatarSrc = getVideoAvatarSrc(video);
+
+                        return (
+                          <div
+                            key={`search-video-${video.id}`}
+                            className="search-video-result"
+                            onClick={() => handleVideoClick(video)}
+                            style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 520px) minmax(0, 1fr)', gap: '18px', alignItems: 'start', cursor: 'pointer' }}
+                          >
+                            <div className="thumbnail-wrapper" style={{ borderRadius: '12px', overflow: 'hidden' }}>
+                              <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
+                              <span className="video-duration">{video.duration}</span>
+                            </div>
+                            <div style={{ minWidth: 0, paddingTop: '2px' }}>
+                              <h3 style={{ margin: '0 0 8px', color: '#f1f1f1', fontSize: '20px', lineHeight: 1.35, fontWeight: 700 }}>
+                                {video.title}
+                              </h3>
+                              <p style={{ margin: '0 0 12px', color: '#aaa', fontSize: '13px' }}>
+                                {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
+                              </p>
+                              <div
+                                onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#aaa', fontSize: '13px' }}
+                              >
+                                <img
+                                  src={avatarSrc}
+                                  alt={displayName}
+                                  onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
+                                  style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover' }}
+                                />
+                                <span>{displayName}</span>
+                              </div>
+                              <p style={{ margin: 0, color: '#aaa', fontSize: '13px', lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                                {video.description || video.summary || ''}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : visibleSearchChannels.length === 0 ? (
+                      <div className="empty-state" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
+                        🔍 找不到符合「{searchQuery}」的影片或頻道
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
                 <div className="video-grid">
-                  {getFilteredVideos().length > 0 ? (
-                    getFilteredVideos().map((video) => (
+                  {filteredVideos.length > 0 ? (
+                    filteredVideos.map((video) => (
                       <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
                         <div className="thumbnail-wrapper">
                           <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
@@ -4479,7 +4991,8 @@ useEffect(() => {
                     )
                   )}
                 </div>
-              )}
+
+                )              )}
             </>
           )}
 
@@ -5053,7 +5566,7 @@ useEffect(() => {
                     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsSettingsModalOpen(false); }}>
                       <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
                         <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                          <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>⚙️ 帳號設定</h2>
+                          <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="settings" gap={10}>帳號設定</IconLabel></h2>
                           <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                         </div>
                         <form
@@ -5101,7 +5614,7 @@ useEffect(() => {
                           fontSize: '14px'
                         }}
                       >
-                        🎲 隨機頭像
+                        <IconLabel icon="dice" gap={8}>隨機頭像</IconLabel>
                       </button>
 
                       <button
@@ -5123,7 +5636,7 @@ useEffect(() => {
                           fontSize: '14px'
                         }}
                       >
-                        🔑 修改 ID / 密碼
+                        <IconLabel icon="key" gap={8}>修改 ID / 密碼</IconLabel>
                       </button>
                     </div>
                       
@@ -5222,7 +5735,7 @@ useEffect(() => {
                         margin: 0
                       }}
                     >
-                      🔐 要新增帳號密碼嗎？
+                      <IconLabel icon="lock" gap={10}>要新增帳號密碼嗎？</IconLabel>
                     </h2>
 
                     <button
@@ -5414,7 +5927,7 @@ useEffect(() => {
                     }}
                   >
                     <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>
-                      🔑 登入現有帳號
+                      <IconLabel icon="key" gap={10}>登入現有帳號</IconLabel>
                     </h2>
 
                     <button
@@ -5543,7 +6056,7 @@ useEffect(() => {
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
                   <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔑 修改 ID / 密碼</h2>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="key" gap={10}>修改 ID / 密碼</IconLabel></h2>
                     <button className="close-modal-btn" onClick={() => setIsChangeIdModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                   </div>
 
@@ -5614,7 +6127,7 @@ useEffect(() => {
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
                   <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>{isIdLoggedIn ? '🔐 修改密碼' : '🔐 新增登入密碼'}</h2>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="lock" gap={10}>{isIdLoggedIn ? '修改密碼' : '新增登入密碼'}</IconLabel></h2>
                     <button className="close-modal-btn" onClick={() => setIsChangePasswordModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                   </div>
 
