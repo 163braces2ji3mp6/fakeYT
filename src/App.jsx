@@ -261,6 +261,23 @@ function formatSubscribers(count) {
 }
 
 
+// 訂閱數保護工具：改 ID / 密碼 / 頭貼時一律用這個保留最大可信訂閱數。
+// 支援舊欄位 subscriberCount / subscribers / subsCount，也支援 subscribers 是陣列或 Set 的情況。
+const getSafeSubscriberCountValue = (value) => {
+  if (value === undefined || value === null || value === '') return 0;
+  if (Array.isArray(value)) return value.length;
+  if (value instanceof Set) return value.size;
+  if (typeof value === 'object' && typeof value.size === 'number') return value.size;
+
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? num : 0;
+};
+
+const preserveSubscriberCount = (...values) => {
+  return Math.max(0, ...values.map(getSafeSubscriberCountValue));
+};
+
+
 // 🟢 排序系統工具：支援 Firebase Timestamp、Date、字串日期
 const getDateValue = (value) => {
   if (!value) return 0;
@@ -1347,15 +1364,7 @@ const toastTimeoutRef = useRef(null);
 
       const channelData = channelDocSnap.exists() ? channelDocSnap.data() : {};
 
-      const getSafeSubscriberCount = (...values) => {
-        for (const value of values) {
-          if (value !== undefined && value !== null && value !== '') {
-            const num = Number(value);
-            if (!Number.isNaN(num)) return num;
-          }
-        }
-        return 0;
-      };
+      const getSafeSubscriberCount = (...values) => preserveSubscriberCount(...values);
 
       const preservedSubscriberCount = getSafeSubscriberCount(
         channelData.subscriberCount,
@@ -1509,11 +1518,10 @@ const toastTimeoutRef = useRef(null);
       currentUserAvatar ||
       GUEST_AVATAR;
 
-    const oldSubscriberCount = Number(
-      oldChannelData.subscriberCount ??
-      oldChannelData.subscribers ??
-      oldChannelData.subsCount ??
-      0
+    const oldSubscriberCount = preserveSubscriberCount(
+      oldChannelData.subscriberCount,
+      oldChannelData.subscribers,
+      oldChannelData.subsCount
     );
 
     const {
@@ -1729,10 +1737,7 @@ const toastTimeoutRef = useRef(null);
 
       const avatarUrl = oldData.avatar || currentUserAvatar || GUEST_AVATAR;
 
-      const getSafeSubscriberNumber = (value) => {
-        const num = Number(value);
-        return Number.isNaN(num) ? 0 : num;
-      };
+      const getSafeSubscriberNumber = (value) => getSafeSubscriberCountValue(value);
 
       // 改 ID 時一定保留原訂閱數。
       // 取所有可能來源的最大值，避免因某個來源是 0 而把正確訂閱數蓋掉。
@@ -1891,6 +1896,13 @@ const toastTimeoutRef = useRef(null);
       const channelRef = doc(db, 'Channels', cleanCurrentUserId);
       const channelSnap = await getDoc(channelRef);
       const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+      const preservedSubscriberCount = preserveSubscriberCount(
+        oldChannelData.subscriberCount,
+        oldChannelData.subscribers,
+        oldChannelData.subsCount,
+        targetChannel?.subscriberCount,
+        liveSubscriberCount
+      );
       const alreadyHadPassword = Boolean(oldChannelData?.passwordHash || localStorage.getItem(`leafhub_password_${cleanCurrentUserId}`));
 
       // 如果 Firebase Auth 已經是正式帳號，就同步更新 Firebase Auth 密碼。
@@ -1905,7 +1917,7 @@ const toastTimeoutRef = useRef(null);
         username: oldChannelData.username || cleanDisplayName,
         channelName: oldChannelData.channelName || cleanDisplayName,
         avatar: oldChannelData.avatar || unifiedAvatar || GUEST_AVATAR,
-        subscriberCount: Number(oldChannelData.subscriberCount ?? liveSubscriberCount ?? 0),
+        subscriberCount: preservedSubscriberCount,
         passwordHash,
         hasPassword: true,
         passwordLoginEnabled: true,
@@ -1922,6 +1934,8 @@ const toastTimeoutRef = useRef(null);
       localStorage.setItem('device_user_name', cleanDisplayName);
       localStorage.setItem('device_user_avatar', unifiedAvatar || GUEST_AVATAR);
       setIsIdLoggedIn(true);
+      setLiveSubscriberCount(preservedSubscriberCount);
+      setTargetChannel(prev => prev ? { ...prev, subscriberCount: preservedSubscriberCount } : prev);
 
       setIsChangePasswordModalOpen(false);
       setNewPasswordInput('');
@@ -2163,14 +2177,17 @@ const toastTimeoutRef = useRef(null);
 
 
   // 🟢 讓網址成為真正的頁面狀態：上一頁、重新整理、分享連結都會正常。
+  // ⚠️ 不要把 currentView 放進 dependencies。
+  // 原因：點側邊欄時會先 setCurrentView('subscriptions/history/liked')，但 location.pathname 還是上一頁，
+  // 如果 effect 因 currentView 改變而立刻執行，就會用「舊網址」把 currentView 改回上一頁，造成畫面閃一下。
   useEffect(() => {
     if (routeVideoId) {
-      if (currentView !== 'watch') setCurrentView('watch');
+      setCurrentView(prev => prev === 'watch' ? prev : 'watch');
       return;
     }
 
     if (routeChannelKey) {
-      if (currentView !== 'channel') setCurrentView('channel');
+      setCurrentView(prev => prev === 'channel' ? prev : 'channel');
       return;
     }
 
@@ -2182,10 +2199,8 @@ const toastTimeoutRef = useRef(null);
     };
 
     const nextView = pathToView[location.pathname] || 'home';
-    if (currentView !== nextView) {
-      setCurrentView(nextView);
-    }
-  }, [location.pathname, routeVideoId, routeChannelKey, currentView]);
+    setCurrentView(prev => prev === nextView ? prev : nextView);
+  }, [location.pathname, routeVideoId, routeChannelKey]);
 
   // 🟢 直接開啟 /watch/YouTube影片ID 時，從影片清單找出正確影片並進入播放頁。
   useEffect(() => {
@@ -2288,6 +2303,9 @@ const toastTimeoutRef = useRef(null);
   };
 
   const handleInternalViewNavigation = (view, path) => {
+    setIsPageLoading(false);
+    setIsVideoLoading(false);
+    setIsChannelLoading(false);
     setCurrentView(view);
     navigate(path);
     forceScrollToTop();
