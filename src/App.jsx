@@ -4947,8 +4947,8 @@ useEffect(() => {
 
       {/* 上傳 Modal */}
       {isUploadModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsUploadModalOpen(false)}>
-          <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
+        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsUploadModalOpen(false); }}>
+          <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
             <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>📥 上傳新影片</h2>
               <button className="close-modal-btn" onClick={() => setIsUploadModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
@@ -5032,8 +5032,8 @@ useEffect(() => {
       ============================== */}
         {/* 設定 Modal */}
                   {isSettingsModalOpen && (
-                    <div className="modal-overlay" onClick={() => setIsSettingsModalOpen(false)}>
-                      <div className="upload-modal-window" onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
+                    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsSettingsModalOpen(false); }}>
+                      <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}>
                         <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                           <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>⚙️ 帳號設定</h2>
                           <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
@@ -5173,10 +5173,11 @@ useEffect(() => {
             {isSetPasswordModalOpen && (
               <div
                 className="modal-overlay"
-                onClick={() => setIsSetPasswordModalOpen(false)}
+                onMouseDown={(e) => { if (e.target === e.currentTarget) setIsSetPasswordModalOpen(false); }}
               >
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     background: '#141414',
@@ -5370,10 +5371,11 @@ useEffect(() => {
             {isIdLoginModalOpen && (
               <div
                 className="modal-overlay"
-                onClick={() => { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); }}
+                onMouseDown={(e) => { if (e.target === e.currentTarget) { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); } }}
               >
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     background: '#141414',
@@ -5399,7 +5401,7 @@ useEffect(() => {
 
                     <button
                       className="close-modal-btn"
-                      onClick={() => { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); }}
+                      onMouseDown={(e) => { if (e.target === e.currentTarget) { setIsIdLoginModalOpen(false); setLoginPasswordInput(''); } }}
                       style={{
                         background: 'transparent',
                         border: 'none',
@@ -5515,9 +5517,10 @@ useEffect(() => {
               Account Edit Modal / 修改 ID 與密碼
             ============================== */}
             {isChangeIdModalOpen && (
-              <div className="modal-overlay" onClick={() => setIsChangeIdModalOpen(false)}>
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsChangeIdModalOpen(false); }}>
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
@@ -5585,9 +5588,10 @@ useEffect(() => {
               Change Password Modal / 修改密碼
             ============================== */}
             {isChangePasswordModalOpen && (
-              <div className="modal-overlay" onClick={() => setIsChangePasswordModalOpen(false)}>
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsChangePasswordModalOpen(false); }}>
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
@@ -5651,9 +5655,10 @@ useEffect(() => {
               Edit Video Title Modal / 修改影片標題
             ============================== */}
             {isEditVideoTitleModalOpen && videoToEditTitle && (
-              <div className="modal-overlay" onClick={handleCancelEditVideoTitle}>
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) handleCancelEditVideoTitle(); }}>
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{ background: '#141414', border: '1px solid #2a2a2a', padding: '24px', borderRadius: '12px', width: '460px', maxWidth: '90%' }}
                 >
@@ -5711,9 +5716,10 @@ useEffect(() => {
               Delete Video Confirm Modal / 刪除影片確認
             ============================== */}
             {isDeleteVideoModalOpen && videoToDelete && (
-              <div className="modal-overlay" onClick={handleCancelDeleteVideo}>
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) handleCancelDeleteVideo(); }}>
                 <div
                   className="upload-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
                   style={{ background: '#141414', border: '1px solid #2a2a2a', padding: '24px', borderRadius: '12px', width: '460px', maxWidth: '90%' }}
                 >
