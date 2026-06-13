@@ -30,7 +30,7 @@ import {
 
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 import { db, auth } from './firebase';
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField, runTransaction } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 import { useAdvancedSearch, getSearchSuggestions } from './hooks/useAdvancedSearch';
@@ -2246,6 +2246,26 @@ const toastTimeoutRef = useRef(null);
     if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
   };
 
+  const startPageBuffer = (duration = 520) => {
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+    }
+
+    setIsPageLoading(true);
+    bufferTimeoutRef.current = setTimeout(() => {
+      setIsPageLoading(false);
+      bufferTimeoutRef.current = null;
+    }, duration);
+  };
+
+  const stopPageBuffer = () => {
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
+    }
+    setIsPageLoading(false);
+  };
+
 
   // 🟢 讓網址成為真正的頁面狀態：上一頁、重新整理、分享連結都會正常。
   // ⚠️ 不要把 currentView 放進 dependencies。
@@ -2374,17 +2394,23 @@ const toastTimeoutRef = useRef(null);
   };
 
   const handleInternalViewNavigation = (view, path) => {
-    setIsPageLoading(false);
     setIsVideoLoading(false);
     setIsChannelLoading(false);
     setCurrentView(view);
     navigate(path);
     forceScrollToTop();
+    startPageBuffer(520);
   };
 
   const handleMyChannelClick = () => {
-    setIsChannelLoading(true); 
-    setTargetChannel({
+    startPageBuffer(620);
+    setIsChannelLoading(true);
+    setCurrentView('channel');
+    setChannelTab('videos');
+    setIsProfileOpen(false);
+    forceScrollToTop();
+
+    const myChannelData = {
       userId: currentUserId,
       name: localUsername,
       username: localUsername,
@@ -2392,13 +2418,16 @@ const toastTimeoutRef = useRef(null);
       avatar: unifiedAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
       bio: getRandomBio(),
       subscriberCount: liveSubscriberCount
-    });
-    setTargetChannelUserId(currentUserId);
+    };
+
     navigate(`/channel/${encodeURIComponent(currentUserId || localUsername || 'me')}`);
-    setCurrentView('channel'); 
-    setChannelTab('videos'); 
-    setIsProfileOpen(false); 
-    forceScrollToTop(); 
+
+    setTimeout(() => {
+      setTargetChannel(myChannelData);
+      setTargetChannelUserId(currentUserId);
+      setIsChannelLoading(false);
+      stopPageBuffer();
+    }, 520);
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
@@ -2406,6 +2435,7 @@ const toastTimeoutRef = useRef(null);
   const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
     if (e) e.stopPropagation();
 
+    startPageBuffer(680);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2427,10 +2457,13 @@ const toastTimeoutRef = useRef(null);
         bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！',
         userId: 'shiauye_official'
       };
-      setTargetChannel(shiauyeChannel);
-      setTargetChannelUserId('shiauye_official');
-      localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
-      setIsChannelLoading(false);
+      setTimeout(() => {
+        setTargetChannel(shiauyeChannel);
+        setTargetChannelUserId('shiauye_official');
+        localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
+        setIsChannelLoading(false);
+        stopPageBuffer();
+      }, 520);
       return;
     }
 
@@ -2685,9 +2718,13 @@ const toastTimeoutRef = useRef(null);
     const remainingTime = minimumDelay - elapsedTime;
 
     if (remainingTime > 0) {
-      setTimeout(() => setIsChannelLoading(false), remainingTime);
+      setTimeout(() => {
+        setIsChannelLoading(false);
+        stopPageBuffer();
+      }, remainingTime);
     } else {
       setIsChannelLoading(false);
+      stopPageBuffer();
     }
   };
 
@@ -2934,73 +2971,248 @@ useEffect(() => {
   };
 
   const toggleSubscribe = async (channelName) => {
-    if (!channelName || INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(channelName)) return;
+    const cleanChannelName = String(channelName || '').trim();
+    if (!cleanChannelName || INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(cleanChannelName)) return;
 
-    const isCurrentlySubbed = subscribedChannels.includes(channelName);
+    const sameText = (a, b) => String(a ?? '').trim() !== '' && String(a ?? '').trim() === String(b ?? '').trim();
+    const getVideoChannelName = (video = {}) => video.channel || video.author || video.creatorName || video.username || '';
 
-    const channelInfo =
-      targetChannel?.name === channelName
+    const allKnownVideos = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
+    ];
+
+    const matchedVideo = allKnownVideos.find(video => {
+      const displayName = getVideoChannelName(video);
+      return (
+        sameText(displayName, cleanChannelName) ||
+        sameText(video?.channel, cleanChannelName) ||
+        sameText(video?.author, cleanChannelName) ||
+        sameText(video?.creatorName, cleanChannelName) ||
+        sameText(video?.username, cleanChannelName) ||
+        sameText(video?.userId, targetChannel?.userId || targetChannelUserId)
+      );
+    });
+
+    const baseChannelInfo =
+      sameText(targetChannel?.name, cleanChannelName) ||
+      sameText(targetChannel?.username, cleanChannelName) ||
+      sameText(targetChannel?.channelName, cleanChannelName)
         ? {
             userId: targetChannel?.userId || targetChannelUserId,
-            name: targetChannel?.name,
-            username: targetChannel?.username || targetChannel?.name,
-            channelName: targetChannel?.channelName || targetChannel?.name,
-            avatar: targetChannel?.avatar || getTargetChannelAvatarSrc?.() || unifiedAvatar
+            name: targetChannel?.name || cleanChannelName,
+            username: targetChannel?.username || targetChannel?.name || cleanChannelName,
+            channelName: targetChannel?.channelName || targetChannel?.name || cleanChannelName,
+            avatar: targetChannel?.avatar || getTargetChannelAvatarSrc?.() || matchedVideo?.avatar || matchedVideo?.creatorAvatar || GUEST_AVATAR,
+            subscriberCount: targetChannel?.subscriberCount
           }
-        : selectedVideo?.channel === channelName
+        : selectedVideo && sameText(getVideoChannelName(selectedVideo), cleanChannelName)
           ? {
               userId: selectedVideo?.userId,
-              name: selectedVideo?.channel,
-              username: selectedVideo?.username || selectedVideo?.channel,
-              channelName: selectedVideo?.channel,
-              avatar: selectedVideo?.avatar || selectedVideo?.creatorAvatar
+              name: getVideoChannelName(selectedVideo) || cleanChannelName,
+              username: selectedVideo?.username || getVideoChannelName(selectedVideo) || cleanChannelName,
+              channelName: selectedVideo?.channel || getVideoChannelName(selectedVideo) || cleanChannelName,
+              avatar: selectedVideo?.avatar || selectedVideo?.creatorAvatar || selectedVideo?.channelAvatar || GUEST_AVATAR,
+              subscriberCount: selectedVideo?.subscriberCount
             }
           : {
-              userId: targetChannel?.userId || targetChannelUserId || selectedVideo?.userId || '',
-              name: channelName,
-              username: channelName,
-              channelName,
-              avatar: targetChannel?.avatar || selectedVideo?.avatar || selectedVideo?.creatorAvatar || unifiedAvatar
+              userId: matchedVideo?.userId || targetChannel?.userId || targetChannelUserId || selectedVideo?.userId || '',
+              name: cleanChannelName,
+              username: cleanChannelName,
+              channelName: cleanChannelName,
+              avatar: matchedVideo?.avatar || matchedVideo?.creatorAvatar || targetChannel?.avatar || selectedVideo?.avatar || selectedVideo?.creatorAvatar || GUEST_AVATAR,
+              subscriberCount: matchedVideo?.subscriberCount
             };
 
-    const normalizedChannelInfo = channelName === '小葉'
+    const normalizedChannelInfo = cleanChannelName === '小葉'
       ? {
-          ...channelInfo,
+          ...baseChannelInfo,
           userId: 'shiauye_official',
           name: '小葉',
           username: '小葉',
           channelName: '小葉',
           avatar: avatarImage
         }
-      : channelInfo;
+      : baseChannelInfo;
 
-    setSubscribedChannels(prev => {
-      const nextSubs = isCurrentlySubbed ? prev.filter(item => item !== channelName) : [...prev, channelName];
-      localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
-      return nextSubs;
-    });
+    const isCurrentlySubbed = isSubscribedToChannel(normalizedChannelInfo) || subscribedChannels.includes(cleanChannelName);
+    const subscribeDelta = isCurrentlySubbed ? -1 : 1;
+    const currentDisplayCount = getTargetChannelSubscriberCount();
+    const optimisticSubscriberCount = Math.max(0, currentDisplayCount + subscribeDelta);
 
-    setSubscribedChannelDetails(prev => {
-      const safePrev = Array.isArray(prev) ? prev : [];
-      const nextDetails = isCurrentlySubbed
-        ? safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
-        : [
-            {
-              ...normalizedChannelInfo,
-              name: normalizedChannelInfo.name || channelName,
-              username: normalizedChannelInfo.username || channelName,
-              channelName: normalizedChannelInfo.channelName || channelName,
-              avatar: normalizedChannelInfo.avatar || GUEST_AVATAR,
-              subscribedAt: Date.now()
-            },
-            ...safePrev.filter(item => item.name !== channelName && item.channelName !== channelName && item.username !== channelName)
-          ];
+    const findExistingChannelDocId = async () => {
+      const directId = String(normalizedChannelInfo.userId || '').trim();
+      if (directId) {
+        const directSnap = await getDoc(doc(db, 'Channels', directId));
+        if (directSnap.exists()) return directId;
+      }
 
-      localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(nextDetails));
-      return nextDetails;
-    });
+      const candidateFields = ['name', 'username', 'channelName'];
+      for (const fieldName of candidateFields) {
+        const q = query(collection(db, 'Channels'), where(fieldName, '==', cleanChannelName));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const bestDoc = snap.docs
+            .map(channelDoc => ({ id: channelDoc.id, data: channelDoc.data() || {} }))
+            .sort((a, b) => preserveSubscriberCount(b.data.subscriberCount, b.data.subscribers, b.data.subsCount) - preserveSubscriberCount(a.data.subscriberCount, a.data.subscribers, a.data.subsCount))[0];
+          return bestDoc.id;
+        }
+      }
 
-    await toggleChannelSubscription(normalizedChannelInfo, !isCurrentlySubbed);
+      return directId || cleanChannelName;
+    };
+
+    const patchVideoSubscriberCount = (subscriberCount, channelDocId = normalizedChannelInfo.userId || '') => (video) => {
+      const videoDisplayName = getVideoChannelName(video);
+      const isSameChannel =
+        sameText(video?.userId, channelDocId) ||
+        sameText(video?.userId, normalizedChannelInfo.userId) ||
+        sameText(videoDisplayName, cleanChannelName) ||
+        sameText(video?.channel, cleanChannelName) ||
+        sameText(video?.author, cleanChannelName) ||
+        sameText(video?.creatorName, cleanChannelName) ||
+        sameText(video?.username, cleanChannelName);
+
+      return isSameChannel ? { ...video, subscriberCount, userId: video?.userId || normalizedChannelInfo.userId || channelDocId } : video;
+    };
+
+    const applyLocalSubscriptionState = (nextSubscriberCount, channelDocId = normalizedChannelInfo.userId || '') => {
+      setSubscribedChannels(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        const nextSubs = isCurrentlySubbed
+          ? safePrev.filter(item => !sameText(item, cleanChannelName))
+          : Array.from(new Set([...safePrev, cleanChannelName]));
+        localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
+        return nextSubs;
+      });
+
+      setSubscribedChannelDetails(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        const nextDetails = isCurrentlySubbed
+          ? safePrev.filter(item => {
+              const detailCandidates = getChannelIdentityCandidates(item);
+              const removeCandidates = getChannelIdentityCandidates({ ...normalizedChannelInfo, userId: normalizedChannelInfo.userId || channelDocId });
+              return !detailCandidates.some(detailValue => removeCandidates.some(removeValue => sameChannelValue(detailValue, removeValue)));
+            })
+          : [
+              {
+                ...normalizedChannelInfo,
+                userId: normalizedChannelInfo.userId || channelDocId,
+                name: normalizedChannelInfo.name || cleanChannelName,
+                username: normalizedChannelInfo.username || cleanChannelName,
+                channelName: normalizedChannelInfo.channelName || cleanChannelName,
+                avatar: normalizedChannelInfo.avatar || GUEST_AVATAR,
+                subscriberCount: nextSubscriberCount,
+                subscribedAt: Date.now()
+              },
+              ...safePrev.filter(item => {
+                const detailCandidates = getChannelIdentityCandidates(item);
+                const addCandidates = getChannelIdentityCandidates({ ...normalizedChannelInfo, userId: normalizedChannelInfo.userId || channelDocId });
+                return !detailCandidates.some(detailValue => addCandidates.some(addValue => sameChannelValue(detailValue, addValue)));
+              })
+            ];
+
+        localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(nextDetails));
+        return nextDetails;
+      });
+
+      setTargetChannel(prev => {
+        if (!prev) return prev;
+        const isSameChannel =
+          sameText(prev.userId, channelDocId) ||
+          sameText(prev.userId, normalizedChannelInfo.userId) ||
+          sameText(prev.name, cleanChannelName) ||
+          sameText(prev.username, cleanChannelName) ||
+          sameText(prev.channelName, cleanChannelName);
+
+        return isSameChannel ? { ...prev, userId: prev.userId || normalizedChannelInfo.userId || channelDocId, subscriberCount: nextSubscriberCount } : prev;
+      });
+
+      const patcher = patchVideoSubscriberCount(nextSubscriberCount, channelDocId);
+      setSelectedVideo(prev => prev ? patcher(prev) : prev);
+      setRawFirebaseVideos(prev => Array.isArray(prev) ? prev.map(patcher) : prev);
+      setVideos(prev => Array.isArray(prev) ? prev.map(patcher) : prev);
+      setWatchHistory(prev => {
+        const nextHistory = Array.isArray(prev) ? prev.map(patcher) : [];
+        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+        return nextHistory;
+      });
+
+      setLiveSubscriberCount(nextSubscriberCount);
+    };
+
+    // 先更新畫面：按下去後立即看到訂閱數 +1 / 按鈕變「已訂閱」，不等 Firebase。
+    applyLocalSubscriptionState(optimisticSubscriberCount);
+
+    try {
+      const channelDocId = await findExistingChannelDocId();
+      const channelRef = doc(db, 'Channels', channelDocId);
+      const nowIso = new Date().toISOString();
+
+      const nextSubscriberCount = await runTransaction(db, async (transaction) => {
+        const channelSnap = await transaction.get(channelRef);
+        const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+        const currentSubscriberCount = preserveSubscriberCount(
+          oldChannelData.subscriberCount,
+          oldChannelData.subscribers,
+          oldChannelData.subsCount,
+          normalizedChannelInfo.subscriberCount,
+          matchedVideo?.subscriberCount,
+          currentDisplayCount
+        );
+
+        const nextCount = Math.max(0, currentSubscriberCount + subscribeDelta);
+
+        transaction.set(channelRef, {
+          name: oldChannelData.name || normalizedChannelInfo.name || cleanChannelName,
+          username: oldChannelData.username || normalizedChannelInfo.username || cleanChannelName,
+          channelName: oldChannelData.channelName || normalizedChannelInfo.channelName || cleanChannelName,
+          avatar: oldChannelData.avatar || normalizedChannelInfo.avatar || GUEST_AVATAR,
+          userId: oldChannelData.userId || normalizedChannelInfo.userId || channelDocId,
+          subscriberCount: nextCount,
+          subscribers: deleteField(),
+          subsCount: deleteField(),
+          updatedAt: nowIso,
+          createdAt: oldChannelData.createdAt || nowIso
+        }, { merge: true });
+
+        return nextCount;
+      });
+
+      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const batch = writeBatch(db);
+      let batchUpdates = 0;
+
+      videosSnapshot.docs.forEach(videoDoc => {
+        const videoData = videoDoc.data() || {};
+        const videoDisplayName = getVideoChannelName(videoData);
+        const isSameChannel =
+          sameText(videoData.userId, channelDocId) ||
+          sameText(videoData.userId, normalizedChannelInfo.userId) ||
+          sameText(videoDisplayName, cleanChannelName) ||
+          sameText(videoData.channel, cleanChannelName) ||
+          sameText(videoData.author, cleanChannelName) ||
+          sameText(videoData.creatorName, cleanChannelName) ||
+          sameText(videoData.username, cleanChannelName);
+
+        if (isSameChannel) {
+          batch.set(doc(db, 'Videos', videoDoc.id), {
+            subscriberCount: nextSubscriberCount,
+            userId: videoData.userId || normalizedChannelInfo.userId || channelDocId
+          }, { merge: true });
+          batchUpdates++;
+        }
+      });
+
+      if (batchUpdates > 0) await batch.commit();
+
+      // Firebase 回來後再用正式數字校正一次。
+      applyLocalSubscriptionState(nextSubscriberCount, channelDocId);
+    } catch (error) {
+      console.error('更新訂閱數失敗：', error);
+      // 使用者要求訂閱不要跳 Toast，所以這裡只印 console，不再跳成功/失敗通知。
+    }
   };
 
 
@@ -4206,32 +4418,95 @@ useEffect(() => {
   };
 
 
+  const normalizeChannelValue = (value) => String(value ?? '').trim();
+
+  const sameChannelValue = (a, b) => normalizeChannelValue(a) !== '' && normalizeChannelValue(a) === normalizeChannelValue(b);
+
+  const getChannelIdentityCandidates = (channel = {}) => {
+    return [
+      channel.userId,
+      channel.id,
+      channel.name,
+      channel.username,
+      channel.channelName,
+      channel.channel,
+      channel.author,
+      channel.creatorName
+    ]
+      .map(normalizeChannelValue)
+      .filter(Boolean);
+  };
+
+  const isSubscribedToChannel = (channel = {}) => {
+    const candidates = getChannelIdentityCandidates(channel);
+    if (candidates.length === 0) return false;
+
+    const safeSubs = Array.isArray(subscribedChannels) ? subscribedChannels : [];
+    const safeDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
+
+    return (
+      safeSubs.some(item => candidates.some(candidate => sameChannelValue(item, candidate))) ||
+      safeDetails.some(detail => {
+        const detailCandidates = getChannelIdentityCandidates(detail);
+        return detailCandidates.some(detailValue => candidates.some(candidate => sameChannelValue(detailValue, candidate)));
+      })
+    );
+  };
+
+  const isViewingOwnTargetChannel = () => {
+    const channelCandidates = getChannelIdentityCandidates({
+      ...targetChannel,
+      userId: targetChannel?.userId || targetChannelUserId
+    });
+    const ownCandidates = getChannelIdentityCandidates({
+      userId: currentUserId,
+      name: localUsername,
+      username: localUsername,
+      channelName: localUsername
+    });
+
+    return channelCandidates.some(channelValue => ownCandidates.some(ownValue => sameChannelValue(channelValue, ownValue)));
+  };
+
+
   const getTargetChannelSubscriberCount = () => {
     const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
     const channelUserId = targetChannel?.userId || targetChannelUserId || '';
-    const isOwnChannel =
-      String(channelUserId || '') === String(currentUserId || '') ||
-      String(channelName || '') === String(localUsername || '');
-
-    if (isOwnChannel) {
-      return Number(targetChannel?.subscriberCount ?? liveSubscriberCount ?? 0);
-    }
-
-    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
-      return (
-        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
-        String(video.channel ?? '') === String(channelName) ||
-        String(video.author ?? '') === String(channelName) ||
-        String(video.creatorName ?? '') === String(channelName) ||
-        String(video.username ?? '') === String(channelName)
-      );
+    const targetCandidates = getChannelIdentityCandidates({
+      ...targetChannel,
+      userId: channelUserId,
+      name: channelName,
+      username: targetChannel?.username,
+      channelName: targetChannel?.channelName
     });
 
-    // 別人的頻道永遠不 fallback 到 liveSubscriberCount，避免沿用上一個頻道的訂閱數。
-    return Number(
-      targetChannel?.subscriberCount ??
-      matchedVideo?.subscriberCount ??
-      0
+    const allKnownVideos = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(watchHistory) ? watchHistory : []),
+      ...(selectedVideo ? [selectedVideo] : []),
+      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
+    ];
+
+    const matchedVideoCounts = allKnownVideos
+      .filter(video => {
+        const videoCandidates = getChannelIdentityCandidates(video);
+        return videoCandidates.some(videoValue => targetCandidates.some(targetValue => sameChannelValue(videoValue, targetValue)));
+      })
+      .map(video => video?.subscriberCount);
+
+    const matchedSubscriptionDetail = (Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : []).find(detail => {
+      const detailCandidates = getChannelIdentityCandidates(detail);
+      return detailCandidates.some(detailValue => targetCandidates.some(targetValue => sameChannelValue(detailValue, targetValue)));
+    });
+
+    // 不能用 ??，因為 targetChannel.subscriberCount 如果是舊的 0，會擋住 Firebase / video 裡正確的數字。
+    // 這裡統一取最大可信值，避免頻道頁一直顯示 0。
+    return preserveSubscriberCount(
+      targetChannel?.subscriberCount,
+      matchedSubscriptionDetail?.subscriberCount,
+      ...matchedVideoCounts,
+      isViewingOwnTargetChannel() ? liveSubscriberCount : 0
     );
   };
 
@@ -5076,9 +5351,13 @@ useEffect(() => {
                           <div className="channel-header-text" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                             <div className="channel-title-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
                               <h1 style={{ fontSize: '32px', margin: '0', color: '#fff', textAlign: 'center' }}>{targetChannel?.name}</h1>
-                              {targetChannel?.name !== localUsername && (
-                                <button className={`sub-action-btn ${subscribedChannels.includes(targetChannel?.name) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(targetChannel?.name)} style={{ padding: '8px 20px', fontSize: '14px' }}>
-                                  {subscribedChannels.includes(targetChannel?.name) ? '✓ 已訂閱' : '訂閱'}
+                              {!isViewingOwnTargetChannel() && (
+                                <button
+                                  className={`sub-action-btn ${isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? 'is-subbed' : ''}`}
+                                  onClick={() => toggleSubscribe(targetChannel?.name || targetChannel?.channelName || targetChannel?.username)}
+                                  style={{ padding: '8px 20px', fontSize: '14px' }}
+                                >
+                                  {isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? '✓ 已訂閱' : '訂閱'}
                                 </button>
                               )}
                             </div>
