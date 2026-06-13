@@ -2131,7 +2131,6 @@ const toastTimeoutRef = useRef(null);
       }
       setLiveSubscriberCount(Number(foundVideo?.subscriberCount ?? 0));
       setIsVideoLoading(false);
-      forceScrollToTop();
       return;
     }
 
@@ -2172,7 +2171,6 @@ const toastTimeoutRef = useRef(null);
       });
       setTargetChannelUserId(channelUserId);
       setIsChannelLoading(false);
-      forceScrollToTop();
       return;
     }
 
@@ -2188,7 +2186,6 @@ const toastTimeoutRef = useRef(null);
       });
       setTargetChannelUserId(currentUserId);
       setIsChannelLoading(false);
-      forceScrollToTop();
     }
   }, [routeChannelKey, videos, rawFirebaseVideos, currentUserId, localUsername, unifiedAvatar, liveSubscriberCount]);
 
@@ -2531,11 +2528,15 @@ const toastTimeoutRef = useRef(null);
     }
   };
 
+  const previousViewRef = useRef(currentView);
+
   useEffect(() => {
-    if (currentView === 'watch') {
+    const previousView = previousViewRef.current;
+    if (previousView !== currentView && currentView === 'watch') {
       forceScrollToTop();
     }
-  }, [currentView, selectedVideo]);
+    previousViewRef.current = currentView;
+  }, [currentView]);
 
 
   /* ------------------------------
