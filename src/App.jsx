@@ -908,6 +908,11 @@ const toastTimeoutRef = useRef(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
 
+  const [openVideoOptionsId, setOpenVideoOptionsId] = useState(null);
+  const [videoToDelete, setVideoToDelete] = useState(null);
+  const [isDeleteVideoModalOpen, setIsDeleteVideoModalOpen] = useState(false);
+  const [isDeletingVideo, setIsDeletingVideo] = useState(false);
+
   const [comments, setComments] = useState([]);
   const [newCommentInput, setNewCommentInput] = useState('');
   
@@ -2900,6 +2905,108 @@ useEffect(() => {
   };
 
 
+  const isViewingOwnChannel = () => {
+    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
+
+    return (
+      currentView === 'channel' &&
+      (
+        (channelUserId && String(channelUserId) === String(currentUserId || '')) ||
+        (channelName && String(channelName) === String(localUsername || ''))
+      )
+    );
+  };
+
+  const canManageVideo = (video = {}) => {
+    const displayName = getVideoDisplayName(video);
+
+    return (
+      isViewingOwnChannel() &&
+      (
+        String(video?.userId || '') === String(currentUserId || '') ||
+        String(displayName || '') === String(localUsername || '') ||
+        String(video?.channel || '') === String(localUsername || '') ||
+        String(video?.author || '') === String(localUsername || '') ||
+        String(video?.creatorName || '') === String(localUsername || '') ||
+        String(video?.username || '') === String(localUsername || '')
+      )
+    );
+  };
+
+  const handleOpenDeleteVideoConfirm = (video, e) => {
+    if (e) e.stopPropagation();
+
+    if (!canManageVideo(video)) {
+      showToast('只能刪除自己頻道的影片', 'error');
+      return;
+    }
+
+    setOpenVideoOptionsId(null);
+    setVideoToDelete(video);
+    setIsDeleteVideoModalOpen(true);
+  };
+
+  const handleCancelDeleteVideo = () => {
+    if (isDeletingVideo) return;
+    setIsDeleteVideoModalOpen(false);
+    setVideoToDelete(null);
+  };
+
+  const handleConfirmDeleteVideo = async () => {
+    if (!videoToDelete?.id) return;
+
+    if (!canManageVideo(videoToDelete)) {
+      showToast('只能刪除自己頻道的影片', 'error');
+      handleCancelDeleteVideo();
+      return;
+    }
+
+    setIsDeletingVideo(true);
+
+    try {
+      const videoId = videoToDelete.id;
+      const isMockVideo = Array.isArray(MOCK_VIDEOS) && MOCK_VIDEOS.some(video => String(video.id) === String(videoId));
+
+      if (!isMockVideo) {
+        await deleteDoc(doc(db, 'Videos', videoId));
+      }
+
+      setRawFirebaseVideos(prev =>
+        Array.isArray(prev) ? prev.filter(video => String(video.id) !== String(videoId)) : prev
+      );
+
+      setVideos(prev =>
+        Array.isArray(prev) ? prev.filter(video => String(video.id) !== String(videoId)) : prev
+      );
+
+      setWatchHistory(prev => {
+        const nextHistory = Array.isArray(prev) ? prev.filter(video => String(video.id) !== String(videoId)) : [];
+        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+        return nextHistory;
+      });
+
+      setLikedVideoIds(prev => {
+        const nextLikes = Array.isArray(prev) ? prev.filter(id => String(id) !== String(videoId)) : [];
+        localStorage.setItem('leafhub_likedVideos', JSON.stringify(nextLikes));
+        return nextLikes;
+      });
+
+      if (selectedVideo && String(selectedVideo.id) === String(videoId)) {
+        setSelectedVideo(null);
+      }
+
+      setIsDeleteVideoModalOpen(false);
+      setVideoToDelete(null);
+      showToast(isMockVideo ? '測試影片已從本機列表移除' : '影片已刪除', 'success');
+    } catch (error) {
+      console.error('刪除影片失敗：', error);
+      showToast('刪除影片失敗，請確認 Firebase 權限或稍後再試', 'error');
+    } finally {
+      setIsDeletingVideo(false);
+    }
+  };
+
   /* ------------------------------
     15. Comment Like Logic / 留言按讚
     注意：下方 mock 分支目前呼叫 setMockCommentsState，
@@ -3597,9 +3704,19 @@ useEffect(() => {
   const renderVideoCard = (video) => {
     const displayName = getVideoDisplayName(video);
     const avatarSrc = getVideoAvatarSrc(video);
+    const canShowOwnerActions = canManageVideo(video);
+    const isOptionsOpen = openVideoOptionsId === video.id;
 
     return (
-      <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
+      <div
+        key={video.id}
+        className="video-card"
+        onClick={() => handleVideoClick(video)}
+        style={{ position: 'relative' }}
+        onMouseLeave={() => {
+          if (openVideoOptionsId === video.id) setOpenVideoOptionsId(null);
+        }}
+      >
         <div className="thumbnail-wrapper">
           <img
             src={video.thumbnail || '/default-thumbnail.jpg'}
@@ -3622,8 +3739,81 @@ useEffect(() => {
               e.currentTarget.src = GUEST_AVATAR;
             }}
           />
-          <div>
-            <h3 className="video-title">{video.title}</h3>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', position: 'relative' }}>
+              <h3 className="video-title" style={{ flex: 1, minWidth: 0 }}>{video.title}</h3>
+              {canShowOwnerActions && (
+                <div
+                  className="video-owner-actions"
+                  style={{ position: 'relative', flexShrink: 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseEnter={() => setOpenVideoOptionsId(video.id)}
+                >
+                  <button
+                    type="button"
+                    aria-label="影片選項"
+                    title="影片選項"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenVideoOptionsId(prev => prev === video.id ? null : video.id);
+                    }}
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#ddd',
+                      fontSize: '22px',
+                      lineHeight: '22px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 0
+                    }}
+                  >
+                    ⋮
+                  </button>
+
+                  {isOptionsOpen && (
+                    <div
+                      className="video-options-menu"
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: '32px',
+                        minWidth: '128px',
+                        background: '#1b1b1b',
+                        border: '1px solid #333',
+                        borderRadius: '10px',
+                        boxShadow: '0 10px 24px rgba(0,0,0,0.45)',
+                        padding: '6px',
+                        zIndex: 50
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenDeleteVideoConfirm(video, e)}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          background: 'transparent',
+                          color: '#ff6b6b',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          fontWeight: 700
+                        }}
+                      >
+                        🗑️ 刪除影片
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <p
               className="channel-name channel-name-clickable"
               onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
@@ -5327,6 +5517,63 @@ useEffect(() => {
                 </div>
               </div>
             )}
+
+
+            {/* ==============================
+              Delete Video Confirm Modal / 刪除影片確認
+            ============================== */}
+            {isDeleteVideoModalOpen && videoToDelete && (
+              <div className="modal-overlay" onClick={handleCancelDeleteVideo}>
+                <div
+                  className="upload-modal-window"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ background: '#141414', border: '1px solid #2a2a2a', padding: '24px', borderRadius: '12px', width: '460px', maxWidth: '90%' }}
+                >
+                  <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>確認刪除影片？</h2>
+                    <button
+                      className="close-modal-btn"
+                      disabled={isDeletingVideo}
+                      onClick={handleCancelDeleteVideo}
+                      style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: isDeletingVideo ? 'not-allowed' : 'pointer' }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <p style={{ color: '#ccc', lineHeight: 1.7, margin: '0 0 10px' }}>
+                    你確定要刪除這支影片嗎？
+                  </p>
+                  <p style={{ color: '#fff', fontWeight: 700, margin: '0 0 10px' }}>
+                    {videoToDelete.title}
+                  </p>
+                  <p style={{ color: '#888', fontSize: '13px', lineHeight: 1.6, margin: '0 0 20px' }}>
+                    刪除後，這支影片會從你的頻道頁、首頁列表、觀看紀錄和喜歡的影片中移除。這個動作不能復原。
+                  </p>
+
+                  <div className="modal-footer-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                    <button
+                      type="button"
+                      className="clear-btn"
+                      disabled={isDeletingVideo}
+                      onClick={handleCancelDeleteVideo}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="comment-submit-btn"
+                      disabled={isDeletingVideo}
+                      onClick={handleConfirmDeleteVideo}
+                      style={{ height: '36px', background: '#d93025', opacity: isDeletingVideo ? 0.65 : 1 }}
+                    >
+                      {isDeletingVideo ? '刪除中...' : '確認刪除'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         );
       }
