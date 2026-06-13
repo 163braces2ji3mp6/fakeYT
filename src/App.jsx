@@ -19,6 +19,15 @@ import {
   updateProfile,
   updatePassword
 } from 'firebase/auth';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  useNavigate,
+  useParams,
+  useLocation
+} from 'react-router-dom'
+
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 import { db, auth } from './firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField } from 'firebase/firestore';
@@ -91,9 +100,23 @@ const generateRandomIdentity = () => {
 ============================== */
 function extractYoutubeId(url) {
   if (!url) return '';
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
-  const match = url.match(regExp);
+  const cleanUrl = String(url).trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(cleanUrl)) return cleanUrl;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
+  const match = cleanUrl.match(regExp);
   return (match && match[2].length === 11) ? match[2] : '';
+}
+
+
+// 取得影片的 YouTube ID，統一給路由、分享連結與 iframe 使用。
+function getYoutubeIdFromVideo(video = {}) {
+  return String(
+    video?.youtubeId ||
+    video?.ytId ||
+    video?.youtubeVideoId ||
+    extractYoutubeId(video?.videoUrl || video?.url || video?.youtubeUrl || video?.link || '') ||
+    ''
+  ).trim();
 }
 
 
@@ -285,6 +308,26 @@ const sortComments = (commentList, sortType = 'likes') => {
   07. Main App Component / 主元件
 ========================================================= */
 export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LeafHubApp />} />
+        <Route path="/subscriptions" element={<LeafHubApp />} />
+        <Route path="/history" element={<LeafHubApp />} />
+        <Route path="/liked" element={<LeafHubApp />} />
+        <Route path="/channel/:channelKey" element={<LeafHubApp />} />
+        <Route path="/watch/:videoId" element={<LeafHubApp />} />
+        <Route path="*" element={<LeafHubApp />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+function LeafHubApp() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { videoId: routeVideoId, channelKey: routeChannelKey } = useParams();
+
 
   /* ------------------------------
     07-1. Toast State / 全域通知狀態
@@ -519,6 +562,11 @@ const toastTimeoutRef = useRef(null);
   const lastYoutubeCleanupSignatureRef = useRef('');
   const activeChannelSubscriptionKeyRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
+    if (routeVideoId) return 'watch';
+    if (routeChannelKey) return 'channel';
+    if (location.pathname === '/subscriptions') return 'subscriptions';
+    if (location.pathname === '/history') return 'history';
+    if (location.pathname === '/liked') return 'liked';
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
 
@@ -888,6 +936,7 @@ const toastTimeoutRef = useRef(null);
   const handleSearchSubmit = () => {
     const cleanQuery = searchInputStr.trim();
 
+    if (location.pathname !== '/') navigate('/');
     setCurrentView('home');
     setActiveCategory('全部');
     setSearchQuery(cleanQuery);
@@ -1997,7 +2046,113 @@ const toastTimeoutRef = useRef(null);
     if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
   };
 
+
+  // 🟢 讓網址成為真正的頁面狀態：上一頁、重新整理、分享連結都會正常。
+  useEffect(() => {
+    if (routeVideoId) {
+      if (currentView !== 'watch') setCurrentView('watch');
+      return;
+    }
+
+    if (routeChannelKey) {
+      if (currentView !== 'channel') setCurrentView('channel');
+      return;
+    }
+
+    const pathToView = {
+      '/': 'home',
+      '/subscriptions': 'subscriptions',
+      '/history': 'history',
+      '/liked': 'liked'
+    };
+
+    const nextView = pathToView[location.pathname] || 'home';
+    if (currentView !== nextView) {
+      setCurrentView(nextView);
+    }
+  }, [location.pathname, routeVideoId, routeChannelKey, currentView]);
+
+  // 🟢 直接開啟 /watch/YouTube影片ID 時，從影片清單找出正確影片並進入播放頁。
+  useEffect(() => {
+    if (!routeVideoId) return;
+
+    const allVideos = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
+    ];
+
+    const foundVideo = allVideos.find(video => getYoutubeIdFromVideo(video) === routeVideoId);
+
+    if (foundVideo) {
+      if (!selectedVideo || getYoutubeIdFromVideo(selectedVideo) !== routeVideoId) {
+        setSelectedVideo(foundVideo);
+      }
+      setLiveSubscriberCount(Number(foundVideo?.subscriberCount ?? 0));
+      setIsVideoLoading(false);
+      forceScrollToTop();
+      return;
+    }
+
+    if (selectedVideo && getYoutubeIdFromVideo(selectedVideo) !== routeVideoId) {
+      setSelectedVideo(null);
+    }
+  }, [routeVideoId, videos, rawFirebaseVideos, selectedVideo]);
+
+  // 🟢 直接開啟 /channel/頻道ID 時，盡量從影片資料還原頻道頁。
+  useEffect(() => {
+    if (!routeChannelKey) return;
+
+    const decodedKey = decodeURIComponent(routeChannelKey);
+    const allVideos = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
+    ];
+
+    const matchedVideo = allVideos.find(video => {
+      const displayName = video.channel || video.author || video.creatorName || video.username || '';
+      return String(video.userId || '') === decodedKey || String(displayName) === decodedKey;
+    });
+
+    if (matchedVideo) {
+      const channelName = matchedVideo.channel || matchedVideo.author || matchedVideo.creatorName || matchedVideo.username || decodedKey;
+      const channelAvatar = channelName === '小葉' ? avatarImage : (matchedVideo.avatar || matchedVideo.creatorAvatar || matchedVideo.channelAvatar || GUEST_AVATAR);
+      const channelUserId = matchedVideo.userId || decodedKey;
+
+      setTargetChannel({
+        userId: channelUserId,
+        name: channelName,
+        username: channelName,
+        channelName,
+        avatar: channelAvatar,
+        bio: getRandomBio(),
+        subscriberCount: Number(matchedVideo?.subscriberCount ?? 0)
+      });
+      setTargetChannelUserId(channelUserId);
+      setIsChannelLoading(false);
+      forceScrollToTop();
+      return;
+    }
+
+    if (decodedKey === currentUserId || decodedKey === localUsername) {
+      setTargetChannel({
+        userId: currentUserId,
+        name: localUsername,
+        username: localUsername,
+        channelName: localUsername,
+        avatar: unifiedAvatar,
+        bio: getRandomBio(),
+        subscriberCount: liveSubscriberCount
+      });
+      setTargetChannelUserId(currentUserId);
+      setIsChannelLoading(false);
+      forceScrollToTop();
+    }
+  }, [routeChannelKey, videos, rawFirebaseVideos, currentUserId, localUsername, unifiedAvatar, liveSubscriberCount]);
+
   const handleHomeNavigation = () => {
+    if (location.pathname !== '/') navigate('/');
     setIsPageLoading(true); 
     setSearchInputStr('');
     setSearchQuery('');
@@ -2020,6 +2175,12 @@ const toastTimeoutRef = useRef(null);
     }, 400);
   };
 
+  const handleInternalViewNavigation = (view, path) => {
+    setCurrentView(view);
+    navigate(path);
+    forceScrollToTop();
+  };
+
   const handleMyChannelClick = () => {
     setIsChannelLoading(true); 
     setTargetChannel({
@@ -2032,6 +2193,7 @@ const toastTimeoutRef = useRef(null);
       subscriberCount: liveSubscriberCount
     });
     setTargetChannelUserId(currentUserId);
+    navigate(`/channel/${encodeURIComponent(currentUserId || localUsername || 'me')}`);
     setCurrentView('channel'); 
     setChannelTab('videos'); 
     setIsProfileOpen(false); 
@@ -2050,6 +2212,8 @@ const toastTimeoutRef = useRef(null);
 
     const startTime = Date.now();
     const finalName = channelName || localUsername;
+    const routeKey = providedUserId || finalName;
+    if (routeKey) navigate(`/channel/${encodeURIComponent(routeKey)}`);
     const finalAvatar = channelAvatar || GUEST_AVATAR;
     const initialBio = getRandomBio();
 
@@ -2484,7 +2648,40 @@ useEffect(() => {
   /* ------------------------------
     14. Video Actions / 觀看、按讚、訂閱
   ------------------------------ */
+  const getCurrentVideoShareUrl = () => {
+    const ytId = getYoutubeIdFromVideo(selectedVideo);
+    return ytId ? `${window.location.origin}/watch/${ytId}` : window.location.href;
+  };
+
+  const handleShareVideo = async () => {
+    const shareUrl = getCurrentVideoShareUrl();
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: selectedVideo?.title || 'Leafhub 影片',
+          url: shareUrl
+        });
+        return;
+      }
+
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('已複製影片連結，可以分享囉！', 'success');
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      console.error('分享影片連結失敗：', error);
+      showToast('分享失敗，請稍後再試', 'error');
+    }
+  };
+
   const handleVideoClick = async (video) => {
+    const ytId = getYoutubeIdFromVideo(video);
+
+    if (!ytId) {
+      showToast('找不到這支影片的 YouTube ID，無法開啟分享頁面', 'error');
+      return;
+    }
+
     setIsVideoLoading(true);
 
     // 先把播放頁訂閱數重設成這支影片自己的，避免沿用上一個頻道
@@ -2492,6 +2689,7 @@ useEffect(() => {
 
     setSelectedVideo(video);
     setCurrentView('watch');
+    navigate(`/watch/${ytId}`);
     forceScrollToTop();
 
     setTimeout(() => {
@@ -3633,11 +3831,11 @@ useEffect(() => {
           <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
             <div className="sidebar-menu">
               <button className={`sidebar-btn ${currentView === 'home' ? 'active' : ''}`} onClick={handleHomeNavigation}>🏠 首頁</button>
-              <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => setCurrentView('subscriptions')}>📺 訂閱頻道</button>
+              <button className={`sidebar-btn ${currentView === 'subscriptions' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('subscriptions', '/subscriptions')}>📺 訂閱頻道</button>
               <hr style={{ border: 'none', borderTop: '1px solid #1f1f1f', margin: '12px 0' }} />
               <div className="sidebar-section-title">我的專區</div>
-              <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => setCurrentView('history')}>🕒 觀看紀錄</button>
-              <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => setCurrentView('liked')}>🔥 喜歡的影片</button>
+              <button className={`sidebar-btn ${currentView === 'history' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('history', '/history')}>🕒 觀看紀錄</button>
+              <button className={`sidebar-btn ${currentView === 'liked' ? 'active' : ''}`} onClick={() => handleInternalViewNavigation('liked', '/liked')}>🔥 喜歡的影片</button>
             </div>
 
             {getSortedSubscribedChannelDetails().length > 0 && (
@@ -3956,7 +4154,7 @@ useEffect(() => {
                         <iframe
                           className="video-player-simulation"
                           style={{ width: '100%', height: '100%', border: 'none' }}
-                          src={`https://www.youtube.com/embed/${selectedVideo.youtubeId || extractYoutubeId(selectedVideo.videoUrl)}?autoplay=1&rel=0`}
+                          src={`https://www.youtube.com/embed/${getYoutubeIdFromVideo(selectedVideo)}?autoplay=1&rel=0`}
                           title={selectedVideo.title}
                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen
                         ></iframe>
@@ -3979,7 +4177,8 @@ useEffect(() => {
                             onClick={(e) => handleChannelNavigation(
                               selectedVideo.channel || '小葉', 
                               selectedVideo.channel === '小葉' ? avatarImage : (selectedVideo.avatar || GUEST_AVATAR), 
-                              e
+                              e,
+                              selectedVideo.userId || ''
                             )} 
                           />
                           <div>
@@ -4009,6 +4208,9 @@ useEffect(() => {
                         <div className="video-interactions-block">
                           <button className={`like-action-btn ${likedVideoIds.includes(selectedVideo.id) ? 'is-liked' : ''}`} onClick={() => toggleLike(selectedVideo.id)}>
                             {likedVideoIds.includes(selectedVideo.id) ? '❤️ 已按讚' : '👍 給個讚'}
+                          </button>
+                          <button className="like-action-btn" onClick={handleShareVideo}>
+                            🔗 分享
                           </button>
                           <span className="views-date-text" style={{ marginLeft: '12px', color: '#aaa' }}>{formatViews(selectedVideo.views)} • 發布於 {selectedVideo.createdAt ? formatTimeAgo(selectedVideo.createdAt) : (selectedVideo.time || '剛剛')}</span>
                         </div>
