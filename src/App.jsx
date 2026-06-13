@@ -120,6 +120,29 @@ function getYoutubeIdFromVideo(video = {}) {
 }
 
 
+// 密碼雜湊工具：給 ID 登入與「訪客新增密碼」使用。
+// 注意：這是前端雜湊，適合目前 Leafhub 的自訂 ID 登入流程；正式產品建議改成後端驗證。
+async function hashPasswordText(text) {
+  const passwordText = String(text ?? '');
+
+  if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
+    const encoded = new TextEncoder().encode(passwordText);
+    const digest = await crypto.subtle.digest('SHA-256', encoded);
+    return Array.from(new Uint8Array(digest))
+      .map(byte => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  // 極少數環境沒有 crypto.subtle 時的備援，確保功能不中斷。
+  let hash = 0;
+  for (let i = 0; i < passwordText.length; i++) {
+    hash = ((hash << 5) - hash) + passwordText.charCodeAt(i);
+    hash |= 0;
+  }
+  return `legacy-${Math.abs(hash).toString(16)}`;
+}
+
+
 /* ==============================
   05. Firebase Comment Subscription / 留言與回覆即時監聽
 ============================== */
@@ -1735,6 +1758,9 @@ const toastTimeoutRef = useRef(null);
       if (wantsPasswordChange) {
         const passwordHash = await hashPasswordText(newPasswordInput);
         channelUpdates.passwordHash = passwordHash;
+        channelUpdates.hasPassword = true;
+        channelUpdates.passwordLoginEnabled = true;
+        channelUpdates.accountType = 'id-password';
         channelUpdates.passwordUpdatedAt = new Date().toISOString();
 
         if (auth.currentUser && !auth.currentUser.isAnonymous) {
@@ -1828,6 +1854,19 @@ const toastTimeoutRef = useRef(null);
   const handleChangePasswordSubmit = async (e) => {
     e.preventDefault();
 
+    const cleanCurrentUserId = String(currentUserId || '').trim();
+    const cleanDisplayName = String(localUsername || '').trim() || cleanCurrentUserId;
+
+    if (!cleanCurrentUserId || cleanCurrentUserId === 'loading...') {
+      showToast('帳號資料尚未載入完成，請稍後再試', 'warning');
+      return;
+    }
+
+    if (cleanCurrentUserId.includes('/')) {
+      showToast('目前 ID 格式不正確，請先修改 ID', 'error');
+      return;
+    }
+
     if (newPasswordInput.length < 6) {
       showToast('密碼至少需要 6 個字', 'warning');
       return;
@@ -1840,25 +1879,51 @@ const toastTimeoutRef = useRef(null);
 
     try {
       const passwordHash = await hashPasswordText(newPasswordInput);
+      const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+      const channelSnap = await getDoc(channelRef);
+      const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+      const alreadyHadPassword = Boolean(oldChannelData?.passwordHash || localStorage.getItem(`leafhub_password_${cleanCurrentUserId}`));
 
+      // 如果 Firebase Auth 已經是正式帳號，就同步更新 Firebase Auth 密碼。
+      // 如果目前是匿名訪客，Firebase 不允許直接 updatePassword；這裡改成 Leafhub 自訂 ID 密碼登入。
       if (auth.currentUser && !auth.currentUser.isAnonymous) {
         await updatePassword(auth.currentUser, newPasswordInput);
       }
 
-      await setDoc(doc(db, 'Channels', currentUserId), {
+      await setDoc(channelRef, {
+        userId: cleanCurrentUserId,
+        name: oldChannelData.name || cleanDisplayName,
+        username: oldChannelData.username || cleanDisplayName,
+        channelName: oldChannelData.channelName || cleanDisplayName,
+        avatar: oldChannelData.avatar || unifiedAvatar || GUEST_AVATAR,
+        subscriberCount: Number(oldChannelData.subscriberCount ?? liveSubscriberCount ?? 0),
         passwordHash,
+        hasPassword: true,
+        passwordLoginEnabled: true,
+        accountType: 'id-password',
         passwordUpdatedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        createdAt: oldChannelData.createdAt || new Date().toISOString()
       }, { merge: true });
 
-      // 保留本機密碼，讓目前瀏覽器也能登入舊帳號。
-      localStorage.setItem(`leafhub_password_${currentUserId}`, newPasswordInput);
+      // 保留本機密碼，讓目前瀏覽器也能登入這個 ID。
+      localStorage.setItem(`leafhub_password_${cleanCurrentUserId}`, newPasswordInput);
+      localStorage.setItem('leafhub_is_id_logged_in', 'true');
+      localStorage.setItem('device_user_id', cleanCurrentUserId);
+      localStorage.setItem('device_user_name', cleanDisplayName);
+      localStorage.setItem('device_user_avatar', unifiedAvatar || GUEST_AVATAR);
+      setIsIdLoggedIn(true);
 
       setIsChangePasswordModalOpen(false);
       setNewPasswordInput('');
       setConfirmNewPasswordInput('');
 
-      showToast('密碼已更新', 'success');
+      showToast(
+        alreadyHadPassword
+          ? '密碼已更新'
+          : `密碼已新增！${cleanCurrentUserId} 已從訪客帳號變成可用 ID + 密碼登入的帳號`,
+        'success'
+      );
     } catch (error) {
       console.error('修改密碼失敗:', error);
 
@@ -3843,6 +3908,18 @@ useEffect(() => {
                     ⚙️ 帳號設定
                   </button>
 
+                  <button
+                    className="dropdown-item-btn"
+                    onClick={() => {
+                      setNewPasswordInput('');
+                      setConfirmNewPasswordInput('');
+                      setIsChangePasswordModalOpen(true);
+                      setIsProfileOpen(false);
+                    }}
+                  >
+                    {isIdLoggedIn ? '🔐 修改密碼' : '🔐 新增登入密碼'}
+                  </button>
+
                   {isIdLoggedIn ? (
                     <button
                       className="dropdown-item-btn"
@@ -5145,7 +5222,7 @@ useEffect(() => {
                       >
                         取消
                       </button>
-                      <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>確認修改</button>
+                      <button type="submit" className="comment-submit-btn" style={{ height: '36px' }}>{isIdLoggedIn ? '確認修改' : '新增密碼'}</button>
                     </div>
                   </form>
                 </div>
@@ -5163,11 +5240,17 @@ useEffect(() => {
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
                   <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>🔐 修改密碼</h2>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>{isIdLoggedIn ? '🔐 修改密碼' : '🔐 新增登入密碼'}</h2>
                     <button className="close-modal-btn" onClick={() => setIsChangePasswordModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                   </div>
 
                   <form onSubmit={handleChangePasswordSubmit} className="modal-body-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {!isIdLoggedIn && (
+                      <div style={{ background: '#1f1f1f', border: '1px solid #333', color: '#ddd', padding: '12px', borderRadius: '10px', fontSize: '13px', lineHeight: 1.6 }}>
+                        目前是訪客帳號。設定密碼後，這個 ID 會變成可用「ID + 密碼」登入的帳號。你的公開 ID 是：<strong style={{ color: '#fff' }}>{currentUserId}</strong>
+                      </div>
+                    )}
+
                     <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <label style={{ color: '#aaa', fontSize: '14px' }}>新密碼</label>
                       <input
