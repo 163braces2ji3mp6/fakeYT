@@ -14,8 +14,6 @@ import {
 import {
   signInAnonymously,
   onAuthStateChanged,
-  EmailAuthProvider,
-  linkWithCredential,
   updateProfile,
   updatePassword
 } from 'firebase/auth';
@@ -931,7 +929,7 @@ const toastTimeoutRef = useRef(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false); 
   const [authUser, setAuthUser] = useState(null);
   const [isSetPasswordModalOpen, setIsSetPasswordModalOpen] = useState(false);
-  const [passwordEmail, setPasswordEmail] = useState('');
+  const [passwordUserId, setPasswordUserId] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [isChangeIdModalOpen, setIsChangeIdModalOpen] = useState(false);
@@ -4006,14 +4004,20 @@ useEffect(() => {
       return;
     }
 
-    if (!auth.currentUser.isAnonymous) {
-      showToast('這個帳號已經設定過登入方式', 'info');
-      setIsSetPasswordModalOpen(false);
+    const cleanNewId = passwordUserId.trim();
+
+    if (!cleanNewId) {
+      showToast('請輸入使用者 ID', 'warning');
       return;
     }
 
-    if (!passwordEmail.trim()) {
-      showToast('請輸入 Email', 'warning');
+    if (cleanNewId.includes('/')) {
+      showToast('ID 不能包含 / 符號', 'error');
+      return;
+    }
+
+    if (/\s/.test(cleanNewId)) {
+      showToast('ID 不能包含空白', 'error');
       return;
     }
 
@@ -4028,49 +4032,189 @@ useEffect(() => {
     }
 
     try {
-      const credential = EmailAuthProvider.credential(
-        passwordEmail.trim(),
-        passwordInput
-      );
+      const oldId = currentUserId;
+      const oldName = localUsername;
+      const nowIso = new Date().toISOString();
+      const normalizeText = (value) => String(value ?? '').trim().toLowerCase();
+      const newIdNormalized = normalizeText(cleanNewId);
+      const oldIdNormalized = normalizeText(oldId);
+      const passwordHash = await hashPasswordText(passwordInput);
 
-      const result = await linkWithCredential(auth.currentUser, credential);
+      // 檢查這個 ID 是否已被其他帳號使用。
+      const channelsSnapshot = await getDocs(collection(db, 'Channels'));
+      const duplicatedChannel = channelsSnapshot.docs.find((channelDoc) => {
+        const data = channelDoc.data() || {};
+        const channelDocId = normalizeText(channelDoc.id);
+        const channelUserId = normalizeText(data.userId);
+        const channelCanonicalId = normalizeText(data.canonicalChannelId);
+        const isCurrentAccountChannel =
+          channelDocId === oldIdNormalized ||
+          channelUserId === oldIdNormalized ||
+          channelCanonicalId === oldIdNormalized;
 
-      await updateProfile(result.user, {
-        displayName: localUsername
+        if (isCurrentAccountChannel) return false;
+
+        return (
+          channelDocId === newIdNormalized ||
+          channelUserId === newIdNormalized ||
+          channelCanonicalId === newIdNormalized
+        );
       });
 
-      await setDoc(doc(db, 'Channels', currentUserId), {
-        userId: currentUserId,
-        name: localUsername,
-        username: localUsername,
-        channelName: localUsername,
-        avatar: unifiedAvatar,
-        subscriberCount: liveSubscriberCount,
-        updatedAt: new Date().toISOString()
+      if (duplicatedChannel) {
+        showToast('這個使用者 ID 已經被使用了，請換一個', 'error');
+        return;
+      }
+
+      // 找目前暫時帳號對應的 Channels 文件，盡量保留舊資料、頭貼、訂閱數。
+      let currentChannelRef = doc(db, 'Channels', oldId);
+      let currentChannelSnap = await getDoc(currentChannelRef);
+
+      if (!currentChannelSnap.exists() && oldName) {
+        const candidateSnapshots = [];
+        const nameFields = ['name', 'username', 'channelName'];
+
+        for (const fieldName of nameFields) {
+          const nameQuery = query(collection(db, 'Channels'), where(fieldName, '==', oldName));
+          const nameSnapshot = await getDocs(nameQuery);
+          candidateSnapshots.push(...nameSnapshot.docs);
+        }
+
+        if (candidateSnapshots.length > 0) {
+          const uniqueCandidates = Array.from(new Map(candidateSnapshots.map(channelDoc => [channelDoc.id, channelDoc])).values());
+          const bestCandidate = uniqueCandidates.sort((a, b) => {
+            const aData = a.data() || {};
+            const bData = b.data() || {};
+            return preserveSubscriberCount(bData.subscriberCount, bData.subscribers, bData.subsCount) - preserveSubscriberCount(aData.subscriberCount, aData.subscribers, aData.subsCount);
+          })[0];
+
+          currentChannelRef = doc(db, 'Channels', bestCandidate.id);
+          currentChannelSnap = await getDoc(currentChannelRef);
+        }
+      }
+
+      const oldChannelData = currentChannelSnap.exists() ? currentChannelSnap.data() : {};
+      const subscriberCount = preserveSubscriberCount(
+        oldChannelData.subscriberCount,
+        oldChannelData.subscribers,
+        oldChannelData.subsCount,
+        targetChannel?.subscriberCount,
+        liveSubscriberCount
+      );
+
+      const {
+        userId: _removedUserId,
+        canonicalChannelId: _removedCanonicalChannelId,
+        subscribers: _removedSubscribers,
+        subsCount: _removedSubsCount,
+        password: _removedLegacyPassword,
+        loginPassword: _removedLegacyLoginPassword,
+        ...channelBaseData
+      } = oldChannelData;
+
+      const newChannelData = {
+        ...channelBaseData,
+        userId: cleanNewId,
+        name: oldChannelData.name || localUsername,
+        username: oldChannelData.username || localUsername,
+        channelName: oldChannelData.channelName || localUsername,
+        avatar: oldChannelData.avatar || unifiedAvatar,
+        subscriberCount,
+        passwordHash,
+        hasPassword: true,
+        passwordLoginEnabled: true,
+        accountType: 'id-password',
+        passwordUpdatedAt: nowIso,
+        updatedAt: nowIso,
+        createdAt: oldChannelData.createdAt || nowIso
+      };
+
+      const newChannelRef = doc(db, 'Channels', cleanNewId);
+      await setDoc(newChannelRef, newChannelData, { merge: true });
+      await setDoc(newChannelRef, {
+        subscriberCount,
+        subscribers: deleteField(),
+        subsCount: deleteField(),
+        updatedAt: nowIso
       }, { merge: true });
 
-      setAuthUser(result.user);
-      localStorage.setItem('firebase_auth_uid', result.user.uid);
-      localStorage.setItem('device_user_id', currentUserId);
+      if (currentChannelSnap.exists() && currentChannelRef.id !== cleanNewId) {
+        await deleteDoc(currentChannelRef);
+      }
+
+      // 把原本暫時 ID 的影片 ownership 改成新的使用者 ID，避免之後無法管理影片。
+      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const batch = writeBatch(db);
+      let videoPatchCount = 0;
+
+      videosSnapshot.docs.forEach((videoDoc) => {
+        const videoData = videoDoc.data() || {};
+        const isOwnVideo =
+          String(videoData.userId || '') === String(oldId || '') ||
+          String(videoData.channel || '') === String(localUsername || '') ||
+          String(videoData.author || '') === String(localUsername || '') ||
+          String(videoData.creatorName || '') === String(localUsername || '') ||
+          String(videoData.username || '') === String(localUsername || '');
+
+        if (isOwnVideo) {
+          batch.set(doc(db, 'Videos', videoDoc.id), {
+            userId: cleanNewId,
+            avatar: unifiedAvatar,
+            creatorAvatar: unifiedAvatar,
+            channelAvatar: unifiedAvatar,
+            subscriberCount,
+            updatedAt: nowIso
+          }, { merge: true });
+          videoPatchCount++;
+        }
+      });
+
+      if (videoPatchCount > 0) {
+        await batch.commit();
+      }
+
+      const patchOwnedVideo = (video) => {
+        const isOwnVideo =
+          String(video?.userId || '') === String(oldId || '') ||
+          String(video?.channel || '') === String(localUsername || '') ||
+          String(video?.author || '') === String(localUsername || '') ||
+          String(video?.creatorName || '') === String(localUsername || '') ||
+          String(video?.username || '') === String(localUsername || '');
+
+        return isOwnVideo
+          ? { ...video, userId: cleanNewId, avatar: unifiedAvatar, creatorAvatar: unifiedAvatar, channelAvatar: unifiedAvatar, subscriberCount }
+          : video;
+      };
+
+      setCurrentUserId(cleanNewId);
+      setTargetChannel(prev => prev ? { ...prev, userId: cleanNewId, subscriberCount } : prev);
+      setTargetChannelUserId(cleanNewId);
+      setLiveSubscriberCount(subscriberCount);
+      setRawFirebaseVideos(prev => Array.isArray(prev) ? prev.map(patchOwnedVideo) : prev);
+      setVideos(prev => Array.isArray(prev) ? prev.map(patchOwnedVideo) : prev);
+      setWatchHistory(prev => {
+        const nextHistory = Array.isArray(prev) ? prev.map(patchOwnedVideo) : [];
+        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+        return nextHistory;
+      });
+
+      setAuthUser(auth.currentUser);
+      localStorage.setItem('device_user_id', cleanNewId);
+      localStorage.setItem('leafhub_is_id_logged_in', 'true');
+      localStorage.setItem(`leafhub_password_${cleanNewId}`, passwordInput);
+      if (oldId && oldId !== cleanNewId) {
+        localStorage.removeItem(`leafhub_password_${oldId}`);
+      }
 
       setIsSetPasswordModalOpen(false);
-      setPasswordEmail('');
+      setPasswordUserId('');
       setPasswordInput('');
       setConfirmPasswordInput('');
 
-      showToast('密碼設定成功！下次可以用 Email 登入', 'success');
+      showToast('使用者 ID 和密碼設定成功！下次可以用 ID 登入', 'success');
     } catch (error) {
-      console.error('設定密碼失敗:', error);
-
-      if (error.code === 'auth/email-already-in-use') {
-        showToast('這個 Email 已經被使用了', 'error');
-      } else if (error.code === 'auth/weak-password') {
-        showToast('密碼太弱，請使用至少 6 個字', 'error');
-      } else if (error.code === 'auth/invalid-email') {
-        showToast('Email 格式錯誤', 'error');
-      } else {
-        showToast('設定密碼失敗，請稍後再試', 'error');
-      }
+      console.error('設定使用者 ID / 密碼失敗:', error);
+      showToast('設定使用者 ID / 密碼失敗，請確認 Firebase 權限或稍後再試', 'error');
     }
   };
   /* ------------------------------
@@ -6018,14 +6162,14 @@ useEffect(() => {
                         margin: 0
                       }}
                     >
-                      <IconLabel icon="lock" gap={10}>要新增帳號密碼嗎？</IconLabel>
+                      <IconLabel icon="lock" gap={10}>要新增使用者 ID 和密碼嗎？</IconLabel>
                     </h2>
 
                     <button
                       className="close-modal-btn"
                       onClick={() => {
                         setIsSetPasswordModalOpen(false);
-                        setPasswordEmail('');
+                        setPasswordUserId('');
                         setPasswordInput('');
                         setConfirmPasswordInput('');
                       }}
@@ -6049,8 +6193,8 @@ useEffect(() => {
                       marginBottom: '18px'
                     }}
                   >
-                    影片已經上傳成功。你可以現在設定 Email 和密碼，
-                    之後就能用同一個帳號登入，不會遺失你的頻道和影片。
+                    影片已經上傳成功。你可以現在設定使用者 ID 和密碼，
+                    之後就能用這組 ID 登入，不會遺失你的頻道和影片。
                   </p>
 
                   <form
@@ -6076,15 +6220,15 @@ useEffect(() => {
                           fontSize: '14px'
                         }}
                       >
-                        Email
+                        使用者 ID
                       </label>
 
                       <input
                         className="comment-text-input"
-                        type="email"
-                        placeholder="請輸入 Email..."
-                        value={passwordEmail}
-                        onChange={(e) => setPasswordEmail(e.target.value)}
+                        type="text"
+                        placeholder="請輸入使用者 ID，例如 user_1234..."
+                        value={passwordUserId}
+                        onChange={(e) => setPasswordUserId(e.target.value)}
                         required
                       />
                     </div>
@@ -6157,7 +6301,7 @@ useEffect(() => {
                         className="clear-btn"
                         onClick={() => {
                           setIsSetPasswordModalOpen(false);
-                          setPasswordEmail('');
+                          setPasswordUserId('');
                           setPasswordInput('');
                           setConfirmPasswordInput('');
                         }}
