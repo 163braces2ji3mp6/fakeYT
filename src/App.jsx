@@ -637,6 +637,9 @@ const toastTimeoutRef = useRef(null);
   ------------------------------ */
   const [justUploadedVideo, setJustUploadedVideo] = useState(null);
   const bufferTimeoutRef = useRef(null);
+  const channelBufferTimeoutRef = useRef(null);
+  const lastChannelBufferKeyRef = useRef('');
+  const channelNavigationRequestRef = useRef(0);
   const youtubeCleanupRunningRef = useRef(false);
   const hasRunInitialYoutubeCleanupRef = useRef(false);
   const lastYoutubeCleanupSignatureRef = useRef('');
@@ -676,6 +679,7 @@ const toastTimeoutRef = useRef(null);
 
   const [videos, setVideos] = useState([]); 
   const [rawFirebaseVideos, setRawFirebaseVideos] = useState([]);
+  const [hasFirebaseVideosSnapshot, setHasFirebaseVideosSnapshot] = useState(false);
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isFirstInit, setIsFirstInit] = useState(true);
@@ -687,6 +691,7 @@ const toastTimeoutRef = useRef(null);
 
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [isChannelLoading, setIsChannelLoading] = useState(false);
+  const [isChannelContentBuffering, setIsChannelContentBuffering] = useState(false);
 
 
   /* ------------------------------
@@ -923,6 +928,8 @@ const toastTimeoutRef = useRef(null);
   const replyInputRefs = useRef({});
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const [newVideoTitle, setNewVideoTitle] = useState('');
   const [newVideoUrl, setNewVideoUrl] = useState('');
   const [newVideoCategory, setNewVideoCategory] = useState('未分類'); 
@@ -2244,7 +2251,7 @@ const toastTimeoutRef = useRef(null);
     if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
   };
 
-  const startPageBuffer = (duration = 320) => {
+  const startPageBuffer = (duration = 260) => {
     if (bufferTimeoutRef.current) {
       clearTimeout(bufferTimeoutRef.current);
     }
@@ -2263,6 +2270,33 @@ const toastTimeoutRef = useRef(null);
     }
     setIsPageLoading(false);
   };
+
+  const startChannelContentBuffer = (duration = 650) => {
+    if (channelBufferTimeoutRef.current) {
+      clearTimeout(channelBufferTimeoutRef.current);
+    }
+
+    setIsChannelContentBuffering(true);
+    channelBufferTimeoutRef.current = setTimeout(() => {
+      setIsChannelContentBuffering(false);
+      channelBufferTimeoutRef.current = null;
+    }, duration);
+  };
+
+  const stopChannelContentBuffer = () => {
+    if (channelBufferTimeoutRef.current) {
+      clearTimeout(channelBufferTimeoutRef.current);
+      channelBufferTimeoutRef.current = null;
+    }
+    setIsChannelContentBuffering(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (bufferTimeoutRef.current) clearTimeout(bufferTimeoutRef.current);
+      if (channelBufferTimeoutRef.current) clearTimeout(channelBufferTimeoutRef.current);
+    };
+  }, []);
 
 
   // 🟢 讓網址成為真正的頁面狀態：上一頁、重新整理、分享連結都會正常。
@@ -2322,6 +2356,26 @@ const toastTimeoutRef = useRef(null);
     if (!routeChannelKey) return;
 
     const decodedKey = decodeURIComponent(routeChannelKey);
+    let routeRequestId = channelNavigationRequestRef.current;
+
+    if (lastChannelBufferKeyRef.current !== decodedKey) {
+      lastChannelBufferKeyRef.current = decodedKey;
+      routeRequestId = channelNavigationRequestRef.current + 1;
+      channelNavigationRequestRef.current = routeRequestId;
+      setIsChannelLoading(true);
+      startChannelContentBuffer(650);
+      setTargetChannel({
+        userId: decodedKey,
+        name: '',
+        username: '',
+        channelName: '',
+        avatar: GUEST_AVATAR,
+        bio: '',
+        subscriberCount: 0
+      });
+      setTargetChannelUserId(decodedKey);
+    }
+
     const allVideos = [
       ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
       ...(Array.isArray(videos) ? videos : []),
@@ -2348,7 +2402,11 @@ const toastTimeoutRef = useRef(null);
         subscriberCount: Number(matchedVideo?.subscriberCount ?? 0)
       });
       setTargetChannelUserId(channelUserId);
-      setIsChannelLoading(false);
+      setTimeout(() => {
+        if (channelNavigationRequestRef.current !== routeRequestId) return;
+        setIsChannelLoading(false);
+        stopChannelContentBuffer();
+      }, 650);
       return;
     }
 
@@ -2363,7 +2421,11 @@ const toastTimeoutRef = useRef(null);
         subscriberCount: liveSubscriberCount
       });
       setTargetChannelUserId(currentUserId);
-      setIsChannelLoading(false);
+      setTimeout(() => {
+        if (channelNavigationRequestRef.current !== routeRequestId) return;
+        setIsChannelLoading(false);
+        stopChannelContentBuffer();
+      }, 650);
     }
   }, [routeChannelKey, videos, rawFirebaseVideos, currentUserId, localUsername, unifiedAvatar, liveSubscriberCount]);
 
@@ -2372,6 +2434,7 @@ const toastTimeoutRef = useRef(null);
       clearTimeout(bufferTimeoutRef.current);
       bufferTimeoutRef.current = null;
     }
+    stopChannelContentBuffer();
     if (location.pathname !== '/') navigate('/');
     setIsPageLoading(true); 
     setSearchInputStr('');
@@ -2398,14 +2461,19 @@ const toastTimeoutRef = useRef(null);
   const handleInternalViewNavigation = (view, path) => {
     setIsVideoLoading(false);
     setIsChannelLoading(false);
+    stopChannelContentBuffer();
     setCurrentView(view);
     navigate(path);
     forceScrollToTop();
-    startPageBuffer(320);
+    startPageBuffer(260);
   };
 
   const handleMyChannelClick = () => {
-    startPageBuffer(420);
+    const channelRequestId = channelNavigationRequestRef.current + 1;
+    channelNavigationRequestRef.current = channelRequestId;
+
+    startPageBuffer(260);
+    startChannelContentBuffer(650);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2425,11 +2493,13 @@ const toastTimeoutRef = useRef(null);
     navigate(`/channel/${encodeURIComponent(currentUserId || localUsername || 'me')}`);
 
     setTimeout(() => {
+      if (channelNavigationRequestRef.current !== channelRequestId) return;
       setTargetChannel(myChannelData);
       setTargetChannelUserId(currentUserId);
       setIsChannelLoading(false);
+      stopChannelContentBuffer();
       stopPageBuffer();
-    }, 360);
+    }, 650);
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
@@ -2437,7 +2507,11 @@ const toastTimeoutRef = useRef(null);
   const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
     if (e) e.stopPropagation();
 
-    startPageBuffer(480);
+    const channelRequestId = channelNavigationRequestRef.current + 1;
+    channelNavigationRequestRef.current = channelRequestId;
+
+    startPageBuffer(260);
+    startChannelContentBuffer(650);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2447,6 +2521,18 @@ const toastTimeoutRef = useRef(null);
     const finalName = channelName || localUsername;
     const routeKey = providedUserId || finalName;
     if (routeKey) navigate(`/channel/${encodeURIComponent(routeKey)}`);
+
+    setTargetChannel({
+      userId: routeKey || '',
+      name: '',
+      username: '',
+      channelName: '',
+      avatar: GUEST_AVATAR,
+      bio: '',
+      subscriberCount: 0
+    });
+    setTargetChannelUserId(routeKey || '');
+
     const finalAvatar = channelAvatar || GUEST_AVATAR;
     const initialBio = getRandomBio();
 
@@ -2460,12 +2546,14 @@ const toastTimeoutRef = useRef(null);
         userId: 'shiauye_official'
       };
       setTimeout(() => {
+        if (channelNavigationRequestRef.current !== channelRequestId) return;
         setTargetChannel(shiauyeChannel);
         setTargetChannelUserId('shiauye_official');
         localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
         setIsChannelLoading(false);
+        stopChannelContentBuffer();
         stopPageBuffer();
-      }, 360);
+      }, 650);
       return;
     }
 
@@ -2511,8 +2599,7 @@ const toastTimeoutRef = useRef(null);
       setLiveSubscriberCount(Number(matchedLocalVideo?.subscriberCount ?? 0));
     }
 
-    setTargetChannel(initialChannelData);
-
+    // 不在這裡顯示 initialChannelData，避免 Firebase 完整資料回來前閃出半成品或上一個頻道。
     let finalId = hintedUserId;
     let resolvedAvatar =
       finalAvatar ||
@@ -2690,6 +2777,8 @@ const toastTimeoutRef = useRef(null);
       finalId = finalId || `user_${suffix}`;
     }
 
+    if (channelNavigationRequestRef.current !== channelRequestId) return;
+
     setTargetChannelUserId(finalId);
     const displaySubscriberCount = isViewingOwnChannel
       ? resolvedSubscriberCount
@@ -2715,17 +2804,21 @@ const toastTimeoutRef = useRef(null);
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
-    const minimumDelay = 420;
+    const minimumDelay = 650;
     const elapsedTime = Date.now() - startTime;
     const remainingTime = minimumDelay - elapsedTime;
 
     if (remainingTime > 0) {
       setTimeout(() => {
+        if (channelNavigationRequestRef.current !== channelRequestId) return;
         setIsChannelLoading(false);
+        stopChannelContentBuffer();
         stopPageBuffer();
       }, remainingTime);
     } else {
+      if (channelNavigationRequestRef.current !== channelRequestId) return;
       setIsChannelLoading(false);
+      stopChannelContentBuffer();
       stopPageBuffer();
     }
   };
@@ -2781,8 +2874,18 @@ const toastTimeoutRef = useRef(null);
   }, [selectedVideo]);
 
   useEffect(() => {
+    if (!hasFirebaseVideosSnapshot) return;
+    if (currentView !== 'channel') return;
+    if (isChannelLoading) return;
+
+    // Firebase Videos 第一包 snapshot 回來後，才允許頻道內容 buffer 收掉。
+    stopChannelContentBuffer();
+  }, [hasFirebaseVideosSnapshot, currentView, isChannelLoading, routeChannelKey, rawFirebaseVideos.length, videos.length]);
+
+  useEffect(() => {
   const unsubscribe = subscribeToVideos((firebaseVideos) => {
     const validFirebaseVideos = (Array.isArray(firebaseVideos) ? firebaseVideos : []).filter(isVideoVisible);
+    setHasFirebaseVideosSnapshot(true);
     setRawFirebaseVideos(validFirebaseVideos);
 
     const justUploadedYoutubeId = String(justUploadedVideo?.youtubeId ?? '');
@@ -2905,25 +3008,55 @@ useEffect(() => {
     return ytId ? `${window.location.origin}${normalizedBasePath}/watch/${ytId}` : window.location.href;
   };
 
-  const handleShareVideo = async () => {
+  const handleShareVideo = () => {
+    setShareCopied(false);
+    setIsShareModalOpen(true);
+  };
+
+  const handleCopyShareLink = async () => {
     const shareUrl = getCurrentVideoShareUrl();
 
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title: selectedVideo?.title || 'Leafhub 影片',
-          url: shareUrl
-        });
-        return;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const tempInput = document.createElement('textarea');
+        tempInput.value = shareUrl;
+        tempInput.setAttribute('readonly', '');
+        tempInput.style.position = 'fixed';
+        tempInput.style.opacity = '0';
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
       }
 
-      await navigator.clipboard.writeText(shareUrl);
-      showToast('已複製影片連結，可以分享囉！', 'success');
+      setShareCopied(true);
+      showToast('已複製影片連結', 'success');
+      setTimeout(() => setShareCopied(false), 1600);
     } catch (error) {
-      if (error?.name === 'AbortError') return;
-      console.error('分享影片連結失敗：', error);
-      showToast('分享失敗，請稍後再試', 'error');
+      console.error('複製分享連結失敗：', error);
+      showToast('複製失敗，請稍後再試', 'error');
     }
+  };
+
+  const openShareTarget = (target) => {
+    const shareUrl = getCurrentVideoShareUrl();
+    const encodedUrl = encodeURIComponent(shareUrl);
+    const encodedTitle = encodeURIComponent(selectedVideo?.title || 'Leafhub 影片');
+
+    const targetUrlMap = {
+      facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+      messages: `sms:?&body=${encodedTitle}%20${encodedUrl}`,
+      whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
+      x: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodedTitle}`,
+      email: `mailto:?subject=${encodedTitle}&body=${encodedUrl}`
+    };
+
+    const targetUrl = targetUrlMap[target];
+    if (!targetUrl) return;
+
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
   };
 
   const handleVideoClick = async (video) => {
@@ -4496,17 +4629,50 @@ useEffect(() => {
   const getChannelVideos = (channelName) => {
     if (!channelName) return [];
 
-    const channelVideos = videos.filter(video =>
-      isVideoVisible(video) &&
-      (channelName === '小葉'
-        ? (
-            String(video.channel) === '小葉' ||
-            String(video.author) === '小葉' ||
-            String(video.creatorName) === '小葉' ||
-            String(video.username) === '小葉'
-          )
-        : String(video.channel) === String(channelName))
-    );
+    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
+    const channelCandidates = [
+      channelName,
+      targetChannel?.name,
+      targetChannel?.username,
+      targetChannel?.channelName,
+      channelUserId
+    ]
+      .map(value => String(value ?? '').trim())
+      .filter(Boolean);
+
+    const allCandidateVideos = [
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : [])
+    ];
+
+    const uniqueVideoMap = new Map();
+    allCandidateVideos.forEach((video, index) => {
+      if (!isVideoVisible(video)) return;
+      const key = String(video?.id || video?.youtubeId || video?.videoUrl || `${video?.title || 'video'}-${index}`);
+      if (!uniqueVideoMap.has(key)) {
+        uniqueVideoMap.set(key, video);
+      } else {
+        uniqueVideoMap.set(key, { ...uniqueVideoMap.get(key), ...video });
+      }
+    });
+
+    const channelVideos = Array.from(uniqueVideoMap.values()).filter(video => {
+      const videoCandidates = [
+        video.userId,
+        video.channel,
+        video.author,
+        video.creatorName,
+        video.username
+      ]
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean);
+
+      if (channelName === '小葉') {
+        return videoCandidates.includes('小葉') || videoCandidates.includes('shiauye_official');
+      }
+
+      return videoCandidates.some(videoValue => channelCandidates.includes(videoValue));
+    });
 
     return sortVideos(channelVideos, channelVideoSort);
   };
@@ -4840,7 +5006,32 @@ useEffect(() => {
     </span>
   );
 
-  const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
+  const shareModalUrl = getCurrentVideoShareUrl();
+const shareModalTitle = selectedVideo?.title || 'Leafhub 影片';
+const shareOptions = [
+  { id: 'embed', label: '嵌入', icon: '<>', action: handleCopyShareLink },
+  { id: 'facebook', label: 'Facebook', icon: 'f', action: () => openShareTarget('facebook') },
+  { id: 'messages', label: '訊息', icon: '💬', action: () => openShareTarget('messages') },
+  { id: 'whatsapp', label: 'WhatsApp', icon: '☘', action: () => openShareTarget('whatsapp') },
+  { id: 'x', label: 'X', icon: '𝕏', action: () => openShareTarget('x') },
+  { id: 'email', label: '透過電子郵件', icon: '✉', action: () => openShareTarget('email') }
+];
+const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
+  const currentRouteChannelKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+  const visibleTargetChannelCandidates = getChannelIdentityCandidates({
+    ...targetChannel,
+    userId: targetChannel?.userId || targetChannelUserId
+  });
+  const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
+  const currentChannelVideosForReadyCheck = currentView === 'channel' ? getChannelVideos(targetChannel?.name || targetChannel?.channelName || targetChannel?.username || '') : [];
+  const rawFirebaseVideosHaveCurrentChannel = currentView === 'channel' && Boolean(currentRouteChannelKey) && (Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []).some(video => {
+    const videoCandidates = getChannelIdentityCandidates(video);
+    return videoCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey) || visibleTargetChannelCandidates.some(channelCandidate => sameChannelValue(candidate, channelCandidate)));
+  });
+  const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && !hasFirebaseVideosSnapshot;
+  const isChannelWaitingForVisibleVideos = currentView === 'channel' && hasFirebaseVideosSnapshot && rawFirebaseVideosHaveCurrentChannel && currentChannelVideosForReadyCheck.length === 0;
+  const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
+  const channelVideoSkeletonItems = Array.from({ length: 8 });
 
   return (
     <div>
@@ -5472,16 +5663,60 @@ useEffect(() => {
 
                 {currentView === 'channel' && (
                   <div className="channel-page-wrapper">
-                    {isChannelLoading ? (
+                    {shouldShowChannelSkeleton ? (
                       <div className="channel-loading-skeleton" style={{ padding: '8px' }}>
                         <div className="skeleton-thumb" style={{ width: '100%', height: '180px', borderRadius: '16px', marginBottom: '24px' }}></div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '32px' }}>
-                          <div className="skeleton-avatar" style={{ width: '120px', height: '120px' }}></div>
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div className="skeleton-text" style={{ width: '250px', height: '28px', borderRadius: '6px' }}></div>
-                            <div className="skeleton-text" style={{ width: '380px', height: '16px', borderRadius: '4px' }}></div>
-                            <div className="skeleton-text" style={{ width: '450px', height: '14px', borderRadius: '4px' }}></div>
+                        <div
+                          className="channel-header-info"
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'flex-start',
+                            gap: '24px',
+                            marginBottom: '32px',
+                            paddingLeft: '8px',
+                            textAlign: 'left'
+                          }}
+                        >
+                          <div className="skeleton-avatar" style={{ width: '120px', height: '120px', flexShrink: 0 }}></div>
+                          <div
+                            className="channel-header-text"
+                            style={{
+                              minWidth: 0,
+                              flex: 1,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-start',
+                              gap: '12px'
+                            }}
+                          >
+                            <div className="skeleton-text" style={{ width: '160px', height: '34px', borderRadius: '8px' }}></div>
+                            <div className="skeleton-text" style={{ width: '280px', maxWidth: '70%', height: '16px', borderRadius: '4px' }}></div>
+                            <div className="skeleton-text" style={{ width: '420px', maxWidth: '85%', height: '14px', borderRadius: '4px' }}></div>
                           </div>
+                        </div>
+                        <div className="channel-tabs-bar" style={{ display: 'flex', justifyContent: 'flex-start', gap: '24px', borderBottom: '1px solid #222', marginBottom: '24px', paddingLeft: '8px' }}>
+                          <div className="skeleton-text" style={{ width: '52px', height: '28px', borderRadius: '999px' }}></div>
+                          <div className="skeleton-text" style={{ width: '52px', height: '28px', borderRadius: '999px' }}></div>
+                        </div>
+                        <div className="sort-bar" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 18px 8px', flexWrap: 'wrap' }}>
+                          <div className="skeleton-text" style={{ width: '86px', height: '34px', borderRadius: '999px' }}></div>
+                          <div className="skeleton-text" style={{ width: '86px', height: '34px', borderRadius: '999px' }}></div>
+                        </div>
+                        <div className="video-grid">
+                          {channelVideoSkeletonItems.map((_, index) => (
+                            <div key={`channel-skeleton-video-${index}`} className="skeleton-video-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <div className="skeleton-thumb" style={{ width: '100%', aspectRatio: '16 / 9', borderRadius: '14px' }}></div>
+                              <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                                <div className="skeleton-avatar" style={{ width: '36px', height: '36px' }}></div>
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                  <div className="skeleton-text" style={{ width: '92%', height: '14px', borderRadius: '4px' }}></div>
+                                  <div className="skeleton-text" style={{ width: '58%', height: '12px', borderRadius: '4px' }}></div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ) : (
@@ -6128,6 +6363,191 @@ useEffect(() => {
             {/* ==============================
               Set Password Modal / 上傳後設定密碼提示
             ============================== */}
+            {isShareModalOpen && (
+              <div
+                className="modal-overlay"
+                onMouseDown={(e) => {
+                  if (e.target === e.currentTarget) setIsShareModalOpen(false);
+                }}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0, 0, 0, 0.68)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 9999,
+                  padding: '20px'
+                }}
+              >
+                <div
+                  className="share-modal-window"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: '560px',
+                    maxWidth: '94vw',
+                    background: '#212121',
+                    color: '#fff',
+                    borderRadius: '18px',
+                    border: '1px solid #333',
+                    boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+                    padding: '20px 24px 24px',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div
+                    className="share-modal-header"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      marginBottom: '18px'
+                    }}
+                  >
+                    <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800 }}>分享</h2>
+                    <button
+                      type="button"
+                      aria-label="關閉分享視窗"
+                      onClick={() => setIsShareModalOpen(false)}
+                      style={{
+                        width: '36px',
+                        height: '36px',
+                        borderRadius: '50%',
+                        border: 'none',
+                        background: 'transparent',
+                        color: '#ddd',
+                        fontSize: '24px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div
+                    className="share-options-row"
+                    style={{
+                      display: 'flex',
+                      gap: '22px',
+                      overflowX: 'auto',
+                      padding: '2px 2px 22px',
+                      marginBottom: '16px'
+                    }}
+                  >
+                    {shareOptions.map((option) => {
+                      const isFacebook = option.id === 'facebook';
+                      const isMessages = option.id === 'messages';
+                      const isWhatsapp = option.id === 'whatsapp';
+                      const isX = option.id === 'x';
+                      const isEmail = option.id === 'email';
+                      const isEmbed = option.id === 'embed';
+
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={option.action}
+                          title={option.label}
+                          style={{
+                            minWidth: '76px',
+                            border: 'none',
+                            background: 'transparent',
+                            color: '#e8e8e8',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '10px',
+                            fontWeight: 700,
+                            fontSize: '14px'
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '72px',
+                              height: '72px',
+                              borderRadius: '50%',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: isEmbed ? '30px' : '34px',
+                              fontWeight: 900,
+                              color: '#fff',
+                              background: isFacebook
+                                ? '#34559a'
+                                : isMessages
+                                  ? '#f5f5f5'
+                                  : isWhatsapp
+                                    ? '#22d366'
+                                    : isX
+                                      ? '#000'
+                                      : isEmail
+                                        ? '#333'
+                                        : '#f5f5f5',
+                              border: isMessages ? '6px solid #fff' : '1px solid rgba(255,255,255,0.08)',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+                            }}
+                          >
+                            <span style={{ color: isEmbed ? '#555' : isMessages ? '#2b72ff' : '#fff' }}>
+                              {option.icon}
+                            </span>
+                          </span>
+                          <span style={{ lineHeight: 1.25, whiteSpace: isEmail ? 'normal' : 'nowrap' }}>{option.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    className="share-link-copy-box"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      background: '#121212',
+                      border: '1px solid #444',
+                      borderRadius: '16px',
+                      padding: '12px 12px 12px 18px'
+                    }}
+                  >
+                    <div
+                      title={shareModalTitle}
+                      style={{
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        color: '#f5f5f5',
+                        fontSize: '16px',
+                        fontWeight: 700
+                      }}
+                    >
+                      {shareModalUrl}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyShareLink}
+                      style={{
+                        flexShrink: 0,
+                        border: '1px solid #666',
+                        background: '#1f1f1f',
+                        color: '#fff',
+                        borderRadius: '999px',
+                        padding: '10px 18px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        fontSize: '15px'
+                      }}
+                    >
+                      {shareCopied ? '已複製' : '複製'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {isSetPasswordModalOpen && (
               <div
                 className="modal-overlay"
