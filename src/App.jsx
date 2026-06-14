@@ -2246,7 +2246,7 @@ const toastTimeoutRef = useRef(null);
     if (contentAreaRef.current) contentAreaRef.current.scrollTop = 0;
   };
 
-  const startPageBuffer = (duration = 520) => {
+  const startPageBuffer = (duration = 320) => {
     if (bufferTimeoutRef.current) {
       clearTimeout(bufferTimeoutRef.current);
     }
@@ -2370,6 +2370,10 @@ const toastTimeoutRef = useRef(null);
   }, [routeChannelKey, videos, rawFirebaseVideos, currentUserId, localUsername, unifiedAvatar, liveSubscriberCount]);
 
   const handleHomeNavigation = () => {
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
+    }
     if (location.pathname !== '/') navigate('/');
     setIsPageLoading(true); 
     setSearchInputStr('');
@@ -2399,11 +2403,11 @@ const toastTimeoutRef = useRef(null);
     setCurrentView(view);
     navigate(path);
     forceScrollToTop();
-    startPageBuffer(520);
+    startPageBuffer(320);
   };
 
   const handleMyChannelClick = () => {
-    startPageBuffer(620);
+    startPageBuffer(420);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2427,7 +2431,7 @@ const toastTimeoutRef = useRef(null);
       setTargetChannelUserId(currentUserId);
       setIsChannelLoading(false);
       stopPageBuffer();
-    }, 520);
+    }, 360);
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
@@ -2435,7 +2439,7 @@ const toastTimeoutRef = useRef(null);
   const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
     if (e) e.stopPropagation();
 
-    startPageBuffer(680);
+    startPageBuffer(480);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2463,7 +2467,7 @@ const toastTimeoutRef = useRef(null);
         localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
         setIsChannelLoading(false);
         stopPageBuffer();
-      }, 520);
+      }, 360);
       return;
     }
 
@@ -2713,7 +2717,7 @@ const toastTimeoutRef = useRef(null);
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
-    const minimumDelay = 650;
+    const minimumDelay = 420;
     const elapsedTime = Date.now() - startTime;
     const remainingTime = minimumDelay - elapsedTime;
 
@@ -5272,7 +5276,7 @@ useEffect(() => {
           )}
 
           {currentView !== 'home' && (
-            isPageLoading ? (
+            (isPageLoading && ['subscriptions', 'history', 'liked'].includes(currentView)) ? (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '70vh' }}>
                 <div className="yt-buffering-spinner"></div>
               </div>
