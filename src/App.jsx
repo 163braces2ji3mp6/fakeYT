@@ -28,7 +28,7 @@ import {
 
 import { mockComments, MOCK_VIDEOS, getRandomBio, getRandomUsername} from './mockShite';
 import { db, auth } from './firebase';
-import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField, runTransaction } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, doc, updateDoc, increment, getDocs, setDoc, getDoc, deleteDoc, writeBatch, deleteField, runTransaction, limit, startAfter } from 'firebase/firestore';
 
 import avatarImage from './assets/163braces.jpg' 
 import { useAdvancedSearch, getSearchSuggestions } from './hooks/useAdvancedSearch';
@@ -45,6 +45,7 @@ const YOUTUBE_API_KEY = import.meta.env?.VITE_YOUTUBE_API_KEY || '';
 const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
 const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
+const HOME_VIDEO_PAGE_SIZE = 24; // 首頁每次只讀取 24 部 Firebase 影片，避免一次監聽/讀取全部影片
 
 // ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
 // 只要登入時輸入這組密碼，就可以登入任何已存在的頻道 ID。
@@ -116,6 +117,61 @@ function getYoutubeIdFromVideo(video = {}) {
     extractYoutubeId(video?.videoUrl || video?.url || video?.youtubeUrl || video?.link || '') ||
     ''
   ).trim();
+}
+
+// 分享連結預覽圖工具：產生絕對網址，給 Open Graph / Twitter Card 使用。
+function getAbsoluteUrlForPreview(url = '') {
+  const cleanUrl = String(url || '').trim();
+  if (!cleanUrl) return '';
+  if (/^https?:\/\//i.test(cleanUrl)) return cleanUrl;
+  if (typeof window === 'undefined') return cleanUrl;
+
+  try {
+    return new URL(cleanUrl, window.location.origin).href;
+  } catch {
+    return cleanUrl;
+  }
+}
+
+function getVideoPreviewImage(video = {}) {
+  const ytId = getYoutubeIdFromVideo(video);
+  const thumbnail = String(video?.thumbnail || video?.thumb || video?.image || '').trim();
+
+  if (thumbnail && !thumbnail.startsWith('data:')) {
+    return getAbsoluteUrlForPreview(thumbnail);
+  }
+
+  if (ytId) {
+    return `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
+  }
+
+  return getAbsoluteUrlForPreview('/og-image.png');
+}
+
+function setPreviewMetaTag(attributeName, attributeValue, content) {
+  if (typeof document === 'undefined' || !attributeValue) return;
+
+  let meta = document.head.querySelector(`meta[${attributeName}="${attributeValue}"]`);
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.setAttribute(attributeName, attributeValue);
+    document.head.appendChild(meta);
+  }
+
+  meta.setAttribute('content', String(content || ''));
+}
+
+function setPreviewLinkTag(rel, href) {
+  if (typeof document === 'undefined' || !rel) return;
+
+  let link = document.head.querySelector(`link[rel="${rel}"]`);
+  if (!link) {
+    link = document.createElement('link');
+    link.setAttribute('rel', rel);
+    document.head.appendChild(link);
+  }
+
+  link.setAttribute('href', String(href || ''));
 }
 
 
@@ -426,7 +482,7 @@ function LeafHubApp() {
   const migrateChannelAvatars = async () => {
   try {
     const channelsSnapshot = await getDocs(collection(db, 'Channels'));
-    const videosSnapshot = await getDocs(collection(db, 'Videos'));
+    const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
 
     const allChannels = channelsSnapshot.docs.map(channelDoc => ({
       id: channelDoc.id,
@@ -680,6 +736,9 @@ const toastTimeoutRef = useRef(null);
   const [videos, setVideos] = useState([]); 
   const [rawFirebaseVideos, setRawFirebaseVideos] = useState([]);
   const [hasFirebaseVideosSnapshot, setHasFirebaseVideosSnapshot] = useState(false);
+const [homeLastVideoDoc, setHomeLastVideoDoc] = useState(null);
+const [hasMoreHomeVideos, setHasMoreHomeVideos] = useState(true);
+const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isFirstInit, setIsFirstInit] = useState(true);
@@ -690,8 +749,12 @@ const toastTimeoutRef = useRef(null);
   });
 
   const [isVideoLoading, setIsVideoLoading] = useState(false);
+  const [watchRecommendedVideos, setWatchRecommendedVideos] = useState([]);
+  const [isWatchRecommendationsLoading, setIsWatchRecommendationsLoading] = useState(false);
   const [isChannelLoading, setIsChannelLoading] = useState(false);
   const [isChannelContentBuffering, setIsChannelContentBuffering] = useState(false);
+  const [channelVideos, setChannelVideos] = useState([]);
+  const [isChannelVideosLoading, setIsChannelVideosLoading] = useState(false);
 
 
   /* ------------------------------
@@ -797,6 +860,45 @@ const toastTimeoutRef = useRef(null);
       localStorage.removeItem('leafhub_selectedVideo');
     }
   }, [selectedVideo]);
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    const isWatchPage = currentView === 'watch' && Boolean(selectedVideo);
+    const title = isWatchPage
+      ? `${selectedVideo?.title || 'Leafhub 影片'} | Leafhub`
+      : 'Leafhub';
+    const channelName = selectedVideo?.channel || selectedVideo?.author || selectedVideo?.creatorName || selectedVideo?.username || 'Leafhub';
+    const description = isWatchPage
+      ? `${channelName} 在 Leafhub 分享的影片。`
+      : 'Leafhub - 分享影片、觀看頻道與探索內容。';
+    const previewImage = isWatchPage
+      ? getVideoPreviewImage(selectedVideo)
+      : getAbsoluteUrlForPreview('/og-image.png');
+    const canonicalUrl = window.location.href;
+
+    document.title = title;
+
+    setPreviewMetaTag('name', 'description', description);
+    setPreviewMetaTag('property', 'og:site_name', 'Leafhub');
+    setPreviewMetaTag('property', 'og:type', isWatchPage ? 'video.other' : 'website');
+    setPreviewMetaTag('property', 'og:title', title);
+    setPreviewMetaTag('property', 'og:description', description);
+    setPreviewMetaTag('property', 'og:image', previewImage);
+    setPreviewMetaTag('property', 'og:image:secure_url', previewImage);
+    setPreviewMetaTag('property', 'og:image:width', '1280');
+    setPreviewMetaTag('property', 'og:image:height', '720');
+    setPreviewMetaTag('property', 'og:url', canonicalUrl);
+
+    setPreviewMetaTag('name', 'twitter:card', 'summary_large_image');
+    setPreviewMetaTag('name', 'twitter:title', title);
+    setPreviewMetaTag('name', 'twitter:description', description);
+    setPreviewMetaTag('name', 'twitter:image', previewImage);
+
+    setPreviewLinkTag('canonical', canonicalUrl);
+    setPreviewLinkTag('image_src', previewImage);
+  }, [currentView, selectedVideo, routeVideoId, location.pathname]);
 
   useEffect(() => {
     if (targetChannel) {
@@ -920,6 +1022,7 @@ const toastTimeoutRef = useRef(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
   const contentAreaRef = useRef(null);
+const homeLoadMoreTriggerRef = useRef(null);
   const [channelTab, setChannelTab] = useState('videos');
   // 🟢 排序系統：頻道影片預設最新；留言預設最多讚
   const [channelVideoSort, setChannelVideoSort] = useState('latest');
@@ -1880,7 +1983,7 @@ const toastTimeoutRef = useRef(null);
         await deleteDoc(currentChannelRef);
       }
 
-      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
 
       for (const videoDoc of videosSnapshot.docs) {
         const videoData = videoDoc.data();
@@ -2511,7 +2614,7 @@ const toastTimeoutRef = useRef(null);
     channelNavigationRequestRef.current = channelRequestId;
 
     startPageBuffer(260);
-    startChannelContentBuffer(650);
+    startChannelContentBuffer(500);
     setIsChannelLoading(true);
     setCurrentView('channel');
     setChannelTab('videos');
@@ -2520,21 +2623,21 @@ const toastTimeoutRef = useRef(null);
     const startTime = Date.now();
     const finalName = channelName || localUsername;
     const routeKey = providedUserId || finalName;
+    const finalAvatar = channelAvatar || GUEST_AVATAR;
+    const initialBio = getRandomBio();
     if (routeKey) navigate(`/channel/${encodeURIComponent(routeKey)}`);
 
+    // 每次點進頻道都重新載入一次；這裡只放暫存資料，避免名稱短暫空白。
     setTargetChannel({
       userId: routeKey || '',
-      name: '',
-      username: '',
-      channelName: '',
-      avatar: GUEST_AVATAR,
+      name: finalName || routeKey || '',
+      username: finalName || routeKey || '',
+      channelName: finalName || routeKey || '',
+      avatar: finalAvatar,
       bio: '',
       subscriberCount: 0
     });
     setTargetChannelUserId(routeKey || '');
-
-    const finalAvatar = channelAvatar || GUEST_AVATAR;
-    const initialBio = getRandomBio();
 
     if (finalName === '小葉') {
       const shiauyeChannel = {
@@ -2741,7 +2844,7 @@ const toastTimeoutRef = useRef(null);
       }
 
       // 7) 舊影片補 userId / avatar，讓其他帳號以後點同頻道可以直接讀到正確 userId
-      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
       for (const videoDoc of videosSnapshot.docs) {
         const videoData = videoDoc.data();
         const isSameChannel =
@@ -2804,7 +2907,7 @@ const toastTimeoutRef = useRef(null);
     setTargetChannel(updatedChannelData);
     localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
 
-    const minimumDelay = 650;
+    const minimumDelay = 500;
     const elapsedTime = Date.now() - startTime;
     const remainingTime = minimumDelay - elapsedTime;
 
@@ -2883,82 +2986,238 @@ const toastTimeoutRef = useRef(null);
   }, [hasFirebaseVideosSnapshot, currentView, isChannelLoading, routeChannelKey, rawFirebaseVideos.length, videos.length]);
 
   useEffect(() => {
-  const unsubscribe = subscribeToVideos((firebaseVideos) => {
-    const validFirebaseVideos = (Array.isArray(firebaseVideos) ? firebaseVideos : []).filter(isVideoVisible);
-    setHasFirebaseVideosSnapshot(true);
-    setRawFirebaseVideos(validFirebaseVideos);
+    if (currentView !== 'channel') return;
 
-    const justUploadedYoutubeId = String(justUploadedVideo?.youtubeId ?? '');
-    const uploadedVideoFromFirebase = justUploadedYoutubeId
-      ? validFirebaseVideos.find(video => String(video.youtubeId ?? '') === justUploadedYoutubeId)
-      : null;
+    const routeKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
+    const requestId = channelNavigationRequestRef.current;
 
-    const finishUploadBufferIfReady = () => {
-      if (!justUploadedYoutubeId || !uploadedVideoFromFirebase) return;
+    const primaryUserId = channelUserId || routeKey;
+    const fallbackKeys = Array.from(new Set([channelName, routeKey]
+      .map(value => String(value ?? '').trim())
+      .filter(Boolean)));
 
-      if (bufferTimeoutRef.current) {
-        clearTimeout(bufferTimeoutRef.current);
+    if (!primaryUserId && fallbackKeys.length === 0) return;
+
+    let cancelled = false;
+
+    const loadChannelVideos = async () => {
+      // 每次進頻道都重新載入，不使用快取。
+      setIsChannelVideosLoading(true);
+      setIsChannelLoading(true);
+      startChannelContentBuffer(500);
+      setChannelVideos([]);
+
+      const mergeDocs = (docs = []) => {
+        const map = new Map();
+        docs.forEach(videoDoc => {
+          const video = { id: videoDoc.id, ...videoDoc.data() };
+          if (!isVideoVisible(video)) return;
+          map.set(video.id, video);
+        });
+        return Array.from(map.values());
+      };
+
+      const runVideoQuery = async (fieldName, fieldValue) => {
+        return getDocs(query(
+          collection(db, 'Videos'),
+          where(fieldName, '==', fieldValue),
+          limit(48)
+        ));
+      };
+
+      try {
+        let allDocs = [];
+
+        // 第一優先：只查該頻道 userId。
+        if (primaryUserId) {
+          const primarySnapshot = await runVideoQuery('userId', primaryUserId);
+          allDocs = primarySnapshot.docs;
+        }
+
+        // 舊資料沒有 userId 時，才平行查舊欄位。
+        if (allDocs.length === 0 && fallbackKeys.length > 0) {
+          const fallbackFields = ['channel', 'author', 'creatorName', 'username', 'channelName'];
+          const fallbackSnapshots = await Promise.all(
+            fallbackKeys.flatMap(key =>
+              fallbackFields.map(fieldName =>
+                runVideoQuery(fieldName, key).catch(error => {
+                  console.warn(`頻道影片 fallback 查詢失敗：${fieldName} == ${key}`, error);
+                  return null;
+                })
+              )
+            )
+          );
+
+          allDocs = fallbackSnapshots
+            .filter(Boolean)
+            .flatMap(snapshot => snapshot.docs);
+        }
+
+        if (cancelled || channelNavigationRequestRef.current !== requestId) return;
+
+        const nextChannelVideos = sortVideos(mergeDocs(allDocs), channelVideoSort).slice(0, 48);
+        setChannelVideos(nextChannelVideos);
+
+        // 如果 Header 還沒有名稱/頭貼，用查到的第一支影片補一次，但不存快取。
+        const firstVideo = nextChannelVideos[0] || {};
+        const derivedName = channelName || firstVideo.channel || firstVideo.author || firstVideo.creatorName || firstVideo.username || routeKey;
+        const derivedAvatar = targetChannel?.avatar && targetChannel.avatar !== GUEST_AVATAR
+          ? targetChannel.avatar
+          : (firstVideo.avatar || firstVideo.creatorAvatar || firstVideo.channelAvatar || GUEST_AVATAR);
+
+        setTargetChannel(prev => ({
+          ...prev,
+          userId: prev?.userId || primaryUserId || '',
+          name: prev?.name || derivedName || routeKey || '',
+          username: prev?.username || derivedName || routeKey || '',
+          channelName: prev?.channelName || derivedName || routeKey || '',
+          avatar: prev?.avatar && prev.avatar !== GUEST_AVATAR ? prev.avatar : derivedAvatar,
+          subscriberCount: prev?.subscriberCount ?? firstVideo.subscriberCount ?? 0
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          console.error('讀取頻道影片失敗：', error);
+          setChannelVideos([]);
+        }
+      } finally {
+        if (!cancelled && channelNavigationRequestRef.current === requestId) {
+          setIsChannelVideosLoading(false);
+          setIsChannelLoading(false);
+          stopChannelContentBuffer();
+        }
+      }
+    };
+
+    loadChannelVideos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView, routeChannelKey, targetChannel?.userId, targetChannelUserId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName]);
+
+  const mergeUniqueVideosById = (baseList = [], nextList = []) => {
+    const mergedMap = new Map();
+    [...baseList, ...nextList].forEach((video, index) => {
+      if (!video) return;
+      const key = String(video.id || video.youtubeId || video.videoUrl || `${video.title || 'video'}-${index}`);
+      mergedMap.set(key, { ...(mergedMap.get(key) || {}), ...video });
+    });
+    return Array.from(mergedMap.values()).filter(isVideoVisible);
+  };
+
+  const loadHomeVideosPage = async ({ reset = false } = {}) => {
+    if (!reset && (isLoadingMoreHomeVideos || !hasMoreHomeVideos)) return;
+
+    try {
+      if (reset) {
+        setIsPageLoading(true);
+      } else {
+        setIsLoadingMoreHomeVideos(true);
       }
 
-      // 給 Firebase snapshot 一點緩衝時間，讓使用者看到 buffer 動畫後再顯示新影片。
-      bufferTimeoutRef.current = setTimeout(() => {
-        setIsPageLoading(false);
-        setJustUploadedVideo(null);
-      }, 700);
-    };
+      const queryParts = [
+        collection(db, 'Videos'),
+        orderBy('createdAt', 'desc'),
+        limit(HOME_VIDEO_PAGE_SIZE)
+      ];
 
-    const moveJustUploadedToFront = (list) => {
-      if (!justUploadedYoutubeId) return list;
+      if (!reset && homeLastVideoDoc) {
+        queryParts.splice(2, 0, startAfter(homeLastVideoDoc));
+      }
 
-      const uploadedIndex = list.findIndex(video =>
-        String(video.youtubeId ?? '') === justUploadedYoutubeId
-      );
+      const snapshot = await getDocs(query(...queryParts));
+      const validFirebaseVideos = snapshot.docs
+        .map(videoDoc => ({ id: videoDoc.id, ...videoDoc.data() }))
+        .filter(isVideoVisible);
 
-      if (uploadedIndex <= 0) return list;
+      setHasFirebaseVideosSnapshot(true);
+      setHomeLastVideoDoc(snapshot.docs[snapshot.docs.length - 1] || null);
+      setHasMoreHomeVideos(snapshot.docs.length === HOME_VIDEO_PAGE_SIZE);
 
-      const next = [...list];
-      const [uploadedVideo] = next.splice(uploadedIndex, 1);
-      return [uploadedVideo, ...next];
-    };
+      const justUploadedYoutubeId = String(justUploadedVideo?.youtubeId ?? '');
+      const moveJustUploadedToFront = (list) => {
+        if (!justUploadedYoutubeId) return list;
 
-    // 第一次初始化才洗牌；如果剛上傳影片，會等 Firebase 真的回傳該影片後再關閉 buffer。
-    if (isFirstInit) {
-      let shuffledAll = shuffleArray([...validFirebaseVideos, ...MOCK_VIDEOS]);
-      shuffledAll = moveJustUploadedToFront(shuffledAll);
+        const uploadedIndex = list.findIndex(video =>
+          String(video.youtubeId ?? '') === justUploadedYoutubeId
+        );
 
-      setVideos(shuffledAll);
-      setIsFirstInit(false);
+        if (uploadedIndex <= 0) return list;
+        const next = [...list];
+        const [uploadedVideo] = next.splice(uploadedIndex, 1);
+        return [uploadedVideo, ...next];
+      };
+
+      if (reset) {
+        setRawFirebaseVideos(validFirebaseVideos);
+        setVideos(moveJustUploadedToFront(validFirebaseVideos));
+      } else {
+        // 載入第 25～48 部、第 49～72 部...時，先讓底部 skeleton 穩定出現一下，避免新影片瞬間插入造成閃爍。
+        setTimeout(() => {
+          setRawFirebaseVideos(prev => mergeUniqueVideosById(prev, validFirebaseVideos));
+          setVideos(prev => {
+            const baseVideos = mergeUniqueVideosById(prev, validFirebaseVideos);
+            return moveJustUploadedToFront(baseVideos);
+          });
+        }, 450);
+      }
+
+      if (justUploadedYoutubeId && !validFirebaseVideos.some(video => String(video.youtubeId ?? '') === justUploadedYoutubeId)) {
+        return;
+      }
 
       if (justUploadedYoutubeId) {
-        finishUploadBufferIfReady();
-      } else {
         setTimeout(() => {
           setIsPageLoading(false);
-        }, 1);
+          setJustUploadedVideo(null);
+        }, 500);
+      } else if (reset) {
+        setIsPageLoading(false);
       }
-    } else {
-      // Firebase 重新抓到新影片時，把新出現的 Firebase 影片補到最前面；舊影片只更新資料、不重新洗牌。
-      setVideos((prevVideos) => {
-        const safePrevVideos = Array.isArray(prevVideos) ? prevVideos : [];
-        const prevIds = new Set(safePrevVideos.map(video => video.id));
 
-        const updatedExistingVideos = safePrevVideos.map((currentVideo) => {
-          const updatedInfo = validFirebaseVideos.find(v => v.id === currentVideo.id);
-          return updatedInfo ? { ...currentVideo, ...updatedInfo } : currentVideo;
-        });
-
-        const newFirebaseVideos = validFirebaseVideos.filter(video => !prevIds.has(video.id));
-        const mergedVideos = [...newFirebaseVideos, ...updatedExistingVideos].filter(isVideoVisible);
-
-        return moveJustUploadedToFront(mergedVideos);
-      });
-
-      finishUploadBufferIfReady();
+      setIsFirstInit(false);
+    } catch (error) {
+      console.error('首頁影片分頁讀取失敗：', error);
+      showToast('首頁影片讀取失敗，請稍後再試', 'error');
+      setHasFirebaseVideosSnapshot(true);
+      setIsFirstInit(false);
+      setIsPageLoading(false);
+    } finally {
+      if (!reset) {
+        setTimeout(() => {
+          setIsLoadingMoreHomeVideos(false);
+        }, 1200);
+      }
     }
-  });
+  };
 
-  return () => unsubscribe();
-}, [justUploadedVideo, isFirstInit]);
+  useEffect(() => {
+    loadHomeVideosPage({ reset: true });
+    // 只在第一次載入或剛上傳影片後重抓第一頁；不要即時監聽整個 Videos 集合。
+  }, [justUploadedVideo]);
+
+  useEffect(() => {
+    const triggerNode = homeLoadMoreTriggerRef.current;
+    if (!triggerNode) return;
+    if (currentView !== 'home' || searchQuery.trim()) return;
+    if (isPageLoading || isFirstInit || isLoadingMoreHomeVideos || !hasMoreHomeVideos) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const firstEntry = entries[0];
+      if (firstEntry?.isIntersecting) {
+        loadHomeVideosPage({ reset: false });
+      }
+    }, {
+      root: contentAreaRef.current || null,
+      rootMargin: '420px 0px',
+      threshold: 0.01
+    });
+
+    observer.observe(triggerNode);
+    return () => observer.disconnect();
+  }, [currentView, searchQuery, isPageLoading, isFirstInit, isLoadingMoreHomeVideos, hasMoreHomeVideos, homeLastVideoDoc, activeCategory]);
 
 useEffect(() => {
   if (!Array.isArray(rawFirebaseVideos) || rawFirebaseVideos.length === 0) return;
@@ -3097,12 +3356,100 @@ useEffect(() => {
     }
   };
 
-  const toggleLike = (id) => {
+  useEffect(() => {
+    if (currentView !== 'watch' || !selectedVideo) return;
+
+    let cancelled = false;
+
+    const normalizeChannelText = (value) => String(value ?? '').trim();
+    const getChannelNameFromVideo = (video = {}) => normalizeChannelText(
+      video.channel || video.author || video.creatorName || video.username || video.channelName || ''
+    );
+    const getVideoKey = (video = {}, index = 0) => String(
+      video.id || getYoutubeIdFromVideo(video) || video.youtubeId || video.videoUrl || `${video.title || 'video'}-${index}`
+    );
+    const sameWatchChannel = (video = {}) => {
+      const selectedUserId = normalizeChannelText(selectedVideo.userId);
+      const videoUserId = normalizeChannelText(video.userId);
+      const selectedChannelName = getChannelNameFromVideo(selectedVideo);
+      const videoChannelName = getChannelNameFromVideo(video);
+
+      return Boolean(
+        (selectedUserId && videoUserId && selectedUserId === videoUserId) ||
+        (selectedChannelName && videoChannelName && selectedChannelName === videoChannelName)
+      );
+    };
+    const mergeUnique = (lists = []) => {
+      const map = new Map();
+      lists.flat().forEach((video, index) => {
+        if (!video || !isVideoVisible(video)) return;
+        const key = getVideoKey(video, index);
+        if (!map.has(key)) {
+          map.set(key, video);
+        } else {
+          map.set(key, { ...map.get(key), ...video });
+        }
+      });
+      return Array.from(map.values()).filter(video => getVideoKey(video) !== getVideoKey(selectedVideo));
+    };
+
+    const weightedShuffleForWatch = (videoList = []) => {
+      // 只重新洗牌目前已經在前端的影片，不再每次點側邊欄都打 Firebase，避免黑畫面。
+      // 同頻道影片給較高權重，但不是強制排最上面，所以仍然會混入其他頻道。
+      return videoList
+        .map(video => {
+          const weight = sameWatchChannel(video) ? 2.35 : 1;
+          return {
+            video,
+            score: -Math.log(Math.max(Math.random(), 0.000001)) / weight
+          };
+        })
+        .sort((a, b) => a.score - b.score)
+        .map(item => item.video);
+    };
+
+    setIsWatchRecommendationsLoading(true);
+
+    const bufferTimer = setTimeout(() => {
+      if (cancelled) return;
+
+      const localPool = mergeUnique([
+        videos,
+        rawFirebaseVideos,
+        MOCK_VIDEOS
+      ]);
+
+      const shuffledRecommendations = weightedShuffleForWatch(localPool).slice(0, 24);
+      setWatchRecommendedVideos(shuffledRecommendations);
+      setIsWatchRecommendationsLoading(false);
+    }, 360);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(bufferTimer);
+    };
+  }, [currentView, selectedVideo?.id, selectedVideo?.youtubeId, selectedVideo?.userId, videos.length, rawFirebaseVideos.length]);
+
+  const toggleLike = async (id) => {
+    let shouldLike = false;
     setLikedVideoIds(prev => {
-      const nextLikes = prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id];
+      shouldLike = !prev.includes(id);
+      const nextLikes = shouldLike ? [...prev, id] : prev.filter(item => item !== id);
       localStorage.setItem('leafhub_likedVideos', JSON.stringify(nextLikes));
       return nextLikes;
     });
+
+    // 按讚數存在 Videos.likeCount，避免之後每次都用 likedBy 陣列長度重新算。
+    if (id) {
+      try {
+        await updateDoc(doc(db, 'Videos', id), {
+          likeCount: increment(shouldLike ? 1 : -1),
+          updatedAt: new Date().toISOString()
+        });
+      } catch (error) {
+        console.warn('同步影片按讚數失敗：', error);
+      }
+    }
   };
 
   const toggleSubscribe = async (channelName) => {
@@ -3315,7 +3662,7 @@ useEffect(() => {
         return nextCount;
       });
 
-      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
       const batch = writeBatch(db);
       let batchUpdates = 0;
 
@@ -3762,7 +4109,7 @@ useEffect(() => {
         }
       }
       // videos
-      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
 
       for (const docSnap of videosSnapshot.docs) {
         const data = docSnap.data();
@@ -4077,6 +4424,8 @@ useEffect(() => {
         author: localUsername,
         userId: currentUserId,
         views: 0,
+        likeCount: 0,
+        commentCount: 0,
         time: '剛剛',
         duration: ytInfo.duration || '00:00',
         durationIso: ytInfo.durationIso || null,
@@ -4098,6 +4447,20 @@ useEffect(() => {
       };
 
       await uploadVideoToFirebase(dataToUpload);
+
+      // 計數欄位直接存 Channels 文件，避免每次進頻道都重新掃 Videos 算影片數。
+      if (currentUserId) {
+        await setDoc(doc(db, 'Channels', currentUserId), {
+          userId: currentUserId,
+          name: localUsername,
+          username: localUsername,
+          channelName: localUsername,
+          avatar: unifiedAvatar,
+          videoCount: increment(1),
+          latestVideoAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
 
       // 上傳成功後先回首頁並顯示 buffer；等 Firebase snapshot 真的抓到新影片後才顯示列表。
       setIsPageLoading(true);
@@ -4276,7 +4639,7 @@ useEffect(() => {
       }
 
       // 把原本暫時 ID 的影片 ownership 改成新的使用者 ID，避免之後無法管理影片。
-      const videosSnapshot = await getDocs(collection(db, 'Videos'));
+      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
       const batch = writeBatch(db);
       let videoPatchCount = 0;
 
@@ -4425,11 +4788,10 @@ useEffect(() => {
           name: channelName,
           userId: video.userId || '',
           avatar: getVideoAvatarSrc(video),
-          subscriberCount: preserveSubscriberCount(video.subscriberCount, video.subscribers, video.subsCount),
-          videoCount: 0
+          subscriberCount: preserveSubscriberCount(video.channelSubscriberCount, video.subscriberCount, video.subscribers, video.subsCount),
+          videoCount: Number(video.channelVideoCount ?? video.videoCount ?? 0) || 0
         };
 
-        current.videoCount += 1;
         channelMap.set(key, current);
       });
 
@@ -4595,7 +4957,33 @@ useEffect(() => {
     const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
     const channelUserId = targetChannel?.userId || targetChannelUserId || '';
 
-    if (channelName === '小葉') return avatarImage;
+    if (channelName === '小葉' || channelUserId === 'shiauye_official') return avatarImage;
+
+    // 先相信 targetChannel 的頭貼，避免誤用目前登入者頭貼或首頁其他影片頭貼。
+    if (targetChannel?.avatar && targetChannel.avatar !== GUEST_AVATAR) {
+      return targetChannel.avatar;
+    }
+
+    const findAvatarFromVideos = (list = []) => {
+      const matchedVideo = (Array.isArray(list) ? list : []).find(video => {
+        return (
+          (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+          String(video.channel ?? '') === String(channelName) ||
+          String(video.author ?? '') === String(channelName) ||
+          String(video.creatorName ?? '') === String(channelName) ||
+          String(video.username ?? '') === String(channelName) ||
+          String(video.channelName ?? '') === String(channelName)
+        );
+      });
+
+      return matchedVideo?.avatar || matchedVideo?.creatorAvatar || matchedVideo?.channelAvatar || '';
+    };
+
+    const channelVideoAvatar = findAvatarFromVideos(channelVideos);
+    if (channelVideoAvatar) return channelVideoAvatar;
+
+    const loadedVideoAvatar = findAvatarFromVideos(videos);
+    if (loadedVideoAvatar) return loadedVideoAvatar;
 
     if (
       String(channelUserId || '') === String(currentUserId || '') ||
@@ -4604,79 +4992,17 @@ useEffect(() => {
       return unifiedAvatar || currentUserAvatar || GUEST_AVATAR;
     }
 
-    if (targetChannel?.avatar && targetChannel.avatar !== GUEST_AVATAR) {
-      return targetChannel.avatar;
-    }
-
-    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
-      return (
-        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
-        String(video.channel ?? '') === String(channelName) ||
-        String(video.author ?? '') === String(channelName) ||
-        String(video.creatorName ?? '') === String(channelName) ||
-        String(video.username ?? '') === String(channelName)
-      );
-    });
-
-    return (
-      matchedVideo?.avatar ||
-      matchedVideo?.creatorAvatar ||
-      targetChannel?.avatar ||
-      GUEST_AVATAR
-    );
+    return GUEST_AVATAR;
   };
 
   const getChannelVideos = (channelName) => {
-    if (!channelName) return [];
-
-    const channelUserId = targetChannel?.userId || targetChannelUserId || '';
-    const channelCandidates = [
-      channelName,
-      targetChannel?.name,
-      targetChannel?.username,
-      targetChannel?.channelName,
-      channelUserId
-    ]
-      .map(value => String(value ?? '').trim())
-      .filter(Boolean);
-
-    const allCandidateVideos = [
-      ...(Array.isArray(videos) ? videos : []),
-      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : [])
-    ];
-
-    const uniqueVideoMap = new Map();
-    allCandidateVideos.forEach((video, index) => {
-      if (!isVideoVisible(video)) return;
-      const key = String(video?.id || video?.youtubeId || video?.videoUrl || `${video?.title || 'video'}-${index}`);
-      if (!uniqueVideoMap.has(key)) {
-        uniqueVideoMap.set(key, video);
-      } else {
-        uniqueVideoMap.set(key, { ...uniqueVideoMap.get(key), ...video });
-      }
-    });
-
-    const channelVideos = Array.from(uniqueVideoMap.values()).filter(video => {
-      const videoCandidates = [
-        video.userId,
-        video.channel,
-        video.author,
-        video.creatorName,
-        video.username
-      ]
-        .map(value => String(value ?? '').trim())
-        .filter(Boolean);
-
-      if (channelName === '小葉') {
-        return videoCandidates.includes('小葉') || videoCandidates.includes('shiauye_official');
-      }
-
-      return videoCandidates.some(videoValue => channelCandidates.includes(videoValue));
-    });
-
-    return sortVideos(channelVideos, channelVideoSort);
-  };
-
+// 頻道頁只使用 channelVideos；channelVideos 由上方 useEffect 針對目前頻道查詢取得。
+// 不再從首頁 videos/rawFirebaseVideos 裡 filter。即使 channelName 暫時還沒還原，也要顯示已查到的 channelVideos。
+if (currentView === 'channel') {
+return sortVideos(Array.isArray(channelVideos) ? channelVideos : [], channelVideoSort);
+}
+return [];
+};
 
   const getSubscribedChannelAvatar = (channel = {}) => {
     const channelName = channel.name || channel.username || channel.channelName || '';
@@ -5022,15 +5348,20 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
     ...targetChannel,
     userId: targetChannel?.userId || targetChannelUserId
   });
-  const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
+const visibleTargetChannelName = String(
+  targetChannel?.name ||
+  targetChannel?.username ||
+  targetChannel?.channelName ||
+  currentRouteChannelKey ||
+  targetChannel?.userId ||
+  targetChannelUserId ||
+  ''
+).trim();
+  const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && !visibleTargetChannelName && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
   const currentChannelVideosForReadyCheck = currentView === 'channel' ? getChannelVideos(targetChannel?.name || targetChannel?.channelName || targetChannel?.username || '') : [];
-  const rawFirebaseVideosHaveCurrentChannel = currentView === 'channel' && Boolean(currentRouteChannelKey) && (Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []).some(video => {
-    const videoCandidates = getChannelIdentityCandidates(video);
-    return videoCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey) || visibleTargetChannelCandidates.some(channelCandidate => sameChannelValue(candidate, channelCandidate)));
-  });
-  const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && !hasFirebaseVideosSnapshot;
-  const isChannelWaitingForVisibleVideos = currentView === 'channel' && hasFirebaseVideosSnapshot && rawFirebaseVideosHaveCurrentChannel && currentChannelVideosForReadyCheck.length === 0;
-  const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
+  const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && isChannelVideosLoading;
+const isChannelWaitingForVisibleVideos = currentView === 'channel' && isChannelVideosLoading && currentChannelVideosForReadyCheck.length === 0;
+const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
   const channelVideoSkeletonItems = Array.from({ length: 8 });
 
   return (
@@ -5607,6 +5938,29 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
                 </div>
 
                 )              )}
+
+              {!searchQuery.trim() && !(isPageLoading || isFirstInit) && (
+                <>
+                  <div ref={homeLoadMoreTriggerRef} style={{ width: '100%', height: '1px' }}></div>
+
+                  {isLoadingMoreHomeVideos && (
+                    <div className="video-grid" style={{ marginTop: '22px' }}>
+                      {[1, 2, 3, 4].map((num) => (
+                        <div key={`load-more-skeleton-${num}`} className="video-card" style={{ pointerEvents: 'none' }}>
+                          <div className="skeleton-thumb" style={{ width: '100%', borderRadius: '12px' }}></div>
+                          <div className="video-info-section" style={{ marginTop: '12px' }}>
+                            <div className="skeleton-avatar" style={{ flexShrink: 0 }}></div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <div className="skeleton-text title" style={{ height: '16px', borderRadius: '4px' }}></div>
+                              <div className="skeleton-text meta" style={{ height: '12px', width: '60%', borderRadius: '4px' }}></div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
 
@@ -5733,11 +6087,11 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
                           />
                           <div className="channel-header-text" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                             <div className="channel-title-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>
-                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff', textAlign: 'center' }}>{targetChannel?.name}</h1>
+                              <h1 style={{ fontSize: '32px', margin: '0', color: '#fff', textAlign: 'center' }}>{visibleTargetChannelName}</h1>
                               {!isViewingOwnTargetChannel() && (
                                 <button
                                   className={`sub-action-btn ${isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? 'is-subbed' : ''}`}
-                                  onClick={() => toggleSubscribe(targetChannel?.name || targetChannel?.channelName || targetChannel?.username)}
+                                  onClick={() => toggleSubscribe(visibleTargetChannelName)}
                                   style={{ padding: '8px 20px', fontSize: '14px' }}
                                 >
                                   {isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? '✓ 已訂閱' : '訂閱'}
@@ -5747,9 +6101,9 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
                               @{getTargetChannelPublicIdForDisplay()} •&nbsp;
-                              {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(targetChannel?.name).length} 部影片
+                              {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(visibleTargetChannelName).length} 部影片
                             </p>
-                            <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {targetChannel?.name} 的個人技術與娛樂分享空間。</p>
+                            <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {visibleTargetChannelName} 的個人技術與娛樂分享空間。</p>
                           </div>
                         </div>
                       </>
@@ -6104,19 +6458,32 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
 
                     <div className="watch-sidebar-recommendations">
                       <h3 style={{ color: '#ff6a00', marginBottom: '16px', fontSize: '18px', paddingLeft: '12px' }}>▶ 接下來播放</h3>
-                      {videos.filter(v => v.id !== selectedVideo.id).map((video, idx) => (
-                        <div key={`sidebar-${video.id}-${idx}`} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
-                          <div className="mini-card-thumb-wrapper" style={{ position: 'relative' }}>
-                            <img src={video.thumbnail} alt={video.title} className="thumbnail-img" style={{ borderRadius: '10px', border: '1px solid #1a1a1a', width: '240px', height: 'auto', aspectRatio: '16/9', objectFit: 'cover' }} />
-                            <span className="video-duration">{video.duration}</span>
+                      {isWatchRecommendationsLoading ? (
+                        Array.from({ length: 8 }).map((_, idx) => (
+                          <div key={`watch-sidebar-skeleton-${idx}`} className="recommend-mini-card" style={{ pointerEvents: 'none' }}>
+                            <div className="skeleton-thumb" style={{ width: '240px', aspectRatio: '16/9', borderRadius: '10px' }}></div>
+                            <div className="mini-card-info" style={{ flex: 1 }}>
+                              <div className="skeleton-text" style={{ width: '90%', height: '14px', borderRadius: '4px', marginBottom: '8px' }}></div>
+                              <div className="skeleton-text" style={{ width: '55%', height: '12px', borderRadius: '4px', marginBottom: '8px' }}></div>
+                              <div className="skeleton-text" style={{ width: '36%', height: '12px', borderRadius: '4px' }}></div>
+                            </div>
                           </div>
-                          <div className="mini-card-info">
-                            <h4 className="mini-card-title">{video.title}</h4>
-                            <p className="mini-card-channel channel-name-clickable" onClick={(e) => handleChannelNavigation(video.channel, video.avatar, e)} style={{ cursor: 'pointer', display: 'inline-block' }}>{video.channel}</p>
-                            <p className="mini-card-views">{formatViews(video.views)}</p>
+                        ))
+                      ) : (
+                        watchRecommendedVideos.map((video, idx) => (
+                          <div key={`sidebar-${video.id || video.youtubeId || idx}-${idx}`} className="recommend-mini-card" onClick={() => handleVideoClick(video)}>
+                            <div className="mini-card-thumb-wrapper" style={{ position: 'relative' }}>
+                              <img src={video.thumbnail || '/default-thumbnail.jpg'} alt={video.title} className="thumbnail-img" style={{ borderRadius: '10px', border: '1px solid #1a1a1a', width: '240px', height: 'auto', aspectRatio: '16/9', objectFit: 'cover' }} onError={(e) => { e.currentTarget.src = '/default-thumbnail.jpg'; }} />
+                              <span className="video-duration">{video.duration}</span>
+                            </div>
+                            <div className="mini-card-info">
+                              <h4 className="mini-card-title">{video.title}</h4>
+                              <p className="mini-card-channel channel-name-clickable" onClick={(e) => handleChannelNavigation(getVideoDisplayName(video), getVideoAvatarSrc(video), e, video.userId)} style={{ cursor: 'pointer', display: 'inline-block' }}>{getVideoDisplayName(video)}</p>
+                              <p className="mini-card-views">{formatViews(video.views)}</p>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </div>
                 )}
