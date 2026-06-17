@@ -7846,12 +7846,6 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                         <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                           <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="settings" gap={10}>帳號設定</IconLabel></h2>
                           <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
-                  <button
-                    className="dropdown-item-btn"
-                    onClick={handleAccountSecurityNavigation}
-                  >
-                    <IconLabel icon="key" gap={10}>帳號安全中心</IconLabel>
-                  </button>
                         </div>
                         <form
                     onSubmit={handleUpdateUsernameSubmit}
@@ -7916,11 +7910,6 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       >
                         <IconLabel icon="key" gap={8}>帳號安全</IconLabel>
                       </button>
-                    </div>
-
-                    <div style={{ border: '1px solid #2a2a2a', borderRadius: '12px', padding: '12px', background: '#101010', color: '#aaa', fontSize: '13px', lineHeight: 1.6 }}>
-                      帳號安全、Email / Google 綁定、修改密碼與帳號刪除已移到獨立頁面。
-                      <button type="button" className="clear-btn" onClick={handleAccountSecurityNavigation} style={{ marginLeft: '10px' }}>前往帳號安全</button>
                     </div>
 
                     {/* 名稱設定 */}
