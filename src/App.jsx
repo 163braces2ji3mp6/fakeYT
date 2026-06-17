@@ -15,7 +15,16 @@ import {
   signInAnonymously,
   onAuthStateChanged,
   updateProfile,
-  updatePassword
+  updatePassword,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
+  linkWithCredential,
+  EmailAuthProvider,
+  deleteUser,
+  signOut
 } from 'firebase/auth';
 import {
   BrowserRouter,
@@ -390,12 +399,17 @@ const sortVideos = (videoList, sortType = 'latest') => {
 
 const sortComments = (commentList, sortType = 'likes') => {
   const list = [...commentList];
+  const pinFirst = (a, b) => {
+    if (a?.pinned && !b?.pinned) return -1;
+    if (!a?.pinned && b?.pinned) return 1;
+    return 0;
+  };
 
   if (sortType === 'latest') {
-    return list.sort((a, b) => getDateValue(b.createdAt) - getDateValue(a.createdAt));
+    return list.sort((a, b) => pinFirst(a, b) || getDateValue(b.createdAt) - getDateValue(a.createdAt));
   }
 
-  return list.sort((a, b) => getLikeCount(b) - getLikeCount(a));
+  return list.sort((a, b) => pinFirst(a, b) || getLikeCount(b) - getLikeCount(a));
 };
 
 
@@ -410,6 +424,7 @@ export default function App() {
         <Route path="/subscriptions" element={<LeafHubApp />} />
         <Route path="/history" element={<LeafHubApp />} />
         <Route path="/liked" element={<LeafHubApp />} />
+        <Route path="/account-security" element={<LeafHubApp />} />
         <Route path="/channel/:channelKey" element={<LeafHubApp />} />
         <Route path="/watch/:videoId" element={<LeafHubApp />} />
         <Route path="*" element={<NotFoundPage />} />
@@ -706,6 +721,7 @@ const toastTimeoutRef = useRef(null);
     if (location.pathname === '/subscriptions') return 'subscriptions';
     if (location.pathname === '/history') return 'history';
     if (location.pathname === '/liked') return 'liked';
+    if (location.pathname === '/account-security') return 'account-security';
     return localStorage.getItem('leafhub_currentView') || 'home';
   });
 
@@ -739,6 +755,12 @@ const toastTimeoutRef = useRef(null);
 const [homeLastVideoDoc, setHomeLastVideoDoc] = useState(null);
 const [hasMoreHomeVideos, setHasMoreHomeVideos] = useState(true);
 const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
+
+  // 搜尋模式專用：搜尋時才從 Firebase 抓完整 Videos，避免首頁一次讀全部影片
+  const [searchFirebaseVideos, setSearchFirebaseVideos] = useState([]);
+  const [hasLoadedAllSearchVideos, setHasLoadedAllSearchVideos] = useState(false);
+  const [isSearchFirebaseLoading, setIsSearchFirebaseLoading] = useState(false);
+  const [isSearchResultsBuffering, setIsSearchResultsBuffering] = useState(false);
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isFirstInit, setIsFirstInit] = useState(true);
@@ -813,6 +835,7 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
       setCurrentUserId(savedId);
       setCurrentUserAvatar(avatar); // 這裡就能即時拿到正確的小葉頭貼了！
       setInputUsername(savedName);
+      setInputBio(localStorage.getItem('device_user_bio') || '');
     };
 
     initUserIdentity();
@@ -824,6 +847,7 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   ------------------------------ */
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [inputUsername, setInputUsername] = useState('');
+  const [inputBio, setInputBio] = useState(() => localStorage.getItem('device_user_bio') || '');
 
   const handleRandomAvatar = () => {
     const avatarUrl = generateRandomAvatar();
@@ -1015,6 +1039,26 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
     return savedHistory ? JSON.parse(savedHistory) : [];
   });
 
+  const [watchLaterVideos, setWatchLaterVideos] = useState(() => {
+    try {
+      const savedWatchLater = localStorage.getItem('leafhub_watchLaterVideos');
+      const parsed = savedWatchLater ? JSON.parse(savedWatchLater) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [notInterestedVideoIds, setNotInterestedVideoIds] = useState(() => {
+    try {
+      const savedNotInterested = localStorage.getItem('leafhub_notInterestedVideos');
+      const parsed = savedNotInterested ? JSON.parse(savedNotInterested) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
 
   /* ------------------------------
     07-6. UI Refs / Upload / Comment State
@@ -1023,6 +1067,7 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   const profileMenuRef = useRef(null);
   const contentAreaRef = useRef(null);
 const homeLoadMoreTriggerRef = useRef(null);
+  const homeLoadMoreLockRef = useRef(false);
   const [channelTab, setChannelTab] = useState('videos');
   // 🟢 排序系統：頻道影片預設最新；留言預設最多讚
   const [channelVideoSort, setChannelVideoSort] = useState('latest');
@@ -1047,8 +1092,18 @@ const homeLoadMoreTriggerRef = useRef(null);
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
+  const [isEmailAuthModalOpen, setIsEmailAuthModalOpen] = useState(false);
+  const [emailAuthMode, setEmailAuthMode] = useState('login'); // login | register | bind
+  const [emailInput, setEmailInput] = useState('');
+  const [emailPasswordInput, setEmailPasswordInput] = useState('');
+  const [emailPasswordConfirmInput, setEmailPasswordConfirmInput] = useState('');
+  const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState(false);
+  const [forgotPasswordEmailInput, setForgotPasswordEmailInput] = useState('');
+  const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
+  const [deleteAccountConfirmInput, setDeleteAccountConfirmInput] = useState('');
 
   const [openVideoOptionsId, setOpenVideoOptionsId] = useState(null);
+  const [openCommentOptionsId, setOpenCommentOptionsId] = useState(null);
   const [videoToDelete, setVideoToDelete] = useState(null);
   const [isDeleteVideoModalOpen, setIsDeleteVideoModalOpen] = useState(false);
   const [isDeletingVideo, setIsDeletingVideo] = useState(false);
@@ -1198,8 +1253,61 @@ const homeLoadMoreTriggerRef = useRef(null);
     localStorage.removeItem('leafhub_search_history');
   };
 
+  const loadAllVideosForSearch = async () => {
+    // 已經抓過就不要重複抓，避免每次搜尋都消耗 Firebase reads
+    if (hasLoadedAllSearchVideos) return true;
+    if (isSearchFirebaseLoading) return false;
+
+    setIsSearchFirebaseLoading(true);
+    setIsSearchResultsBuffering(true);
+
+    try {
+      const videosQuery = query(
+        collection(db, 'Videos'),
+        orderBy('createdAt', 'desc')
+      );
+
+      const snapshot = await getDocs(videosQuery);
+
+      const allVideos = snapshot.docs
+        .map(docSnap => ({
+          id: docSnap.id,
+          ...docSnap.data()
+        }))
+        .filter(isVideoVisible);
+
+      setSearchFirebaseVideos(allVideos);
+      setHasLoadedAllSearchVideos(true);
+      return true;
+    } catch (error) {
+      console.error('搜尋時讀取全部 Firebase 影片失敗:', error);
+      showToast('搜尋影片載入失敗，請稍後再試', 'error');
+      return false;
+    } finally {
+      setIsSearchFirebaseLoading(false);
+      // 讓搜尋結果先完成一次 render，再把 skeleton buffer 收掉，避免畫面瞬間閃空白或先顯示 0 筆。
+      setTimeout(() => {
+        setIsSearchResultsBuffering(false);
+      }, 80);
+    }
+  };
+
   const handleSearchSubmit = (queryOverride = null) => {
     const cleanQuery = getSearchTextValue(queryOverride).trim();
+
+    if (!cleanQuery) {
+      setSearchInputStr('');
+      setSearchQuery('');
+      setShowSearchDropdown(false);
+      setIsPageLoading(false);
+      setIsSearchResultsBuffering(false);
+
+      if (location.pathname !== '/') navigate('/');
+      setCurrentView('home');
+      setActiveCategory('全部');
+      forceScrollToTop();
+      return;
+    }
 
     if (location.pathname !== '/') navigate('/');
     setCurrentView('home');
@@ -1207,18 +1315,15 @@ const homeLoadMoreTriggerRef = useRef(null);
     setSearchInputStr(cleanQuery);
     setSearchQuery(cleanQuery);
     setShowSearchDropdown(false);
-    setIsPageLoading(true);
+    setIsPageLoading(false);
+    saveSearchHistory(cleanQuery);
     forceScrollToTop();
 
-    if (cleanQuery) saveSearchHistory(cleanQuery);
-
-    setTimeout(() => {
-      setIsPageLoading(false);
-    }, 250);
-
-    if (cleanQuery) {
-      showToast(`正在搜尋：${cleanQuery}`, 'info');
+    // 搜尋時才讀取 Firebase 全部影片；第一次搜尋期間顯示 skeleton buffer，直到完整資料抓回來並 render 完成。
+    if (!hasLoadedAllSearchVideos) {
+      setIsSearchResultsBuffering(true);
     }
+    loadAllVideosForSearch();
   };
 
   useEffect(() => {
@@ -1276,6 +1381,36 @@ const homeLoadMoreTriggerRef = useRef(null);
       const nextSubscriberCount = Number(channelData.subscriberCount ?? 0);
       setLiveSubscriberCount(nextSubscriberCount);
       setTargetChannelUserId(channelData.userId || activeChannelInfo.userId || '');
+
+      if (currentView === 'channel') {
+        const nextBio = getChannelBioValue(channelData);
+        setTargetChannel(prev => ({
+          ...(prev || {}),
+          userId: channelData.userId || activeChannelInfo.userId || prev?.userId || '',
+          name: channelData.name || channelData.username || channelData.channelName || prev?.name || activeChannelInfo.name || '',
+          username: channelData.username || channelData.name || prev?.username || activeChannelInfo.username || '',
+          channelName: channelData.channelName || channelData.name || prev?.channelName || activeChannelInfo.channelName || '',
+          avatar: channelData.avatar || prev?.avatar || activeChannelInfo.avatar || GUEST_AVATAR,
+          bio: nextBio,
+          BIO: nextBio,
+          channelBio: nextBio,
+          subscriberCount: nextSubscriberCount
+        }));
+      }
+
+      if (currentView === 'channel') {
+        setTargetChannel(prev => ({
+          ...(prev || {}),
+          userId: channelData.userId || activeChannelInfo.userId || prev?.userId || '',
+          name: channelData.name || channelData.username || channelData.channelName || prev?.name || activeChannelInfo.name || '',
+          username: channelData.username || channelData.name || prev?.username || activeChannelInfo.username || '',
+          channelName: channelData.channelName || channelData.name || prev?.channelName || activeChannelInfo.channelName || '',
+          avatar: channelData.avatar || prev?.avatar || activeChannelInfo.avatar || GUEST_AVATAR,
+          bio: String(channelData.bio || channelData.channelBio || '').trim(),
+          channelBio: String(channelData.channelBio || channelData.bio || '').trim(),
+          subscriberCount: nextSubscriberCount
+        }));
+      }
 
       // 修正播放頁訂閱數：Firebase 讀到正確頻道資料後，同步更新 selectedVideo
       if (currentView === 'watch') {
@@ -1499,8 +1634,11 @@ const homeLoadMoreTriggerRef = useRef(null);
     const newUsername = inputUsername.trim();
     const isSameUsername = oldUsername === newUsername;
     const avatarUrl = previewAvatar || currentUserAvatar;
+    const cleanBio = inputBio.trim();
+    const currentSavedBio = String(getChannelBioValue(targetChannel) || localStorage.getItem('device_user_bio') || '').trim();
+    const isSameBio = cleanBio === currentSavedBio;
 
-    if (isSameUsername && avatarUrl === currentUserAvatar) {
+    if (isSameUsername && avatarUrl === currentUserAvatar && isSameBio) {
       setIsSettingsModalOpen(false);
       return;
     }
@@ -1566,6 +1704,9 @@ const homeLoadMoreTriggerRef = useRef(null);
         username: newUsername,
         channelName: newUsername,
         avatar: avatarUrl,
+        bio: cleanBio,
+        BIO: cleanBio,
+        channelBio: cleanBio,
         subscriberCount: preservedSubscriberCount,
         subscribers: deleteField(),
         subsCount: deleteField(),
@@ -1600,6 +1741,9 @@ const homeLoadMoreTriggerRef = useRef(null);
               username: newUsername,
               channelName: newUsername,
               avatar: avatarUrl,
+              bio: cleanBio,
+              BIO: cleanBio,
+              channelBio: cleanBio,
               userId: prev.userId || stableUserId,
               subscriberCount: preservedSubscriberCount
             }
@@ -1608,9 +1752,11 @@ const homeLoadMoreTriggerRef = useRef(null);
 
       setLocalUsername(newUsername);
       setInputUsername(newUsername);
+      setInputBio(cleanBio);
 
       localStorage.setItem('device_user_name', newUsername);
       localStorage.setItem('device_user_avatar', avatarUrl);
+      localStorage.setItem('device_user_bio', cleanBio);
       localStorage.setItem('device_user_id', stableUserId);
 
       setSubscribedChannels(prev => {
@@ -1729,6 +1875,7 @@ const homeLoadMoreTriggerRef = useRef(null);
     localStorage.setItem('device_user_id', cleanId);
     localStorage.setItem('device_user_name', oldChannelData.name || cleanId);
     localStorage.setItem('device_user_avatar', avatarUrl);
+    localStorage.setItem('device_user_bio', oldChannelData.bio || oldChannelData.BIO || oldChannelData.channelBio || '');
 
     setTargetChannel({
       userId: cleanId,
@@ -1736,7 +1883,14 @@ const homeLoadMoreTriggerRef = useRef(null);
       username: oldChannelData.username || oldChannelData.name || cleanId,
       channelName: oldChannelData.channelName || oldChannelData.name || cleanId,
       avatar: avatarUrl,
-      bio: oldChannelData.bio || getRandomBio(),
+      email: oldChannelData.email || oldChannelData.emailLower || '',
+      emailLower: oldChannelData.emailLower || normalizeEmailValue(oldChannelData.email || ''),
+      ownerUid: oldChannelData.ownerUid || '',
+      linkedProviders: Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [],
+      idLocked: oldChannelData.idLocked || false,
+      bio: oldChannelData.bio || oldChannelData.BIO || oldChannelData.channelBio || '',
+      BIO: oldChannelData.BIO || oldChannelData.bio || oldChannelData.channelBio || '',
+      channelBio: oldChannelData.channelBio || oldChannelData.bio || oldChannelData.BIO || '',
       subscriberCount: oldSubscriberCount
     });
 
@@ -1756,7 +1910,390 @@ const homeLoadMoreTriggerRef = useRef(null);
   }
 };
 
-  const handleLogoutId = () => {
+  
+  const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
+
+  const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser) => {
+    const displayName = channelData.name || channelData.username || channelData.channelName || channelId;
+    const avatarUrl = channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR;
+    const bioValue = getChannelBioValue(channelData);
+    const subscriberCount = preserveSubscriberCount(
+      channelData.subscriberCount,
+      channelData.subscribers,
+      channelData.subsCount,
+      liveSubscriberCount,
+      0
+    );
+
+    setCurrentUserId(channelId);
+    setLocalUsername(displayName);
+    setInputUsername(displayName);
+    setCurrentUserAvatar(avatarUrl);
+    setPreviewAvatar(avatarUrl);
+    setInputBio(bioValue);
+    setLiveSubscriberCount(subscriberCount);
+    setTargetChannel({
+      ...channelData,
+      userId: channelId,
+      name: displayName,
+      username: channelData.username || displayName,
+      channelName: channelData.channelName || displayName,
+      avatar: avatarUrl,
+      email: channelData.email || firebaseUser?.email || '',
+      emailLower: channelData.emailLower || normalizeEmailValue(channelData.email || firebaseUser?.email || ''),
+      ownerUid: channelData.ownerUid || firebaseUser?.uid || '',
+      linkedProviders: Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [],
+      idLocked: channelData.idLocked || false,
+      bio: bioValue,
+      BIO: channelData.BIO || bioValue,
+      channelBio: channelData.channelBio || bioValue,
+      subscriberCount
+    });
+    setTargetChannelUserId(channelId);
+
+    localStorage.setItem('device_user_id', channelId);
+    localStorage.setItem('device_user_name', displayName);
+    localStorage.setItem('device_user_avatar', avatarUrl);
+    localStorage.setItem('device_user_bio', bioValue);
+    localStorage.setItem('leafhub_is_id_logged_in', 'true');
+    setIsIdLoggedIn(true);
+  };
+
+  
+  useEffect(() => {
+    const cleanCurrentUserId = String(currentUserId || '').trim();
+    if (!cleanCurrentUserId || cleanCurrentUserId === 'loading...' || cleanCurrentUserId.includes('/')) return;
+
+    let isActive = true;
+
+    const syncCurrentChannelAccountFields = async () => {
+      try {
+        const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+        const channelSnap = await getDoc(channelRef);
+        if (!isActive || !channelSnap.exists()) return;
+
+        const data = channelSnap.data() || {};
+        const nextEmail = data.email || data.emailLower || auth.currentUser?.email || '';
+        const nextEmailLower = normalizeEmailValue(nextEmail);
+        const authEmailLower = normalizeEmailValue(auth.currentUser?.email || '');
+        const canAutoLockWithCurrentAuth = Boolean(
+          auth.currentUser?.uid &&
+          !auth.currentUser?.isAnonymous &&
+          nextEmailLower &&
+          authEmailLower &&
+          nextEmailLower === authEmailLower &&
+          !data.ownerUid
+        );
+
+        if (canAutoLockWithCurrentAuth) {
+          await setDoc(channelRef, {
+            ownerUid: auth.currentUser.uid,
+            email: nextEmail,
+            emailLower: nextEmailLower,
+            emailVerified: Boolean(auth.currentUser.emailVerified),
+            idLocked: true,
+            idLockedAt: data.idLockedAt || new Date().toISOString(),
+            idLockReason: 'auto-lock-matched-email',
+            linkedProviders: Array.from(new Set([
+              ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
+              'custom-id',
+              'email'
+            ])),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          data.ownerUid = auth.currentUser.uid;
+          data.email = nextEmail;
+          data.emailLower = nextEmailLower;
+          data.idLocked = true;
+          data.linkedProviders = Array.from(new Set([
+            ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
+            'custom-id',
+            'email'
+          ]));
+        }
+
+        const nextBio = getChannelBioValue(data);
+
+        setTargetChannel(prev => ({
+          ...(prev || {}),
+          ...data,
+          userId: data.userId || cleanCurrentUserId,
+          email: nextEmail,
+          emailLower: data.emailLower || normalizeEmailValue(nextEmail),
+          ownerUid: data.ownerUid || prev?.ownerUid || '',
+          linkedProviders: Array.isArray(data.linkedProviders) ? data.linkedProviders : (prev?.linkedProviders || []),
+          idLocked: data.idLocked ?? prev?.idLocked,
+          bio: nextBio || prev?.bio || '',
+          BIO: data.BIO || nextBio || prev?.BIO || '',
+          channelBio: data.channelBio || nextBio || prev?.channelBio || ''
+        }));
+      } catch (error) {
+        console.error('同步帳號綁定資料失敗:', error);
+      }
+    };
+
+    syncCurrentChannelAccountFields();
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentUserId, authUser?.uid, authUser?.email]);
+
+const findChannelByAuthUser = async (firebaseUser) => {
+    if (!firebaseUser) return null;
+    const emailLower = normalizeEmailValue(firebaseUser.email);
+
+    const ownerQuery = await getDocs(query(
+      collection(db, 'Channels'),
+      where('ownerUid', '==', firebaseUser.uid),
+      limit(1)
+    ));
+    if (!ownerQuery.empty) {
+      const channelDoc = ownerQuery.docs[0];
+      return { id: channelDoc.id, data: channelDoc.data() || {} };
+    }
+
+    if (emailLower) {
+      const emailQuery = await getDocs(query(
+        collection(db, 'Channels'),
+        where('emailLower', '==', emailLower),
+        limit(1)
+      ));
+      if (!emailQuery.empty) {
+        const channelDoc = emailQuery.docs[0];
+        return { id: channelDoc.id, data: channelDoc.data() || {} };
+      }
+    }
+
+    return null;
+  };
+
+  const bindCurrentChannelToAuthUser = async (firebaseUser, provider = 'email') => {
+    const cleanCurrentUserId = String(currentUserId || '').trim();
+    if (!firebaseUser) {
+      showToast('尚未取得登入帳號，請再試一次', 'warning');
+      return false;
+    }
+    if (!cleanCurrentUserId || cleanCurrentUserId === 'loading...' || cleanCurrentUserId.includes('/')) {
+      showToast('目前 USER ID 尚未載入完成或格式不正確', 'warning');
+      return false;
+    }
+
+    const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+    const channelSnap = await getDoc(channelRef);
+    const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
+    const emailLower = normalizeEmailValue(firebaseUser.email);
+    const providerList = Array.from(new Set([
+      ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
+      'custom-id',
+      provider
+    ]));
+
+    await setDoc(channelRef, {
+      ...oldChannelData,
+      userId: cleanCurrentUserId,
+      customId: cleanCurrentUserId,
+      ownerUid: firebaseUser.uid,
+      email: firebaseUser.email || oldChannelData.email || '',
+      emailLower: emailLower || oldChannelData.emailLower || '',
+      emailVerified: Boolean(firebaseUser.emailVerified),
+      authProvider: provider,
+      linkedProviders: providerList,
+      idLocked: true,
+      idLockedAt: oldChannelData.idLockedAt || new Date().toISOString(),
+      idLockReason: 'ownerUid-bound',
+      updatedAt: new Date().toISOString(),
+      name: oldChannelData.name || localUsername || cleanCurrentUserId,
+      username: oldChannelData.username || localUsername || cleanCurrentUserId,
+      channelName: oldChannelData.channelName || localUsername || cleanCurrentUserId,
+      avatar: oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR,
+      bio: getChannelBioValue(oldChannelData),
+      BIO: oldChannelData.BIO || getChannelBioValue(oldChannelData),
+      channelBio: oldChannelData.channelBio || getChannelBioValue(oldChannelData)
+    }, { merge: true });
+
+    const nextSnap = await getDoc(channelRef);
+    applyChannelLoginData(cleanCurrentUserId, nextSnap.exists() ? nextSnap.data() : oldChannelData, firebaseUser);
+    return true;
+  };
+
+  const handleEmailAuthSubmit = async (e) => {
+    e.preventDefault();
+    const cleanEmail = normalizeEmailValue(emailInput);
+    const password = emailPasswordInput;
+
+    if (!cleanEmail) {
+      showToast('請輸入 Email', 'warning');
+      return;
+    }
+    if (!password || password.length < 6) {
+      showToast('密碼至少需要 6 個字', 'warning');
+      return;
+    }
+    if ((emailAuthMode === 'register' || emailAuthMode === 'bind') && password !== emailPasswordConfirmInput) {
+      showToast('兩次密碼輸入不一致', 'error');
+      return;
+    }
+
+    try {
+      let userCredential = null;
+
+      if (emailAuthMode === 'login') {
+        userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      } else if (emailAuthMode === 'bind') {
+        const credential = EmailAuthProvider.credential(cleanEmail, password);
+        try {
+          if (auth.currentUser && auth.currentUser.isAnonymous) {
+            userCredential = await linkWithCredential(auth.currentUser, credential);
+          } else {
+            userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+          }
+        } catch (error) {
+          if (error?.code === 'auth/email-already-in-use') {
+            userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+          } else {
+            throw error;
+          }
+        }
+        const ok = await bindCurrentChannelToAuthUser(userCredential.user, 'email');
+        if (!ok) return;
+      } else {
+        userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        const found = await findChannelByAuthUser(userCredential.user);
+        if (found) {
+          applyChannelLoginData(found.id, found.data, userCredential.user);
+        } else {
+          await bindCurrentChannelToAuthUser(userCredential.user, 'email');
+        }
+      }
+
+      if (emailAuthMode === 'login') {
+        const found = await findChannelByAuthUser(userCredential.user);
+        if (!found) {
+          showToast('這個 Email 還沒有綁定頻道，請先用 USER ID 登入後綁定 Email', 'warning');
+          return;
+        }
+        applyChannelLoginData(found.id, found.data, userCredential.user);
+      }
+
+      setIsEmailAuthModalOpen(false);
+      setEmailInput('');
+      setEmailPasswordInput('');
+      setEmailPasswordConfirmInput('');
+      showToast(emailAuthMode === 'bind' ? 'Email 已綁定到目前 USER ID' : 'Email 登入成功', 'success');
+    } catch (error) {
+      console.error('Email Auth 失敗:', error);
+      showToast(error?.code === 'auth/wrong-password' ? 'Email 或密碼錯誤' : 'Email 操作失敗，請確認 Firebase Auth 已啟用 Email/Password', 'error');
+    }
+  };
+
+  const handleGoogleAuth = async ({ bindOnly = false } = {}) => {
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      const result = await signInWithPopup(auth, provider);
+
+      if (bindOnly) {
+        const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
+        if (ok) showToast('Google 已綁定到目前 USER ID', 'success');
+        return;
+      }
+
+      const found = await findChannelByAuthUser(result.user);
+      if (found) {
+        applyChannelLoginData(found.id, found.data, result.user);
+        showToast('Google 登入成功', 'success');
+        return;
+      }
+
+      const hasLocalChannel = currentUserId && currentUserId !== 'loading...' && !String(currentUserId).includes('/');
+      if (hasLocalChannel) {
+        const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
+        if (ok) showToast('Google 已登入並保留目前 USER ID', 'success');
+        return;
+      }
+
+      const fallbackId = `user_${result.user.uid.slice(0, 8)}`;
+      await setDoc(doc(db, 'Channels', fallbackId), {
+        userId: fallbackId,
+        customId: fallbackId,
+        ownerUid: result.user.uid,
+        email: result.user.email || '',
+        emailLower: normalizeEmailValue(result.user.email),
+        emailVerified: Boolean(result.user.emailVerified),
+        name: result.user.displayName || fallbackId,
+        username: result.user.displayName || fallbackId,
+        channelName: result.user.displayName || fallbackId,
+        avatar: result.user.photoURL || GUEST_AVATAR,
+        authProvider: 'google',
+        linkedProviders: ['google'],
+        idLocked: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      const newSnap = await getDoc(doc(db, 'Channels', fallbackId));
+      applyChannelLoginData(fallbackId, newSnap.data() || {}, result.user);
+      showToast('已用 Google 建立新頻道', 'success');
+    } catch (error) {
+      console.error('Google Auth 失敗:', error);
+      showToast('Google 登入失敗，請確認 Firebase Auth 已啟用 Google Provider', 'error');
+    }
+  };
+
+  const handleSendPasswordResetSubmit = async (e) => {
+    e.preventDefault();
+    const cleanEmail = normalizeEmailValue(forgotPasswordEmailInput || emailInput || authUser?.email || targetChannel?.email);
+    if (!cleanEmail) {
+      showToast('請輸入要重設密碼的 Email', 'warning');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      setIsForgotPasswordModalOpen(false);
+      setForgotPasswordEmailInput('');
+      showToast('重設密碼信已送出', 'success');
+    } catch (error) {
+      console.error('寄送重設密碼信失敗:', error);
+      showToast('寄送重設密碼信失敗，請確認 Email/Password 登入已啟用', 'error');
+    }
+  };
+  const handleDeleteAccountConfirm = async () => {
+    const cleanCurrentUserId = String(currentUserId || '').trim();
+    if (deleteAccountConfirmInput !== cleanCurrentUserId) {
+      showToast('請完整輸入目前 USER ID 才能刪除帳號', 'warning');
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'Channels', cleanCurrentUserId), {
+        deletedAccount: true,
+        deletedAt: new Date().toISOString(),
+        ownerUid: auth.currentUser?.uid || '',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      if (auth.currentUser && !auth.currentUser.isAnonymous) {
+        try {
+          await deleteUser(auth.currentUser);
+        } catch (error) {
+          console.warn('Firebase Auth 帳號刪除需要重新登入，先完成頻道軟刪除:', error);
+        }
+      }
+
+      localStorage.removeItem('leafhub_is_id_logged_in');
+      setIsIdLoggedIn(false);
+      setIsDeleteAccountModalOpen(false);
+      setDeleteAccountConfirmInput('');
+      showToast('帳號已標記刪除', 'success');
+      try { await signOut(auth); } catch {}
+      handleRandomizeUser();
+    } catch (error) {
+      console.error('帳號刪除失敗:', error);
+      showToast('帳號刪除失敗', 'error');
+    }
+  };
+
+const handleLogoutId = () => {
     localStorage.removeItem('leafhub_is_id_logged_in');
 
     const randomUser = generateRandomIdentity();
@@ -2421,7 +2958,8 @@ const homeLoadMoreTriggerRef = useRef(null);
       '/': 'home',
       '/subscriptions': 'subscriptions',
       '/history': 'history',
-      '/liked': 'liked'
+      '/liked': 'liked',
+      '/account-security': 'account-security'
     };
 
     const nextView = pathToView[location.pathname] || 'home';
@@ -2501,7 +3039,7 @@ const homeLoadMoreTriggerRef = useRef(null);
         username: channelName,
         channelName,
         avatar: channelAvatar,
-        bio: getRandomBio(),
+        bio: '',
         subscriberCount: Number(matchedVideo?.subscriberCount ?? 0)
       });
       setTargetChannelUserId(channelUserId);
@@ -2520,7 +3058,7 @@ const homeLoadMoreTriggerRef = useRef(null);
         username: localUsername,
         channelName: localUsername,
         avatar: unifiedAvatar,
-        bio: getRandomBio(),
+        bio: '',
         subscriberCount: liveSubscriberCount
       });
       setTargetChannelUserId(currentUserId);
@@ -2571,6 +3109,23 @@ const homeLoadMoreTriggerRef = useRef(null);
     startPageBuffer(260);
   };
 
+  const handleAccountSecurityNavigation = () => {
+    setIsSettingsModalOpen(false);
+    setIsProfileOpen(false);
+    setIsEmailAuthModalOpen(false);
+    setIsForgotPasswordModalOpen(false);
+    setIsDeleteAccountModalOpen(false);
+    setIsChangePasswordModalOpen(false);
+    setIsChangeIdModalOpen(false);
+    setNewIdInput(currentUserId === 'loading...' ? '' : currentUserId);
+    setNewPasswordInput('');
+    setConfirmNewPasswordInput('');
+    setEmailInput(targetChannel?.email || authUser?.email || '');
+    setForgotPasswordEmailInput(targetChannel?.email || authUser?.email || '');
+    setDeleteAccountConfirmInput('');
+    handleInternalViewNavigation('account-security', '/account-security');
+  };
+
   const handleMyChannelClick = () => {
     const channelRequestId = channelNavigationRequestRef.current + 1;
     channelNavigationRequestRef.current = channelRequestId;
@@ -2589,7 +3144,7 @@ const homeLoadMoreTriggerRef = useRef(null);
       username: localUsername,
       channelName: localUsername,
       avatar: unifiedAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
-      bio: getRandomBio(),
+      bio: '',
       subscriberCount: liveSubscriberCount
     };
 
@@ -3107,8 +3662,41 @@ const homeLoadMoreTriggerRef = useRef(null);
     return Array.from(mergedMap.values()).filter(isVideoVisible);
   };
 
+  
+const getHomeRecommendationScore = (video = {}) => {
+    let score = 0;
+    const views = getViewCount(video);
+    const likes = getLikeCount(video);
+    const createdTime = getDateValue(video.createdAt ?? video.publishedAt ?? video.uploadedAt ?? video.time);
+    const ageDays = createdTime ? Math.max(0, (Date.now() - createdTime) / 86400000) : 999;
+    const channelName = getVideoDisplayName(video);
+    const watchedCategories = new Set((Array.isArray(watchHistory) ? watchHistory : []).map(item => item?.category).filter(Boolean));
+
+    score += Math.min(views, 100000) * 0.03;
+    score += Math.min(likes, 20000) * 0.8;
+    score += Math.max(0, 45 - ageDays) * 2.2;
+
+    if ((Array.isArray(subscribedChannels) ? subscribedChannels : []).includes(channelName)) {
+      score += 90;
+    }
+
+    if (video?.category && watchedCategories.has(video.category)) {
+      score += 35;
+    }
+
+    return score;
+  };
+
+  const recommendVideosForHome = (videoList = []) => {
+    const list = (Array.isArray(videoList) ? videoList : []).filter(isVideoVisible);
+    return [...list].sort((a, b) => getHomeRecommendationScore(b) - getHomeRecommendationScore(a));
+  };
+
   const loadHomeVideosPage = async ({ reset = false } = {}) => {
-    if (!reset && (isLoadingMoreHomeVideos || !hasMoreHomeVideos)) return;
+    if (!reset && (homeLoadMoreLockRef.current || isLoadingMoreHomeVideos || !hasMoreHomeVideos)) return;
+    if (!reset) {
+      homeLoadMoreLockRef.current = true;
+    }
 
     try {
       if (reset) {
@@ -3152,16 +3740,13 @@ const homeLoadMoreTriggerRef = useRef(null);
 
       if (reset) {
         setRawFirebaseVideos(validFirebaseVideos);
-        setVideos(moveJustUploadedToFront(validFirebaseVideos));
+        setVideos(recommendVideosForHome(moveJustUploadedToFront(validFirebaseVideos)));
       } else {
-        // 載入第 25～48 部、第 49～72 部...時，先讓底部 skeleton 穩定出現一下，避免新影片瞬間插入造成閃爍。
+        // 載入更多時只追加下一頁 24 部，不重新推薦排序舊影片，避免畫面一直跳動。
         setTimeout(() => {
           setRawFirebaseVideos(prev => mergeUniqueVideosById(prev, validFirebaseVideos));
-          setVideos(prev => {
-            const baseVideos = mergeUniqueVideosById(prev, validFirebaseVideos);
-            return moveJustUploadedToFront(baseVideos);
-          });
-        }, 450);
+          setVideos(prev => moveJustUploadedToFront(mergeUniqueVideosById(prev, validFirebaseVideos)));
+        }, 260);
       }
 
       if (justUploadedYoutubeId && !validFirebaseVideos.some(video => String(video.youtubeId ?? '') === justUploadedYoutubeId)) {
@@ -3188,7 +3773,8 @@ const homeLoadMoreTriggerRef = useRef(null);
       if (!reset) {
         setTimeout(() => {
           setIsLoadingMoreHomeVideos(false);
-        }, 1200);
+          homeLoadMoreLockRef.current = false;
+        }, 700);
       }
     }
   };
@@ -3198,25 +3784,39 @@ const homeLoadMoreTriggerRef = useRef(null);
     // 只在第一次載入或剛上傳影片後重抓第一頁；不要即時監聽整個 Videos 集合。
   }, [justUploadedVideo]);
 
-  useEffect(() => {
-    const triggerNode = homeLoadMoreTriggerRef.current;
-    if (!triggerNode) return;
-    if (currentView !== 'home' || searchQuery.trim()) return;
-    if (isPageLoading || isFirstInit || isLoadingMoreHomeVideos || !hasMoreHomeVideos) return;
 
-    const observer = new IntersectionObserver((entries) => {
-      const firstEntry = entries[0];
-      if (firstEntry?.isIntersecting) {
+  // IntersectionObserver 容易在 sentinel 還可見時連續觸發，造成一次載入多頁。
+  // 這裡改用下面的 scroll handler，只在使用者真的往下滑接近底部時載入下一頁。
+
+
+
+  useEffect(() => {
+    if (currentView !== 'home' || searchQuery.trim()) return;
+
+    const scrollNode = contentAreaRef.current;
+    const getRemainingScroll = () => {
+      if (scrollNode) {
+        return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight;
+      }
+      const doc = document.documentElement;
+      return doc.scrollHeight - window.scrollY - window.innerHeight;
+    };
+
+    const maybeLoadMoreHomeVideos = () => {
+      if (currentView !== 'home' || searchQuery.trim()) return;
+      if (isPageLoading || isFirstInit || isLoadingMoreHomeVideos || !hasMoreHomeVideos || homeLoadMoreLockRef.current) return;
+      // 只在真的接近底部時載入下一頁，避免一次把所有影片載入。
+      if (getRemainingScroll() <= 260) {
         loadHomeVideosPage({ reset: false });
       }
-    }, {
-      root: contentAreaRef.current || null,
-      rootMargin: '420px 0px',
-      threshold: 0.01
-    });
+    };
 
-    observer.observe(triggerNode);
-    return () => observer.disconnect();
+    const scrollTarget = scrollNode || window;
+    scrollTarget.addEventListener('scroll', maybeLoadMoreHomeVideos, { passive: true });
+
+    return () => {
+      scrollTarget.removeEventListener('scroll', maybeLoadMoreHomeVideos);
+    };
   }, [currentView, searchQuery, isPageLoading, isFirstInit, isLoadingMoreHomeVideos, hasMoreHomeVideos, homeLastVideoDoc, activeCategory]);
 
 useEffect(() => {
@@ -3249,6 +3849,11 @@ useEffect(() => {
       const videoOptionsRoot = event.target.closest?.('[data-video-options-root="true"]');
       if (!videoOptionsRoot) {
         setOpenVideoOptionsId(null);
+      }
+
+      const commentOptionsRoot = event.target.closest?.('[data-comment-options-root="true"]');
+      if (!commentOptionsRoot) {
+        setOpenCommentOptionsId(null);
       }
     }
 
@@ -3318,7 +3923,108 @@ useEffect(() => {
     window.open(targetUrl, '_blank', 'noopener,noreferrer');
   };
 
-  const handleVideoClick = async (video) => {
+  
+
+  const getVideoMenuKey = (video = {}) => {
+    return String(video?.id || getYoutubeIdFromVideo(video) || video?.videoUrl || video?.title || 'video');
+  };
+
+  const getVideoShareUrl = (video = {}) => {
+    const ytId = getYoutubeIdFromVideo(video);
+    const basePath = import.meta.env.BASE_URL || '/';
+    const normalizedBasePath = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+    return ytId ? `${window.location.origin}${normalizedBasePath}/watch/${ytId}` : window.location.href;
+  };
+
+  const handleAddToWatchLater = (video = {}, e = null) => {
+    if (e) e.stopPropagation();
+    const key = getVideoMenuKey(video);
+    setWatchLaterVideos(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      if (safePrev.some(item => getVideoMenuKey(item) === key)) {
+        showToast('已經在稍後觀看', 'info');
+        return safePrev;
+      }
+      const next = [{ ...video, savedAt: new Date().toISOString() }, ...safePrev].slice(0, 300);
+      localStorage.setItem('leafhub_watchLaterVideos', JSON.stringify(next));
+      showToast('已加入稍後觀看', 'success');
+      return next;
+    });
+    setOpenVideoOptionsId(null);
+  };
+
+  const handleNotInterestedVideo = (video = {}, e = null) => {
+    if (e) e.stopPropagation();
+    const candidates = [video?.id, video?.youtubeId, getYoutubeIdFromVideo(video), video?.videoUrl]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+
+    if (candidates.length === 0) return;
+
+    setNotInterestedVideoIds(prev => {
+      const next = Array.from(new Set([...(Array.isArray(prev) ? prev : []), ...candidates]));
+      localStorage.setItem('leafhub_notInterestedVideos', JSON.stringify(next));
+      return next;
+    });
+
+    setVideos(prev => (Array.isArray(prev) ? prev : []).filter(item => {
+      const itemCandidates = [item?.id, item?.youtubeId, getYoutubeIdFromVideo(item), item?.videoUrl]
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+      return !itemCandidates.some(value => candidates.includes(value));
+    }));
+    setRawFirebaseVideos(prev => (Array.isArray(prev) ? prev : []).filter(item => {
+      const itemCandidates = [item?.id, item?.youtubeId, getYoutubeIdFromVideo(item), item?.videoUrl]
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+      return !itemCandidates.some(value => candidates.includes(value));
+    }));
+    setOpenVideoOptionsId(null);
+    showToast('之後會減少推薦這類影片', 'info');
+  };
+
+  const handleShareVideoFromMenu = (video = {}, e = null) => {
+    if (e) e.stopPropagation();
+    setSelectedVideo(video);
+    setShareCopied(false);
+    setIsShareModalOpen(true);
+    setOpenVideoOptionsId(null);
+  };
+
+  const handleCopyVideoLinkFromMenu = async (video = {}, e = null) => {
+    if (e) e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(getVideoShareUrl(video));
+      showToast('已複製影片連結', 'success');
+    } catch (error) {
+      console.error('複製影片連結失敗:', error);
+      showToast('複製連結失敗，請稍後再試', 'error');
+    }
+    setOpenVideoOptionsId(null);
+  };
+
+  const syncWatchHistoryToFirebase = async (video = {}) => {
+    const uid = String(currentUserId || '').trim();
+    const videoKey = getVideoMenuKey(video);
+    if (!uid || uid === 'loading...' || !videoKey) return;
+
+    try {
+      await setDoc(doc(db, 'Users', uid, 'watchHistory', videoKey), {
+        userId: uid,
+        videoId: video?.id || '',
+        youtubeId: getYoutubeIdFromVideo(video),
+        title: video?.title || '',
+        channel: getVideoDisplayName(video),
+        thumbnail: video?.thumbnail || '',
+        category: video?.category || '未分類',
+        watchedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (error) {
+      console.error('同步觀看紀錄到 Firebase 失敗:', error);
+    }
+  };
+const handleVideoClick = async (video) => {
     const ytId = getYoutubeIdFromVideo(video);
 
     if (!ytId) {
@@ -3345,6 +4051,8 @@ useEffect(() => {
       localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
       return nextHistory;
     });
+
+    syncWatchHistoryToFirebase(video);
 
     const isMockVideo = ['1','2','3','4','5','6','7','8','9','10','11','12','13'].includes(video.id);
     if (!isMockVideo) {
@@ -3712,18 +4420,27 @@ useEffect(() => {
   };
 
   const canManageVideo = (video = {}) => {
-    const displayName = getVideoDisplayName(video);
+    const currentId = String(currentUserId || '').trim();
+    const currentName = String(localUsername || '').trim();
+    const displayName = String(getVideoDisplayName(video) || '').trim();
+    const candidates = [
+      video?.userId,
+      video?.uid,
+      video?.ownerId,
+      video?.channelId,
+      video?.channel,
+      video?.author,
+      video?.creatorName,
+      video?.username,
+      video?.channelName,
+      displayName
+    ].map(value => String(value || '').trim()).filter(Boolean);
 
-    return (
-      isViewingOwnChannel() &&
-      (
-        String(video?.userId || '') === String(currentUserId || '') ||
-        String(displayName || '') === String(localUsername || '') ||
-        String(video?.channel || '') === String(localUsername || '') ||
-        String(video?.author || '') === String(localUsername || '') ||
-        String(video?.creatorName || '') === String(localUsername || '') ||
-        String(video?.username || '') === String(localUsername || '')
-      )
+    if (!currentId || currentId === 'loading...') return false;
+
+    return candidates.some(value =>
+      value === currentId ||
+      (currentName && value === currentName)
     );
   };
 
@@ -3909,6 +4626,74 @@ useEffect(() => {
     若專案沒有宣告此 state，點 mock 留言讚會發生 ReferenceError。
   ------------------------------ */
   // 🟢 修正後的防重複點讚邏輯
+  
+const canManageComment = (comment = {}) => {
+    const currentId = String(currentUserId || '').trim();
+    const currentName = String(localUsername || '').trim();
+    const commentUserId = String(comment?.userId || comment?.uid || comment?.authorId || '').trim();
+    const commentAuthor = String(comment?.author || comment?.username || comment?.channelName || '').trim();
+    const ownComment =
+      (commentUserId && currentId && currentId !== 'loading...' && commentUserId === currentId) ||
+      (commentAuthor && currentName && commentAuthor === currentName);
+    const ownVideo = canManageVideo(selectedVideo || {});
+    return ownComment || ownVideo;
+  };
+
+  const handleDeleteComment = async (comment, e = null) => {
+    if (e) e.stopPropagation();
+    if (!comment?.id || comment?.isPending) return;
+    if (!canManageComment(comment)) {
+      showToast('你沒有權限刪除這則留言', 'warning');
+      return;
+    }
+
+    try {
+      const repliesSnapshot = await getDocs(query(collection(db, 'replies'), where('commentId', '==', comment.id)));
+      const batch = writeBatch(db);
+      repliesSnapshot.docs.forEach(replyDoc => batch.delete(replyDoc.ref));
+      batch.delete(doc(db, 'comments', comment.id));
+      await batch.commit();
+      setComments(prev => prev.filter(item => item.id !== comment.id));
+      showToast('留言已刪除', 'success');
+    } catch (error) {
+      console.error('刪除留言失敗:', error);
+      showToast('刪除留言失敗，請稍後再試', 'error');
+    }
+  };
+
+  const handleTogglePinComment = async (comment, e = null) => {
+    if (e) e.stopPropagation();
+    if (!comment?.id || comment?.isPending) return;
+    if (!canManageVideo(selectedVideo || {})) {
+      showToast('只有影片擁有者可以置頂留言', 'warning');
+      return;
+    }
+
+    try {
+      const shouldPin = !comment.pinned;
+      const batch = writeBatch(db);
+
+      if (shouldPin && selectedVideo?.id) {
+        const commentsSnapshot = await getDocs(query(collection(db, 'comments'), where('videoId', '==', selectedVideo.id)));
+        commentsSnapshot.docs.forEach(commentDoc => {
+          batch.update(commentDoc.ref, { pinned: false });
+        });
+      }
+
+      batch.update(doc(db, 'comments', comment.id), {
+        pinned: shouldPin,
+        pinnedAt: shouldPin ? new Date().toISOString() : deleteField(),
+        pinnedBy: shouldPin ? currentUserId : deleteField()
+      });
+      await batch.commit();
+      setComments(prev => prev.map(item => item.id === comment.id ? { ...item, pinned: shouldPin } : (shouldPin ? { ...item, pinned: false } : item)));
+      showToast(shouldPin ? '留言已置頂' : '已取消置頂', 'success');
+    } catch (error) {
+      console.error('置頂留言失敗:', error);
+      showToast('置頂留言失敗，請稍後再試', 'error');
+    }
+  };
+
   const handleCommentLike = async (commentId, isMock) => {
     // 如果沒有目前使用者的 ID，就不允許按讚
     if (!currentUserId) return;
@@ -4408,6 +5193,25 @@ useEffect(() => {
     setIsAnalyzing(true);
 
     try {
+      const duplicateVideoSnapshot = await getDocs(query(
+        collection(db, 'Videos'),
+        where('youtubeId', '==', ytId),
+        limit(1)
+      ));
+
+      if (!duplicateVideoSnapshot.empty) {
+        showToast('這支 YouTube 影片已經上傳過了', 'warning');
+        setIsAnalyzing(false);
+        return;
+      }
+    } catch (duplicateCheckError) {
+      console.error('檢查重複 YouTube 影片失敗：', duplicateCheckError);
+      showToast('暫時無法檢查是否重複上傳，請稍後再試', 'error');
+      setIsAnalyzing(false);
+      return;
+    }
+
+    try {
       const ytInfo = await fetchYoutubeVideoInfo(ytId);
 
       if (isYoutubeVideoUnavailable(ytInfo)) {
@@ -4717,11 +5521,21 @@ useEffect(() => {
     18. Render Helpers / 篩選、頭貼、影片卡片
   ------------------------------ */
   const isVideoVisible = (video = {}) => {
-    return video.deletedFromPublicList !== true && video.isYoutubePlayable !== false;
+    const hiddenCandidates = [video?.id, video?.youtubeId, getYoutubeIdFromVideo(video), video?.videoUrl]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    const blockedIds = Array.isArray(notInterestedVideoIds) ? notInterestedVideoIds : [];
+    return video.deletedFromPublicList !== true &&
+      video.isYoutubePlayable !== false &&
+      !hiddenCandidates.some(value => blockedIds.includes(value));
   };
 
+  const searchSourceVideos = searchQuery.trim()
+    ? mergeUniqueVideosById(videos, searchFirebaseVideos)
+    : videos;
+
   const advancedFilteredVideos = useAdvancedSearch({
-    videos,
+    videos: searchSourceVideos,
     searchQuery,
     activeCategory,
     isVideoVisible
@@ -4732,7 +5546,7 @@ useEffect(() => {
     if (!cleanQuery) return advancedFilteredVideos;
 
     const existingIds = new Set(advancedFilteredVideos.map(video => video.id));
-    const channelMatchedVideos = (Array.isArray(videos) ? videos : [])
+    const channelMatchedVideos = (Array.isArray(searchSourceVideos) ? searchSourceVideos : [])
       .filter(video => isVideoVisible(video))
       .filter(video => activeCategory === '全部' || video.category === activeCategory)
       .filter(video => String(video?.channel || video?.author || video?.creatorName || video?.username || '').toLowerCase().includes(cleanQuery))
@@ -4747,6 +5561,17 @@ useEffect(() => {
   })();
 
   const isSameText = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
+
+  const getChannelBioValue = (channel = {}) => {
+    return String(
+      channel?.bio ??
+      channel?.BIO ??
+      channel?.channelBio ??
+      channel?.description ??
+      channel?.about ??
+      ''
+    ).trim();
+  };
 
   const getVideoDisplayName = (video = {}) => {
     return video.channel || video.author || video.creatorName || video.username || localUsername || '小葉';
@@ -4775,7 +5600,7 @@ useEffect(() => {
     if (!cleanQuery) return [];
 
     const channelMap = new Map();
-    (Array.isArray(videos) ? videos : [])
+    (Array.isArray(searchSourceVideos) ? searchSourceVideos : [])
       .filter(isVideoVisible)
       .forEach(video => {
         const channelName = getVideoDisplayName(video);
@@ -4807,19 +5632,128 @@ useEffect(() => {
 
   const visibleSearchVideos = searchResultType === 'channels' ? [] : sortedSearchVideos;
   const visibleSearchChannels = searchResultType === 'videos' ? [] : matchedSearchChannels;
+  const shouldShowSearchSkeleton = Boolean(searchQuery.trim()) && !hasLoadedAllSearchVideos && (isSearchFirebaseLoading || isSearchResultsBuffering);
+  const searchVideoSkeletonItems = Array.from({ length: 6 });
+
+  
+const renderVideoQuickMenu = (video = {}, placement = 'inline') => {
+    const menuKey = getVideoMenuKey(video);
+    const isOpen = openVideoOptionsId === menuKey;
+    const isOwner = canManageVideo(video);
+    const isChannelPage = currentView === 'channel';
+
+    // 頻道頁只保留「修改標題 / 刪除影片」管理選單；不顯示稍後觀看、不感興趣、分享、複製連結。
+    if (isChannelPage && !isOwner) return null;
+
+    const rootStyle = placement === 'search'
+      ? { position: 'absolute', right: '10px', top: '10px', zIndex: 20 }
+      : { position: 'relative', flexShrink: 0, zIndex: 20 };
+
+    const menuItemStyle = {
+      width: '100%',
+      border: 'none',
+      background: 'transparent',
+      color: '#f5f5f5',
+      padding: '10px 12px',
+      borderRadius: '8px',
+      textAlign: 'left',
+      cursor: 'pointer',
+      fontWeight: 700,
+      fontSize: '14px',
+      whiteSpace: 'nowrap'
+    };
+
+    return (
+      <div
+        data-video-options-root="true"
+        style={rootStyle}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="影片選項"
+          title="影片選項"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenVideoOptionsId(prev => prev === menuKey ? null : menuKey);
+          }}
+          style={{
+            width: '28px',
+            height: '32px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'transparent',
+            color: placement === 'search' ? '#fff' : '#aaa',
+            fontSize: '20px',
+            lineHeight: '20px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            textShadow: placement === 'search' ? '0 1px 3px rgba(0,0,0,0.85)' : 'none'
+          }}
+        >
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+          </span>
+        </button>
+
+        {isOpen && (
+          <div
+            className="video-options-menu"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: '32px',
+              minWidth: isChannelPage ? '152px' : '184px',
+              background: '#1b1b1b',
+              border: '1px solid #333',
+              borderRadius: '12px',
+              boxShadow: '0 14px 32px rgba(0,0,0,0.55)',
+              padding: '6px',
+              zIndex: 10000
+            }}
+          >
+            {!isChannelPage && (
+              <>
+                <button type="button" onClick={(e) => handleAddToWatchLater(video, e)} style={menuItemStyle}>⏱️ 稍後觀看</button>
+                <button type="button" onClick={(e) => handleNotInterestedVideo(video, e)} style={menuItemStyle}>🚫 不感興趣</button>
+                <button type="button" onClick={(e) => handleShareVideoFromMenu(video, e)} style={menuItemStyle}>↗️ 分享</button>
+                <button type="button" onClick={(e) => handleCopyVideoLinkFromMenu(video, e)} style={menuItemStyle}>🔗 複製連結</button>
+              </>
+            )}
+            {isOwner && (
+              <>
+                {!isChannelPage && <div style={{ height: '1px', background: '#333', margin: '6px 4px' }}></div>}
+                <button type="button" onClick={(e) => handleOpenEditVideoTitle(video, e)} style={menuItemStyle}>✏️ 修改標題</button>
+                <button type="button" onClick={(e) => handleOpenDeleteVideoConfirm(video, e)} style={{ ...menuItemStyle, color: '#ff6b6b' }}>🗑️ 刪除影片</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderVideoCard = (video) => {
     const displayName = getVideoDisplayName(video);
     const avatarSrc = getVideoAvatarSrc(video);
-    const canShowOwnerActions = canManageVideo(video);
-    const isOptionsOpen = openVideoOptionsId === video.id;
 
     return (
       <div
         key={video.id}
         className="video-card"
         onClick={() => handleVideoClick(video)}
-        style={{ position: 'relative' }}
+        style={{
+          position: 'relative',
+          overflow: 'visible',
+          zIndex: openVideoOptionsId === getVideoMenuKey(video) ? 80 : 1
+        }}
       >
         <div className="thumbnail-wrapper">
           <img
@@ -4832,120 +5766,55 @@ useEffect(() => {
           />
           <span className="video-duration">{video.duration}</span>
         </div>
-        <div className="video-info-section">
+        <div
+          className="video-info-section"
+          style={{
+            alignItems: 'flex-start',
+            gap: '12px',
+            marginTop: '8px',
+            paddingTop: 0,
+            overflow: 'visible'
+          }}
+        >
           <img
             src={avatarSrc}
             alt={displayName}
             className="channel-avatar channel-avatar-clickable"
             onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', flexShrink: 0 }}
             onError={(e) => {
               e.currentTarget.src = GUEST_AVATAR;
             }}
           />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', position: 'relative' }}>
-              <h3 className="video-title" style={{ flex: 1, minWidth: 0 }}>{video.title}</h3>
-              {canShowOwnerActions && (
-                <div
-                  className="video-owner-actions"
-                  data-video-options-root="true"
-                  style={{ position: 'relative', flexShrink: 0 }}
-                  onClick={(e) => e.stopPropagation()}
+          <div style={{ flex: 1, minWidth: 0, overflow: 'visible' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', width: '100%', overflow: 'visible' }}>
+              <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                <h3
+                  className="video-title"
+                  style={{
+                    margin: '0 0 2px 0',
+                    flex: '1 1 auto',
+                    minWidth: 0,
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                    lineHeight: 1.25
+                  }}
                 >
-                  <button
-                    type="button"
-                    aria-label="影片選項"
-                    title="影片選項"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setOpenVideoOptionsId(prev => prev === video.id ? null : video.id);
-                    }}
-                    style={{
-                      width: '28px',
-                      height: '28px',
-                      borderRadius: '50%',
-                      border: 'none',
-                      background: 'transparent',
-                      color: '#ddd',
-                      fontSize: '22px',
-                      lineHeight: '22px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: 0
-                    }}
-                  >
-                    ⋮
-                  </button>
-
-                  {isOptionsOpen && (
-                    <div
-                      className="video-options-menu"
-                      style={{
-                        position: 'absolute',
-                        right: 0,
-                        bottom: '32px',
-                        minWidth: '160px',
-                        background: '#1b1b1b',
-                        border: '1px solid #333',
-                        borderRadius: '10px',
-                        boxShadow: '0 10px 24px rgba(0,0,0,0.45)',
-                        padding: '6px',
-                        zIndex: 9999
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => handleOpenEditVideoTitle(video, e)}
-                        style={{
-                          width: '100%',
-                          border: 'none',
-                          background: 'transparent',
-                          color: '#f5f5f5',
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                          fontWeight: 700,
-                          marginBottom: '4px'
-                        }}
-                      >
-                        ✏️ 修改標題
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => handleOpenDeleteVideoConfirm(video, e)}
-                        style={{
-                          width: '100%',
-                          border: 'none',
-                          background: 'transparent',
-                          color: '#ff6b6b',
-                          padding: '10px 12px',
-                          borderRadius: '8px',
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                          fontWeight: 700
-                        }}
-                      >
-                        🗑️ 刪除影片
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+                  {video.title}
+                </h3>
+                <p
+                  className="channel-name channel-name-clickable"
+                  onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
+                  style={{ cursor: 'pointer', display: 'block', margin: '6px 0 3px 0', lineHeight: 1.25 }}
+                >
+                  {displayName}
+                </p>
+                <p className="video-meta" style={{ margin: 0, lineHeight: 1.28 }}>
+                  {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
+                </p>
+              </div>
+              {renderVideoQuickMenu(video, 'inline')}
             </div>
-            <p
-              className="channel-name channel-name-clickable"
-              onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
-              style={{ cursor: 'pointer', display: 'inline-block' }}
-            >
-              {displayName}
-            </p>
-            <p className="video-meta">
-              {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
-            </p>
           </div>
         </div>
       </div>
@@ -5332,6 +6201,211 @@ return [];
     </span>
   );
 
+  const renderCommentQuickMenu = (comment = {}, cid = '') => {
+    const commentUserId = String(comment?.userId || comment?.uid || comment?.authorId || '').trim();
+    const commentAuthor = String(comment?.author || comment?.username || comment?.channelName || '').trim();
+    const currentId = String(currentUserId || '').trim();
+    const currentName = String(localUsername || '').trim();
+    const isOwnVideo = canManageVideo(selectedVideo || {});
+    const isOwnComment =
+      (commentUserId && currentId && currentId !== 'loading...' && commentUserId === currentId) ||
+      (commentAuthor && currentName && commentAuthor === currentName);
+    // 自己的影片留言區：可置頂/取消置頂/刪除任何留言；不是自己的影片：只能刪除自己的留言。
+    const canPin = Boolean(comment?.id) && !comment?.isPending && isOwnVideo;
+    const canDelete = Boolean(comment?.id) && !comment?.isPending && (isOwnVideo || isOwnComment);
+    const isOpen = openCommentOptionsId === cid;
+    const menuItemStyle = {
+      width: '100%',
+      border: 'none',
+      background: 'transparent',
+      color: '#f5f5f5',
+      padding: '10px 12px',
+      borderRadius: '8px',
+      textAlign: 'left',
+      cursor: 'pointer',
+      fontWeight: 700,
+      fontSize: '13px',
+      whiteSpace: 'nowrap'
+    };
+
+    return (
+      <div
+        data-comment-options-root="true"
+        style={{ position: 'absolute', top: 0, right: 0, zIndex: 90 }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="留言選項"
+          title="留言選項"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenCommentOptionsId(prev => prev === cid ? null : cid);
+          }}
+          style={{
+            width: '28px',
+            height: '32px',
+            borderRadius: '50%',
+            border: 'none',
+            background: 'transparent',
+            color: '#aaa',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0
+          }}
+        >
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+            <span style={{ width: '3.5px', height: '3.5px', borderRadius: '50%', background: 'currentColor', display: 'block' }}></span>
+          </span>
+        </button>
+
+        {isOpen && (
+          <div
+            className="comment-options-menu"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: '32px',
+              minWidth: '148px',
+              background: '#1b1b1b',
+              border: '1px solid #333',
+              borderRadius: '12px',
+              boxShadow: '0 14px 32px rgba(0,0,0,0.55)',
+              padding: '6px',
+              zIndex: 10000
+            }}
+          >
+            {canPin && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  handleTogglePinComment(comment, e);
+                  setOpenCommentOptionsId(null);
+                }}
+                style={menuItemStyle}
+              >
+                {comment.pinned ? '取消置頂' : '置頂留言'}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  handleDeleteComment(comment, e);
+                  setOpenCommentOptionsId(null);
+                }}
+                style={{ ...menuItemStyle, color: '#ff6b6b' }}
+              >
+                刪除留言
+              </button>
+            )}
+            {!canPin && !canDelete && (
+              <div style={{ color: '#888', padding: '10px 12px', fontSize: '13px', whiteSpace: 'nowrap' }}>
+                沒有可用操作
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const styleId = 'leafhub-overflow-menu-fix';
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      .video-grid,
+      .video-card,
+      .video-info-section,
+      .search-results-list,
+      .search-video-result,
+      .comment-list-container,
+      .single-comment-card,
+      .comment-content-body,
+      .watch-layout,
+      .main-content {
+        overflow: visible !important;
+      }
+      .video-options-menu,
+      .comment-options-menu {
+        overflow: visible !important;
+      }
+      [data-video-options-root="true"] button:hover,
+      [data-comment-options-root="true"] button:hover {
+        background: rgba(255,255,255,0.08) !important;
+      }
+    
+      .video-info-section {
+        margin-top: 4px !important;
+        padding-top: 0 !important;
+      }
+      .video-title {
+        margin-top: 0 !important;
+      }
+
+      .content-area {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }`;
+    document.head.appendChild(style);
+  }, []);
+
+  const SkeletonLine = ({ width = '100%', height = '12px', style = {} }) => (
+    <div className="skeleton-text" style={{ width, height, borderRadius: '999px', margin: 0, ...style }}></div>
+  );
+
+  const SkeletonAvatar = ({ size = 40, style = {} }) => (
+    <div className="skeleton-avatar" style={{ width: size, height: size, flexShrink: 0, ...style }}></div>
+  );
+
+  const VideoCardSkeleton = ({ compact = false }) => (
+    <div className="video-card" style={{ pointerEvents: 'none' }}>
+      <div className="skeleton-thumb" style={{ width: '100%', borderRadius: '12px' }}></div>
+      <div className="video-info-section" style={{ marginTop: '8px', display: 'flex', gap: '10px' }}>
+        <SkeletonAvatar size={compact ? 34 : 38} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <SkeletonLine width="86%" height="16px" />
+          <SkeletonLine width="48%" height="13px" />
+          <SkeletonLine width="34%" height="12px" />
+        </div>
+      </div>
+    </div>
+  );
+
+  const CommentSkeleton = () => (
+    <div className="single-comment-card comment-skeleton-card" style={{ display: 'flex', gap: '12px', paddingRight: '44px', position: 'relative', overflow: 'visible' }}>
+      <SkeletonAvatar size={40} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '9px', paddingTop: '2px' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <SkeletonLine width="92px" height="14px" />
+          <SkeletonLine width="48px" height="12px" />
+        </div>
+        <SkeletonLine width="64%" height="15px" />
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <SkeletonLine width="36px" height="12px" />
+          <SkeletonLine width="46px" height="12px" />
+        </div>
+      </div>
+    </div>
+  );
+
+  const CommentSkeletonList = ({ count = 4 }) => (
+    <div className="comment-list-container comment-skeleton-list" aria-label="留言載入中">
+      {Array.from({ length: count }).map((_, index) => (
+        <CommentSkeleton key={`comment-skeleton-${index}`} />
+      ))}
+    </div>
+  );
+
   const shareModalUrl = getCurrentVideoShareUrl();
 const shareModalTitle = selectedVideo?.title || 'Leafhub 影片';
 const shareOptions = [
@@ -5363,6 +6437,96 @@ const visibleTargetChannelName = String(
 const isChannelWaitingForVisibleVideos = currentView === 'channel' && isChannelVideosLoading && currentChannelVideosForReadyCheck.length === 0;
 const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
   const channelVideoSkeletonItems = Array.from({ length: 8 });
+const accountEmailDisplay = String(targetChannel?.email || authUser?.email || targetChannel?.emailLower || '').trim();
+const hasBoundEmail = Boolean(accountEmailDisplay);
+const accountProviderIds = new Set([
+  ...(Array.isArray(targetChannel?.linkedProviders) ? targetChannel.linkedProviders : []),
+  ...((authUser?.providerData || []).map(provider => provider?.providerId).filter(Boolean))
+]);
+const hasGoogleLinked = accountProviderIds.has('google') || accountProviderIds.has('google.com');
+const hasPasswordLinked = hasBoundEmail || accountProviderIds.has('email') || accountProviderIds.has('password') || accountProviderIds.has('password.com');
+const hasOwnerUidLocked = Boolean(targetChannel?.ownerUid);
+const hasReservedLockedId = Boolean(hasBoundEmail && targetChannel?.idLocked);
+const accountIdStatusText = hasOwnerUidLocked
+  ? 'ID 已鎖定'
+  : hasReservedLockedId
+    ? 'Email 已綁定，ID 已保留'
+    : hasBoundEmail
+      ? 'Email 已綁定，ID 鎖定資料同步中'
+      : '尚未綁定，建議綁定 Email 或 Google';
+const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
+  ? '#22c55e'
+  : hasBoundEmail
+    ? '#60a5fa'
+    : '#ffb020';
+
+  useEffect(() => {
+    if (currentView !== 'channel') return;
+
+    const candidateList = Array.from(new Set(getChannelIdentityCandidates({
+      ...targetChannel,
+      userId: targetChannel?.userId || targetChannelUserId || currentRouteChannelKey,
+      id: currentRouteChannelKey
+    })));
+
+    if (candidateList.length === 0) return;
+
+    let isActive = true;
+
+    const readFirebaseChannelBio = async () => {
+      try {
+        let foundData = null;
+
+        for (const candidate of candidateList) {
+          const directSnap = await getDoc(doc(db, 'Channels', candidate));
+          if (directSnap.exists()) {
+            foundData = { id: directSnap.id, ...directSnap.data() };
+            break;
+          }
+        }
+
+        for (const fieldName of ['userId', 'name', 'username', 'channelName']) {
+          if (foundData) break;
+          for (const candidate of candidateList) {
+            const snap = await getDocs(query(
+              collection(db, 'Channels'),
+              where(fieldName, '==', candidate),
+              limit(1)
+            ));
+            if (!snap.empty) {
+              const channelDoc = snap.docs[0];
+              foundData = { id: channelDoc.id, ...channelDoc.data() };
+              break;
+            }
+          }
+        }
+
+        if (!isActive || !foundData) return;
+
+        const nextBio = getChannelBioValue(foundData);
+        setTargetChannel(prev => ({
+          ...(prev || {}),
+          userId: foundData.userId || prev?.userId || foundData.id || '',
+          name: foundData.name || foundData.username || foundData.channelName || prev?.name || '',
+          username: foundData.username || foundData.name || prev?.username || '',
+          channelName: foundData.channelName || foundData.name || prev?.channelName || '',
+          avatar: foundData.avatar || prev?.avatar || GUEST_AVATAR,
+          subscriberCount: Number(foundData.subscriberCount ?? prev?.subscriberCount ?? 0),
+          bio: nextBio,
+          BIO: nextBio,
+          channelBio: nextBio
+        }));
+      } catch (error) {
+        console.error('讀取 Firebase 頻道 BIO 失敗:', error);
+      }
+    };
+
+    readFirebaseChannelBio();
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentView, currentRouteChannelKey, targetChannelUserId, targetChannel?.userId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName]);
 
   return (
     <div>
@@ -5576,6 +6740,9 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                     onClick={() => {
                       setInputUsername(
                         localUsername
+                      );
+                      setInputBio(
+                        String(getChannelBioValue(targetChannel) || localStorage.getItem('device_user_bio') || '')
                       );
                       setPreviewAvatar(
                         unifiedAvatar
@@ -5824,7 +6991,29 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                       </div>
                     )}
 
-                    {visibleSearchVideos.length > 0 ? (
+                    {shouldShowSearchSkeleton ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        {searchVideoSkeletonItems.map((num) => (
+                          <div
+                            key={`search-skeleton-${num}`}
+                            className="search-video-result"
+                            style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 520px) minmax(0, 1fr)', gap: '18px', alignItems: 'start', pointerEvents: 'none' }}
+                          >
+                            <div className="skeleton-thumb" style={{ width: '100%', borderRadius: '12px', minHeight: '180px' }}></div>
+                            <div style={{ minWidth: 0, paddingTop: '2px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              <div className="skeleton-text title" style={{ height: '22px', width: '78%', borderRadius: '4px' }}></div>
+                              <div className="skeleton-text meta" style={{ height: '13px', width: '38%', borderRadius: '4px' }}></div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' }}>
+                                <div className="skeleton-avatar" style={{ width: '28px', height: '28px', flexShrink: 0 }}></div>
+                                <div className="skeleton-text meta" style={{ height: '13px', width: '120px', borderRadius: '4px' }}></div>
+                              </div>
+                              <div className="skeleton-text meta" style={{ height: '13px', width: '88%', borderRadius: '4px' }}></div>
+                              <div className="skeleton-text meta" style={{ height: '13px', width: '64%', borderRadius: '4px' }}></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : visibleSearchVideos.length > 0 ? (
                       visibleSearchVideos.map((video) => {
                         const displayName = getVideoDisplayName(video);
                         const avatarSrc = getVideoAvatarSrc(video);
@@ -5834,13 +7023,14 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                             key={`search-video-${video.id}`}
                             className="search-video-result"
                             onClick={() => handleVideoClick(video)}
-                            style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 520px) minmax(0, 1fr)', gap: '18px', alignItems: 'start', cursor: 'pointer' }}
+                            style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 520px) minmax(0, 1fr)', gap: '18px', alignItems: 'start', cursor: 'pointer', position: 'relative', overflow: 'visible', zIndex: openVideoOptionsId === getVideoMenuKey(video) ? 50 : 1 }}
                           >
+                            {renderVideoQuickMenu(video, 'search')}
                             <div className="thumbnail-wrapper" style={{ borderRadius: '12px', overflow: 'hidden' }}>
                               <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
                               <span className="video-duration">{video.duration}</span>
                             </div>
-                            <div style={{ minWidth: 0, paddingTop: '2px' }}>
+                            <div style={{ minWidth: 0, paddingTop: '2px', paddingRight: '44px' }}>
                               <h3 style={{ margin: '0 0 8px', color: '#f1f1f1', fontSize: '20px', lineHeight: 1.35, fontWeight: 700 }}>
                                 {video.title}
                               </h3>
@@ -5875,55 +7065,7 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                 ) : (
                 <div className="video-grid">
                   {filteredVideos.length > 0 ? (
-                    filteredVideos.map((video) => (
-                      <div key={video.id} className="video-card" onClick={() => handleVideoClick(video)}>
-                        <div className="thumbnail-wrapper">
-                          <img src={video.thumbnail} alt={video.title} className="thumbnail-img" />
-                          <span className="video-duration">{video.duration}</span>
-                        </div>
-                          {/* 🟢 修正後的無敵保險版（完美解決小葉舊上傳影片無頭貼問題） */}
-                          <div className="video-info-section">
-                          <img
-                            src={
-                              isShiauyeAsset(video)
-                                ? avatarImage
-                                : isCurrentUserAsset(video)
-                                ? unifiedAvatar
-                                : (video.avatar || video.creatorAvatar || GUEST_AVATAR)
-                            }
-                            alt={video.channel || video.author}
-                            className="channel-avatar channel-avatar-clickable"
-                            onClick={(e) =>
-                              handleChannelNavigation(
-                                video.channel || video.author,
-                                null,
-                                e
-                              )
-                            }
-                            style={{ cursor: 'pointer' }}
-                          />
-                          <div>
-                            <h3 className="video-title">{video.title}</h3>
-                            <p 
-                              className="channel-name channel-name-clickable"
-                              onClick={(e) =>
-                                handleChannelNavigation(
-                                  video.channel,
-                                  null,
-                                  e
-                                )
-                              }
-                              style={{ cursor: 'pointer', display: 'inline-block' }}
-                            >
-                              {video.channel}
-                            </p>
-                            <p className="video-meta">
-                              {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))
+                    filteredVideos.map((video) => renderVideoCard(video))
                   ) : (
                     searchQuery.trim() ? (
                       <div className="empty-state" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#888' }}>
@@ -5941,24 +7083,19 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
 
               {!searchQuery.trim() && !(isPageLoading || isFirstInit) && (
                 <>
-                  <div ref={homeLoadMoreTriggerRef} style={{ width: '100%', height: '1px' }}></div>
-
                   {isLoadingMoreHomeVideos && (
                     <div className="video-grid" style={{ marginTop: '22px' }}>
-                      {[1, 2, 3, 4].map((num) => (
-                        <div key={`load-more-skeleton-${num}`} className="video-card" style={{ pointerEvents: 'none' }}>
-                          <div className="skeleton-thumb" style={{ width: '100%', borderRadius: '12px' }}></div>
-                          <div className="video-info-section" style={{ marginTop: '12px' }}>
-                            <div className="skeleton-avatar" style={{ flexShrink: 0 }}></div>
-                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <div className="skeleton-text title" style={{ height: '16px', borderRadius: '4px' }}></div>
-                              <div className="skeleton-text meta" style={{ height: '12px', width: '60%', borderRadius: '4px' }}></div>
-                            </div>
-                          </div>
-                        </div>
+                      {Array.from({ length: 3 }).map((_, num) => (
+                        <VideoCardSkeleton key={`load-more-skeleton-${num}`} />
                       ))}
                     </div>
                   )}
+
+                  <div
+                    ref={homeLoadMoreTriggerRef}
+                    aria-hidden="true"
+                    style={{ width: '100%', height: '24px', pointerEvents: 'none' }}
+                  ></div>
                 </>
               )}
             </>
@@ -6011,6 +7148,117 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                       ) : (
                         <div className="empty-state">還沒有按讚的影片。</div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {currentView === 'account-security' && (
+                  <div className="account-security-page" style={{ maxWidth: '980px', margin: '0 auto', color: '#fff' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                      <div>
+                        <h2 className="view-page-title" style={{ marginBottom: '8px' }}>帳號安全中心</h2>
+                        <p style={{ color: '#888', margin: 0, lineHeight: 1.7 }}>
+                          統一管理 USER ID、Email / Google 綁定、修改密碼、忘記密碼與帳號刪除。
+                        </p>
+                      </div>
+                      <button type="button" className="clear-btn" onClick={() => handleInternalViewNavigation('home', '/')}>回首頁</button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+                      <div style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '14px', padding: '16px' }}>
+                        <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>USER ID</div>
+                        <div style={{ fontSize: '20px', fontWeight: 900, wordBreak: 'break-word' }}>{currentUserId || '讀取中'}</div>
+                      </div>
+                      <div style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '14px', padding: '16px' }}>
+                        <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>Email</div>
+                        <div style={{ fontSize: '16px', fontWeight: 800, wordBreak: 'break-word', color: hasBoundEmail ? '#22c55e' : '#ffb020' }}>{hasBoundEmail ? accountEmailDisplay : '尚未綁定'}</div>
+                      </div>
+                      <div style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '14px', padding: '16px' }}>
+                        <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>ID 狀態</div>
+                        <div style={{ color: accountIdStatusColor, fontWeight: 900 }}>
+                          {accountIdStatusText}
+                        </div>
+                        {hasBoundEmail && !hasOwnerUidLocked && (
+                          <div style={{ color: '#888', fontSize: '12px', lineHeight: 1.6, marginTop: '6px' }}>
+                            系統已讀到 Email。若目前 Firebase Auth 也已登入同一個 Email，會自動補寫 ownerUid 並完成 ID 鎖定。
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '18px' }}>
+                      <section style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '16px', padding: '20px' }}>
+                        <h3 style={{ marginTop: 0 }}>{hasBoundEmail ? 'Email 綁定狀態' : 'Email / Google 登入與綁定'}</h3>
+                        {hasBoundEmail ? (
+                          <div style={{ border: '1px solid #1f3d2b', background: 'rgba(34,197,94,0.08)', color: '#d6ffe4', borderRadius: '12px', padding: '14px', lineHeight: 1.7 }}>
+                            Email 已綁定：<b>{accountEmailDisplay}</b>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                              <button type="button" className={emailAuthMode === 'login' ? 'sort-btn active' : 'sort-btn'} onClick={() => setEmailAuthMode('login')}>Email 登入</button>
+                              <button type="button" className={emailAuthMode === 'bind' ? 'sort-btn active' : 'sort-btn'} onClick={() => { setEmailAuthMode('bind'); setEmailInput(targetChannel?.email || authUser?.email || ''); }}>綁定 Email</button>
+                              <button type="button" className={emailAuthMode === 'register' ? 'sort-btn active' : 'sort-btn'} onClick={() => setEmailAuthMode('register')}>建立 Email 帳號</button>
+                            </div>
+                            <form onSubmit={handleEmailAuthSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'end' }}>
+                              <input className="comment-text-input" type="email" placeholder="Email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} required />
+                              <input className="comment-text-input" type="password" placeholder="密碼，至少 6 個字" value={emailPasswordInput} onChange={(e) => setEmailPasswordInput(e.target.value)} required />
+                              {(emailAuthMode === 'register' || emailAuthMode === 'bind') && (
+                                <input className="comment-text-input" type="password" placeholder="再次輸入密碼" value={emailPasswordConfirmInput} onChange={(e) => setEmailPasswordConfirmInput(e.target.value)} required />
+                              )}
+                              <button type="submit" className="comment-submit-btn" style={{ height: '40px' }}>
+                                {emailAuthMode === 'bind' ? '確認綁定 Email' : emailAuthMode === 'register' ? '建立並登入' : 'Email 登入'}
+                              </button>
+                            </form>
+                          </>
+                        )}
+                        {!hasBoundEmail && (
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
+                            {!hasGoogleLinked ? (
+                              <>
+                                <button type="button" className="clear-btn" onClick={() => handleGoogleAuth({ bindOnly: false })}>Google 登入</button>
+                                <button type="button" className="clear-btn" onClick={() => handleGoogleAuth({ bindOnly: true })}>綁定 Google 到目前 USER ID</button>
+                              </>
+                            ) : (
+                              <span style={{ color: '#22c55e', fontWeight: 800 }}>Google 已綁定</span>
+                            )}
+                          </div>
+                        )}
+                      </section>
+
+                      <section style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '16px', padding: '20px' }}>
+                        <h3 style={{ marginTop: 0 }}>修改密碼</h3>
+                        <form onSubmit={handleChangePasswordSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'end' }}>
+                          <input className="comment-text-input" type="password" placeholder="新密碼，至少 6 個字" value={newPasswordInput} onChange={(e) => setNewPasswordInput(e.target.value)} required />
+                          <input className="comment-text-input" type="password" placeholder="再次輸入新密碼" value={confirmNewPasswordInput} onChange={(e) => setConfirmNewPasswordInput(e.target.value)} required />
+                          <button type="submit" className="comment-submit-btn" style={{ height: '40px' }}>更新密碼</button>
+                        </form>
+                      </section>
+
+                      <section style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '16px', padding: '20px' }}>
+                        <h3 style={{ marginTop: 0 }}>修改 USER ID</h3>
+                        <form onSubmit={handleChangeIdSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'end' }}>
+                          <input className="comment-text-input" type="text" placeholder="新的 USER ID" value={newIdInput} onChange={(e) => setNewIdInput(e.target.value)} required />
+                          <button type="submit" className="comment-submit-btn" style={{ height: '40px' }}>更新 USER ID</button>
+                        </form>
+                      </section>
+
+                      <section style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '16px', padding: '20px' }}>
+                        <h3 style={{ marginTop: 0 }}>忘記密碼</h3>
+                        <form onSubmit={handleSendPasswordResetSubmit} style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) auto', gap: '10px', alignItems: 'end' }}>
+                          <input className="comment-text-input" type="email" placeholder="輸入已綁定 Email" value={forgotPasswordEmailInput || accountEmailDisplay} onChange={(e) => setForgotPasswordEmailInput(e.target.value)} required />
+                          <button type="submit" className="comment-submit-btn" style={{ height: '40px', padding: '0 16px' }}>寄送重設信</button>
+                        </form>
+                      </section>
+
+                      <section style={{ background: '#120909', border: '1px solid #4a1d1d', borderRadius: '16px', padding: '20px' }}>
+                        <h3 style={{ marginTop: 0, color: '#ff6b6b' }}>帳號刪除</h3>
+                        <p style={{ color: '#bbb', fontSize: '13px', lineHeight: 1.7 }}>請輸入目前 USER ID：<b>{currentUserId}</b>。</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) auto', gap: '10px', alignItems: 'end' }}>
+                          <input className="comment-text-input" placeholder="輸入目前 USER ID 確認" value={deleteAccountConfirmInput} onChange={(e) => setDeleteAccountConfirmInput(e.target.value)} />
+                          <button type="button" onClick={handleDeleteAccountConfirm} className="comment-submit-btn" style={{ height: '40px', padding: '0 16px', background: '#d33', color: '#fff' }}>確認刪除</button>
+                        </div>
+                      </section>
                     </div>
                   </div>
                 )}
@@ -6141,7 +7389,7 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                     ) : (
                       <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                         <h3>簡介</h3>
-                        <p>嗨！我是 {targetChannel?.name}。{targetChannel?.name === '小葉' ? '這是小葉的官方頻道 ✨ 歡迎訂閱！' : (targetChannel?.bio || "主要分享科技觀察與網路各種奇奇怪怪的迷因研究。")}</p>
+                        <p>{getChannelBioValue(targetChannel) || '這人很神祕'}</p>
                       </div>
                     )}
                   </div>
@@ -6306,10 +7554,7 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
 
                         <div className="comment-list-container">
                           {isCommentsLoading ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px 0', gap: '12px', color: '#888' }}>
-                              <div className="yt-buffering-spinner" style={{ width: '32px', height: '32px' }}></div>
-                              <span style={{ fontSize: '14px', letterSpacing: '1px' }}>正在讀取社群留言...</span>
-                            </div>
+                            <CommentSkeletonList count={5} />
                           ) : (
                             allDisplayedComments.map((comment, idx) => {
                               const cid = comment.id || `comment-${idx}`;
@@ -6327,8 +7572,9 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                                   : (comment.avatar || GUEST_AVATAR);
 
                               return (
-                                <div key={cid} className={`single-comment-card ${comment.isPending ? 'pending' : ''}`} style={{ opacity: comment.isPending ? 0.6 : 1, marginBottom: '20px' }}>
-                                  <div style={{ display: 'flex', gap: '12px' }}>
+                                <div key={cid} className={`single-comment-card ${comment.isPending ? 'pending' : ''}`} style={{ opacity: comment.isPending ? 0.6 : 1, marginBottom: '20px', position: 'relative', overflow: 'visible', zIndex: openCommentOptionsId === cid ? 90 : 1 }}>
+                                  {renderCommentQuickMenu(comment, cid)}
+                                  <div style={{ display: 'flex', gap: '12px', position: 'relative', paddingRight: '44px', overflow: 'visible' }}>
                                     {/* 🟢 主留言頭貼改法：不論比對名字還是 ID，只要是小葉就上小葉頭貼 */}
                                     <img 
                                       src={commentAvatarSrc} 
@@ -6349,6 +7595,9 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                                         <span className="comment-time-ago" style={{ marginLeft: '8px', color: '#666', fontSize: '12px' }}>
                                           {comment.createdAt ? formatTimeAgo(comment.createdAt) : '剛剛'}
                                         </span>
+                                        {comment.pinned && (
+                                          <span style={{ marginLeft: '8px', color: '#ffb347', fontSize: '12px', fontWeight: 800 }}>已置頂</span>
+                                        )}
                                       </div>
                                       <p className="comment-user-text" style={{ margin: '2px 0 6px 0', color: '#eee', fontSize: '14px', lineHeight: '1.5' }}>{comment.text}</p>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '2px' }}>
@@ -6597,6 +7846,12 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                         <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                           <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="settings" gap={10}>帳號設定</IconLabel></h2>
                           <button className="close-modal-btn" onClick={() => setIsSettingsModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  <button
+                    className="dropdown-item-btn"
+                    onClick={handleAccountSecurityNavigation}
+                  >
+                    <IconLabel icon="key" gap={10}>帳號安全中心</IconLabel>
+                  </button>
                         </div>
                         <form
                     onSubmit={handleUpdateUsernameSubmit}
@@ -6648,13 +7903,7 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
 
                       <button
                         type="button"
-                        onClick={() => {
-                          setNewIdInput(currentUserId === 'loading...' ? '' : currentUserId);
-                          setNewPasswordInput('');
-                          setConfirmNewPasswordInput('');
-                          setIsChangeIdModalOpen(true);
-                          setIsSettingsModalOpen(false);
-                        }}
+                        onClick={handleAccountSecurityNavigation}
                         style={{
                           padding: '8px 16px',
                           borderRadius: '8px',
@@ -6665,10 +7914,15 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                           fontSize: '14px'
                         }}
                       >
-                        <IconLabel icon="key" gap={8}>修改 ID / 密碼</IconLabel>
+                        <IconLabel icon="key" gap={8}>帳號安全</IconLabel>
                       </button>
                     </div>
-                      
+
+                    <div style={{ border: '1px solid #2a2a2a', borderRadius: '12px', padding: '12px', background: '#101010', color: '#aaa', fontSize: '13px', lineHeight: 1.6 }}>
+                      帳號安全、Email / Google 綁定、修改密碼與帳號刪除已移到獨立頁面。
+                      <button type="button" className="clear-btn" onClick={handleAccountSecurityNavigation} style={{ marginLeft: '10px' }}>前往帳號安全</button>
+                    </div>
+
                     {/* 名稱設定 */}
                     <div
                       className="form-group"
@@ -6694,6 +7948,34 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                         value={inputUsername}
                         onChange={(e) => setInputUsername(e.target.value)}
                         required
+                      />
+                    </div>
+
+                    {/* 頻道簡介設定：預設不存簡介，沒有簡介時頻道頁顯示「這人很神祕」 */}
+                    <div
+                      className="form-group"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: '#aaa',
+                          fontSize: '14px'
+                        }}
+                      >
+                        頻道簡介
+                      </label>
+                      <textarea
+                        className="comment-text-input"
+                        placeholder="留空會顯示：這人很神祕"
+                        value={inputBio}
+                        onChange={(e) => setInputBio(e.target.value)}
+                        rows={3}
+                        maxLength={160}
+                        style={{ resize: 'vertical', minHeight: '82px', lineHeight: 1.5 }}
                       />
                     </div>
                       
@@ -6723,6 +8005,62 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
                       </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            )}
+
+            {isEmailAuthModalOpen && (
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsEmailAuthModalOpen(false); }}>
+                <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '440px', maxWidth: '92%' }}>
+                  <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}>{emailAuthMode === 'bind' ? '綁定 Email' : emailAuthMode === 'register' ? '建立 Email 帳號' : 'Email 登入'}</h2>
+                    <button className="close-modal-btn" onClick={() => setIsEmailAuthModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  </div>
+                  <form onSubmit={handleEmailAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <input className="comment-text-input" type="email" placeholder="Email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} required />
+                    <input className="comment-text-input" type="password" placeholder="密碼，至少 6 個字" value={emailPasswordInput} onChange={(e) => setEmailPasswordInput(e.target.value)} required />
+                    {(emailAuthMode === 'register' || emailAuthMode === 'bind') && (
+                      <input className="comment-text-input" type="password" placeholder="再次輸入密碼" value={emailPasswordConfirmInput} onChange={(e) => setEmailPasswordConfirmInput(e.target.value)} required />
+                    )}
+                    <div style={{ color: '#888', fontSize: '12px', lineHeight: 1.6 }}>
+                      {emailAuthMode === 'bind'
+                        ? '會把目前 USER ID 綁定到這個 Email，綁定前仍可用 USER ID 登入。'
+                        : 'Email 登入只會登入已經綁定 Email 的頻道。舊帳號請先用 USER ID 登入再綁定 Email。'}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                      <button type="button" className="clear-btn" onClick={() => setEmailAuthMode(emailAuthMode === 'register' ? 'login' : 'register')}>{emailAuthMode === 'register' ? '改用登入' : '建立新 Email 帳號'}</button>
+                      <button type="button" className="clear-btn" onClick={() => { setForgotPasswordEmailInput(emailInput); setIsForgotPasswordModalOpen(true); }}>忘記密碼</button>
+                      <button type="submit" className="comment-submit-btn" style={{ height: '36px', padding: '0 16px' }}>{emailAuthMode === 'bind' ? '確認綁定' : emailAuthMode === 'register' ? '建立並登入' : '登入'}</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {isForgotPasswordModalOpen && (
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsForgotPasswordModalOpen(false); }}>
+                <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '420px', maxWidth: '92%' }}>
+                  <h2 style={{ color: '#fff', fontSize: '18px', marginTop: 0 }}>忘記密碼</h2>
+                  <form onSubmit={handleSendPasswordResetSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <input className="comment-text-input" type="email" placeholder="輸入已綁定的 Email" value={forgotPasswordEmailInput} onChange={(e) => setForgotPasswordEmailInput(e.target.value)} required />
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                      <button type="button" className="clear-btn" onClick={() => setIsForgotPasswordModalOpen(false)}>取消</button>
+                      <button type="submit" className="comment-submit-btn" style={{ height: '36px', padding: '0 16px' }}>寄送重設信</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+{isDeleteAccountModalOpen && (
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setIsDeleteAccountModalOpen(false); }}>
+                <div className="upload-modal-window" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ background: '#141414', border: '1px solid #3a1515', padding: '24px', borderRadius: '12px', width: '440px', maxWidth: '92%' }}>
+                  <h2 style={{ color: '#ff6b6b', fontSize: '18px', marginTop: 0 }}>帳號刪除</h2>
+                  <p style={{ color: '#ccc', fontSize: '14px', lineHeight: 1.7 }}>這會先把頻道標記為 deletedAccount。請輸入目前 USER ID：<b>{currentUserId}</b></p>
+                  <input className="comment-text-input" placeholder="輸入目前 USER ID 確認" value={deleteAccountConfirmInput} onChange={(e) => setDeleteAccountConfirmInput(e.target.value)} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                    <button type="button" className="clear-btn" onClick={() => setIsDeleteAccountModalOpen(false)}>取消</button>
+                    <button type="button" onClick={handleDeleteAccountConfirm} className="comment-submit-btn" style={{ height: '36px', padding: '0 16px', background: '#d33', color: '#fff' }}>確認刪除</button>
+                  </div>
                 </div>
               </div>
             )}

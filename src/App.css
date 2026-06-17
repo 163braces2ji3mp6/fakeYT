@@ -2573,3 +2573,17 @@ body .toast-notification {
   }
 }
 
+
+
+/* ✅ Checked Fix: content-area 必須維持可滾動，避免首頁載入更多失效 */
+.content-area {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  height: 100% !important;
+  overscroll-behavior: contain !important;
+}
+.video-grid,
+.video-card,
+.video-info-section {
+  overflow: visible !important;
+}

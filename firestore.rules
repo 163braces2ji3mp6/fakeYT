@@ -1,0 +1,100 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isChannelOwner() {
+      return signedIn()
+        && resource.data.ownerUid != null
+        && resource.data.ownerUid == request.auth.uid;
+    }
+
+    function isCreatingLockedChannel() {
+      return signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.idLocked == true;
+    }
+
+    function isClaimingLegacyChannel() {
+      return signedIn()
+        && resource.data.ownerUid == null
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.idLocked == true;
+    }
+
+    function keepsOwnerLocked() {
+      return request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.idLocked == true;
+    }
+
+    function isVideoOwner() {
+      return signedIn()
+        && (
+          resource.data.ownerUid == request.auth.uid
+          || resource.data.uploaderUid == request.auth.uid
+        );
+    }
+
+    function isCommentOwner() {
+      return signedIn()
+        && (
+          resource.data.ownerUid == request.auth.uid
+          || resource.data.userUid == request.auth.uid
+          || resource.data.uid == request.auth.uid
+        );
+    }
+
+    // Channels/{customId}
+    // 綁定 Email / Google 後會寫 ownerUid + idLocked，之後只有 ownerUid 本人能改。
+    match /Channels/{channelId} {
+      allow read: if true;
+
+      // 新頻道必須由登入者建立，且 ownerUid 必須等於 request.auth.uid。
+      allow create: if isCreatingLockedChannel();
+
+      // 舊 USER ID 頻道 ownerUid 為空時，可以被目前登入者第一次綁定。
+      // 綁定後 ownerUid 不允許被其他人改掉，防止 ID 被搶。
+      allow update: if isChannelOwner() && keepsOwnerLocked()
+        || isClaimingLegacyChannel();
+
+      // 不建議真刪除頻道；App.jsx 目前用 deletedAccount 軟刪除。
+      allow delete: if isChannelOwner();
+    }
+
+    // Videos/{videoId}
+    match /Videos/{videoId} {
+      allow read: if true;
+
+      // 允許登入者上傳影片。
+      allow create: if signedIn();
+
+      // 只有影片 ownerUid/uploaderUid 可直接改；
+      // 注意：如果你的影片還沒寫 ownerUid，之後建議在 App.jsx 上傳時補 ownerUid。
+      allow update, delete: if isVideoOwner();
+    }
+
+    // comments/{commentId}
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if isCommentOwner();
+    }
+
+    // replies/{replyId}
+    match /replies/{replyId} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if isCommentOwner();
+    }
+
+    // 預設：公開讀取，禁止其他未定義集合寫入。
+    match /{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
