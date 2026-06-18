@@ -6315,6 +6315,41 @@ return [];
   };
 
 
+
+  const formatDateForDisplay = (value) => {
+    const time = getDateValue(value);
+    if (!time) return '';
+
+    try {
+      return new Intl.DateTimeFormat('zh-TW', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }).format(new Date(time));
+    } catch {
+      return new Date(time).toLocaleDateString();
+    }
+  };
+
+  const getChannelJoinedText = (channel = {}, videoList = []) => {
+    const directJoinDate =
+      formatDateForDisplay(channel?.createdAt) ||
+      formatDateForDisplay(channel?.joinedAt) ||
+      formatDateForDisplay(channel?.createdTime) ||
+      formatDateForDisplay(channel?.registeredAt);
+
+    if (directJoinDate) return directJoinDate;
+
+    const earliestVideoTime = (Array.isArray(videoList) ? videoList : [])
+      .map(video => getDateValue(video?.createdAt ?? video?.publishedAt ?? video?.uploadedAt ?? video?.time))
+      .filter(Boolean)
+      .sort((a, b) => a - b)[0];
+
+    return earliestVideoTime
+      ? `${formatDateForDisplay(earliestVideoTime)}（依最早影片估算）`
+      : '尚未有加入時間資料';
+  };
+
   /* ------------------------------
     19. Render Entry / JSX 主畫面
   ------------------------------ */
@@ -6728,7 +6763,10 @@ const visibleTargetChannelName = String(
 ).trim();
   const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && !visibleTargetChannelName && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
   const currentChannelVideosForReadyCheck = currentView === 'channel' ? getChannelVideos(targetChannel?.name || targetChannel?.channelName || targetChannel?.username || '') : [];
-  const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && isChannelVideosLoading;
+  const currentChannelVideoCount = currentChannelVideosForReadyCheck.length;
+const currentChannelTotalViews = currentChannelVideosForReadyCheck.reduce((sum, video) => sum + getViewCount(video), 0);
+const currentChannelJoinedText = getChannelJoinedText(targetChannel || {}, currentChannelVideosForReadyCheck);
+const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && isChannelVideosLoading;
 const isChannelWaitingForVisibleVideos = currentView === 'channel' && isChannelVideosLoading && currentChannelVideosForReadyCheck.length === 0;
 const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
   const channelVideoSkeletonItems = Array.from({ length: 8 });
@@ -6748,6 +6786,23 @@ const accountProviderIds = new Set([
   ...((authUser?.providerData || []).map(provider => provider?.providerId).filter(Boolean))
 ]);
 const hasGoogleLinked = accountProviderIds.has('google') || accountProviderIds.has('google.com');
+const accountStatusLabel = hasGoogleLinked && hasBoundEmail
+  ? '已綁定 Email / Google'
+  : hasGoogleLinked
+    ? '已綁定 Google'
+    : hasBoundEmail
+      ? '已綁定 Email'
+      : '訪客';
+const accountStatusColor = hasGoogleLinked
+  ? '#60a5fa'
+  : hasBoundEmail
+    ? '#22c55e'
+    : '#ffb020';
+const accountStatusDescription = hasGoogleLinked
+  ? '此帳號可以使用 Google 登入，帳號資料會保留在目前 USER ID。'
+  : hasBoundEmail
+    ? '此帳號已綁定 Email，可以使用 Email 與密碼登入。'
+    : '此帳號目前仍是訪客狀態，建議建立或綁定 Email 保留資料。';
 const hasPasswordLinked = hasBoundEmail || accountProviderIds.has('email') || accountProviderIds.has('password') || accountProviderIds.has('password.com');
 const hasOwnerUidLocked = Boolean(targetChannel?.ownerUid);
 const hasReservedLockedId = Boolean(hasBoundEmail && targetChannel?.idLocked);
@@ -7060,17 +7115,19 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                     <IconLabel icon="settings">帳號設定</IconLabel>
                   </button>
 
-                  <button
-                    className="dropdown-item-btn"
-                    onClick={() => {
-                      setNewPasswordInput('');
-                      setConfirmNewPasswordInput('');
-                      setIsChangePasswordModalOpen(true);
-                      setIsProfileOpen(false);
-                    }}
-                  >
-                    <IconLabel icon="lock">{isIdLoggedIn ? '修改密碼' : '新增登入密碼'}</IconLabel>
-                  </button>
+                  {isIdLoggedIn && (
+                    <button
+                      className="dropdown-item-btn"
+                      onClick={() => {
+                        setNewPasswordInput('');
+                        setConfirmNewPasswordInput('');
+                        setIsChangePasswordModalOpen(true);
+                        setIsProfileOpen(false);
+                      }}
+                    >
+                      <IconLabel icon="lock">修改密碼</IconLabel>
+                    </button>
+                  )}
 
                   {isIdLoggedIn ? (
                     <button
@@ -7477,6 +7534,11 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                         <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>Email</div>
                         <div style={{ fontSize: '16px', fontWeight: 800, wordBreak: 'break-word', color: hasBoundEmail ? '#22c55e' : '#ffb020' }}>{hasBoundEmail ? accountEmailDisplay : '尚未綁定'}</div>
                       </div>
+                      <div style={{ background: '#0f0f0f', border: `1px solid ${accountStatusColor}`, borderRadius: '14px', padding: '16px' }}>
+                        <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>目前帳號狀態</div>
+                        <div style={{ color: accountStatusColor, fontSize: '18px', fontWeight: 900 }}>{accountStatusLabel}</div>
+                        <div style={{ color: '#888', fontSize: '12px', lineHeight: 1.6, marginTop: '6px' }}>{accountStatusDescription}</div>
+                      </div>
                       <div style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '14px', padding: '16px' }}>
                         <div style={{ color: '#888', fontSize: '12px', marginBottom: '6px' }}>ID 狀態</div>
                         <div style={{ color: accountIdStatusColor, fontWeight: 900 }}>
@@ -7641,9 +7703,9 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                             {/* 🟢 修正：優先從 targetChannel 讀取，再用 targetChannelUserId 當作備份 */}
                             <p style={{ color: '#aaa', margin: '8px 0 6px 0', fontSize: '15px' }}>
                               @{getTargetChannelPublicIdForDisplay()} •&nbsp;
-                              {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {getChannelVideos(visibleTargetChannelName).length} 部影片
+                              {formatSubscribers(getTargetChannelSubscriberCount())}位訂閱者 • {currentChannelVideoCount} 部影片
                             </p>
-                            <p style={{ color: '#666', margin: '0', fontSize: '14px' }}>歡迎來到 {visibleTargetChannelName} 的個人技術與娛樂分享空間。</p>
+                            <p style={{ color: '#666', margin: '12px 0 0 0', fontSize: '14px' }}>歡迎來到{visibleTargetChannelName}的個人頻道。</p>
                           </div>
                         </div>
                       </>
@@ -7682,6 +7744,20 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       <div className="channel-about-section" style={{ padding: '16px 8px', color: '#ccc', lineHeight: '1.8', maxWidth: '800px' }}>
                         <h3>簡介</h3>
                         <p>{getChannelBioValue(targetChannel) || '這人很神祕'}</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginTop: '18px' }}>
+                          <div style={{ background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '14px' }}>
+                            <div style={{ color: '#777', fontSize: '12px', marginBottom: '6px' }}>加入時間</div>
+                            <div style={{ color: '#fff', fontWeight: 900 }}>{currentChannelJoinedText}</div>
+                          </div>
+                          <div style={{ background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '14px' }}>
+                            <div style={{ color: '#777', fontSize: '12px', marginBottom: '6px' }}>影片數量</div>
+                            <div style={{ color: '#fff', fontWeight: 900 }}>{currentChannelVideoCount} 部</div>
+                          </div>
+                          <div style={{ background: '#111', border: '1px solid #222', borderRadius: '12px', padding: '14px' }}>
+                            <div style={{ color: '#777', fontSize: '12px', marginBottom: '6px' }}>總觀看次數</div>
+                            <div style={{ color: '#fff', fontWeight: 900 }}>{formatViews(currentChannelTotalViews)}</div>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -8970,7 +9046,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                   style={{ background: '#141414', border: '1px solid #222', padding: '24px', borderRadius: '12px', width: '450px', maxWidth: '90%' }}
                 >
                   <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="lock" gap={10}>{isIdLoggedIn ? '修改密碼' : '新增登入密碼'}</IconLabel></h2>
+                    <h2 style={{ color: '#fff', fontSize: '18px', margin: 0 }}><IconLabel icon="lock" gap={10}>修改密碼</IconLabel></h2>
                     <button className="close-modal-btn" onClick={() => setIsChangePasswordModalOpen(false)} style={{ background: 'transparent', border: 'none', color: '#aaa', fontSize: '24px', cursor: 'pointer' }}>×</button>
                   </div>
 
