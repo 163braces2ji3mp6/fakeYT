@@ -1785,11 +1785,11 @@ const homeLoadMoreTriggerRef = useRef(null);
   const handleIdLoginSubmit = async (e) => {
   e.preventDefault();
 
-  const cleanId = loginIdInput.trim();
+  const cleanAccountInput = loginIdInput.trim();
   const cleanPassword = loginPasswordInput;
 
-  if (!cleanId) {
-    showToast('請輸入 ID', 'warning');
+  if (!cleanAccountInput) {
+    showToast('請輸入使用者 ID 或 Email', 'warning');
     return;
   }
 
@@ -1797,6 +1797,45 @@ const homeLoadMoreTriggerRef = useRef(null);
     showToast('請輸入密碼', 'warning');
     return;
   }
+
+  // 🟢 新版：登入現有帳號支援「使用者 ID 或 Email」。
+  // - 輸入 Email：走 Firebase Auth，成功後用 ownerUid / email 找回 LeafHub 頻道。
+  // - 輸入 USER ID：保留原本 Channels/{USER_ID} + 密碼雜湊驗證流程。
+  const isEmailLogin = cleanAccountInput.includes('@');
+
+  if (isEmailLogin) {
+    try {
+      const cleanEmail = normalizeEmailValue(cleanAccountInput);
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
+      const found = await findChannelByAuthUser(userCredential.user);
+
+      if (!found) {
+        showToast('這個 Email 尚未綁定 LeafHub 帳號，請先用目前帳號綁定 Email', 'warning');
+        return;
+      }
+
+      applyChannelLoginData(found.id, found.data, userCredential.user);
+      setIsIdLoggedIn(true);
+      localStorage.setItem('leafhub_is_id_logged_in', 'true');
+      setIsIdLoginModalOpen(false);
+      setLoginIdInput('');
+      setLoginPasswordInput('');
+      showToast(`已用 Email 登入：${cleanEmail}`, 'success');
+      return;
+    } catch (error) {
+      console.error('Email 登入失敗:', error);
+      const errorMessage =
+        error?.code === 'auth/user-not-found' ||
+        error?.code === 'auth/wrong-password' ||
+        error?.code === 'auth/invalid-credential'
+          ? 'Email 或密碼錯誤'
+          : 'Email 登入失敗，請確認 Firebase Auth 已啟用 Email/Password';
+      showToast(errorMessage, 'error');
+      return;
+    }
+  }
+
+  const cleanId = cleanAccountInput;
 
   if (cleanId.includes('/')) {
     showToast('ID 不能包含 / 符號', 'error');
@@ -1911,6 +1950,8 @@ const homeLoadMoreTriggerRef = useRef(null);
 };
 
   
+
+
   const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
 
   const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser) => {
@@ -2122,6 +2163,16 @@ const findChannelByAuthUser = async (firebaseUser) => {
     e.preventDefault();
     const cleanEmail = normalizeEmailValue(emailInput);
     const password = emailPasswordInput;
+    const currentIdForEmailMode = String(currentUserId || '').trim();
+    const emailAlreadyBound = Boolean(targetChannel?.email || targetChannel?.emailLower || authUser?.email);
+    const shouldCreateEmailAccount =
+      !emailAlreadyBound &&
+      !isIdLoggedIn &&
+      currentIdForEmailMode.startsWith('user_') &&
+      !targetChannel?.ownerUid;
+    const effectiveEmailAuthMode = !emailAlreadyBound
+      ? (shouldCreateEmailAccount ? 'register' : 'bind')
+      : emailAuthMode;
 
     if (!cleanEmail) {
       showToast('請輸入 Email', 'warning');
@@ -2131,7 +2182,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
       showToast('密碼至少需要 6 個字', 'warning');
       return;
     }
-    if ((emailAuthMode === 'register' || emailAuthMode === 'bind') && password !== emailPasswordConfirmInput) {
+    if ((effectiveEmailAuthMode === 'register' || effectiveEmailAuthMode === 'bind') && password !== emailPasswordConfirmInput) {
       showToast('兩次密碼輸入不一致', 'error');
       return;
     }
@@ -2139,9 +2190,9 @@ const findChannelByAuthUser = async (firebaseUser) => {
     try {
       let userCredential = null;
 
-      if (emailAuthMode === 'login') {
+      if (effectiveEmailAuthMode === 'login') {
         userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      } else if (emailAuthMode === 'bind') {
+      } else if (effectiveEmailAuthMode === 'bind') {
         const credential = EmailAuthProvider.credential(cleanEmail, password);
         try {
           if (auth.currentUser && auth.currentUser.isAnonymous) {
@@ -2168,7 +2219,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
         }
       }
 
-      if (emailAuthMode === 'login') {
+      if (effectiveEmailAuthMode === 'login') {
         const found = await findChannelByAuthUser(userCredential.user);
         if (!found) {
           showToast('這個 Email 還沒有綁定頻道，請先用 USER ID 登入後綁定 Email', 'warning');
@@ -2181,7 +2232,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
       setEmailInput('');
       setEmailPasswordInput('');
       setEmailPasswordConfirmInput('');
-      showToast(emailAuthMode === 'bind' ? 'Email 已綁定到目前 USER ID' : 'Email 登入成功', 'success');
+      showToast(effectiveEmailAuthMode === 'bind' ? 'Email 已綁定到目前 USER ID' : 'Email 登入成功', 'success');
     } catch (error) {
       console.error('Email Auth 失敗:', error);
       showToast(error?.code === 'auth/wrong-password' ? 'Email 或密碼錯誤' : 'Email 操作失敗，請確認 Firebase Auth 已啟用 Email/Password', 'error');
@@ -2196,13 +2247,21 @@ const findChannelByAuthUser = async (firebaseUser) => {
 
       if (bindOnly) {
         const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
-        if (ok) showToast('Google 已綁定到目前 USER ID', 'success');
+        if (ok) {
+          setIsIdLoginModalOpen(false);
+          setLoginIdInput('');
+          setLoginPasswordInput('');
+          showToast('Google 已綁定到目前 USER ID', 'success');
+        }
         return;
       }
 
       const found = await findChannelByAuthUser(result.user);
       if (found) {
         applyChannelLoginData(found.id, found.data, result.user);
+        setIsIdLoginModalOpen(false);
+        setLoginIdInput('');
+        setLoginPasswordInput('');
         showToast('Google 登入成功', 'success');
         return;
       }
@@ -2210,7 +2269,12 @@ const findChannelByAuthUser = async (firebaseUser) => {
       const hasLocalChannel = currentUserId && currentUserId !== 'loading...' && !String(currentUserId).includes('/');
       if (hasLocalChannel) {
         const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
-        if (ok) showToast('Google 已登入並保留目前 USER ID', 'success');
+        if (ok) {
+          setIsIdLoginModalOpen(false);
+          setLoginIdInput('');
+          setLoginPasswordInput('');
+          showToast('Google 已登入，並已綁定目前訪客帳號', 'success');
+        }
         return;
       }
 
@@ -6439,6 +6503,15 @@ const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading
   const channelVideoSkeletonItems = Array.from({ length: 8 });
 const accountEmailDisplay = String(targetChannel?.email || authUser?.email || targetChannel?.emailLower || '').trim();
 const hasBoundEmail = Boolean(accountEmailDisplay);
+const currentUserIdForAccount = String(currentUserId || '').trim();
+const isGuestAccountForEmailSetup =
+  !hasBoundEmail &&
+  !isIdLoggedIn &&
+  currentUserIdForAccount.startsWith('user_') &&
+  !targetChannel?.ownerUid;
+const shouldShowCreateEmailOnly = !hasBoundEmail && isGuestAccountForEmailSetup;
+const shouldShowBindEmailOnly = !hasBoundEmail && !shouldShowCreateEmailOnly;
+
 const accountProviderIds = new Set([
   ...(Array.isArray(targetChannel?.linkedProviders) ? targetChannel.linkedProviders : []),
   ...((authUser?.providerData || []).map(provider => provider?.providerId).filter(Boolean))
@@ -6453,7 +6526,7 @@ const accountIdStatusText = hasOwnerUidLocked
     ? 'Email 已綁定，ID 已保留'
     : hasBoundEmail
       ? 'Email 已綁定，ID 鎖定資料同步中'
-      : '尚未綁定，建議綁定 Email 或 Google';
+      : '尚未綁定，建議建立或綁定 Email';
 const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
   ? '#22c55e'
   : hasBoundEmail
@@ -7158,7 +7231,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       <div>
                         <h2 className="view-page-title" style={{ marginBottom: '8px' }}>帳號安全中心</h2>
                         <p style={{ color: '#888', margin: 0, lineHeight: 1.7 }}>
-                          統一管理 USER ID、Email / Google 綁定、修改密碼、忘記密碼與帳號刪除。
+                          統一管理 USER ID、Email 綁定、修改密碼、忘記密碼與帳號刪除。
                         </p>
                       </div>
                       <button type="button" className="clear-btn" onClick={() => handleInternalViewNavigation('home', '/')}>回首頁</button>
@@ -7188,41 +7261,29 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '18px' }}>
                       <section style={{ background: '#0f0f0f', border: '1px solid #222', borderRadius: '16px', padding: '20px' }}>
-                        <h3 style={{ marginTop: 0 }}>{hasBoundEmail ? 'Email 綁定狀態' : 'Email / Google 登入與綁定'}</h3>
+                        <h3 style={{ marginTop: 0 }}>
+                          {hasBoundEmail ? 'Email 綁定狀態' : shouldShowCreateEmailOnly ? '建立 Email 帳號' : '綁定 Email'}
+                        </h3>
                         {hasBoundEmail ? (
                           <div style={{ border: '1px solid #1f3d2b', background: 'rgba(34,197,94,0.08)', color: '#d6ffe4', borderRadius: '12px', padding: '14px', lineHeight: 1.7 }}>
                             Email 已綁定：<b>{accountEmailDisplay}</b>
                           </div>
                         ) : (
                           <>
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                              <button type="button" className={emailAuthMode === 'login' ? 'sort-btn active' : 'sort-btn'} onClick={() => setEmailAuthMode('login')}>Email 登入</button>
-                              <button type="button" className={emailAuthMode === 'bind' ? 'sort-btn active' : 'sort-btn'} onClick={() => { setEmailAuthMode('bind'); setEmailInput(targetChannel?.email || authUser?.email || ''); }}>綁定 Email</button>
-                              <button type="button" className={emailAuthMode === 'register' ? 'sort-btn active' : 'sort-btn'} onClick={() => setEmailAuthMode('register')}>建立 Email 帳號</button>
-                            </div>
+                            <p style={{ color: '#aaa', marginTop: 0, lineHeight: 1.7 }}>
+                              {shouldShowCreateEmailOnly
+                                ? '目前是訪客帳號，請建立 Email 帳號來保留這個 USER ID 與頻道資料。'
+                                : '目前帳號尚未綁定 Email，請綁定 Email 來保護這個 USER ID。'}
+                            </p>
                             <form onSubmit={handleEmailAuthSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'end' }}>
                               <input className="comment-text-input" type="email" placeholder="Email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} required />
                               <input className="comment-text-input" type="password" placeholder="密碼，至少 6 個字" value={emailPasswordInput} onChange={(e) => setEmailPasswordInput(e.target.value)} required />
-                              {(emailAuthMode === 'register' || emailAuthMode === 'bind') && (
-                                <input className="comment-text-input" type="password" placeholder="再次輸入密碼" value={emailPasswordConfirmInput} onChange={(e) => setEmailPasswordConfirmInput(e.target.value)} required />
-                              )}
+                              <input className="comment-text-input" type="password" placeholder="再次輸入密碼" value={emailPasswordConfirmInput} onChange={(e) => setEmailPasswordConfirmInput(e.target.value)} required />
                               <button type="submit" className="comment-submit-btn" style={{ height: '40px' }}>
-                                {emailAuthMode === 'bind' ? '確認綁定 Email' : emailAuthMode === 'register' ? '建立並登入' : 'Email 登入'}
+                                {shouldShowCreateEmailOnly ? '建立並登入' : '確認綁定 Email'}
                               </button>
                             </form>
                           </>
-                        )}
-                        {!hasBoundEmail && (
-                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
-                            {!hasGoogleLinked ? (
-                              <>
-                                <button type="button" className="clear-btn" onClick={() => handleGoogleAuth({ bindOnly: false })}>Google 登入</button>
-                                <button type="button" className="clear-btn" onClick={() => handleGoogleAuth({ bindOnly: true })}>綁定 Google 到目前 USER ID</button>
-                              </>
-                            ) : (
-                              <span style={{ color: '#22c55e', fontWeight: 800 }}>Google 已綁定</span>
-                            )}
-                          </div>
                         )}
                       </section>
 
@@ -8494,7 +8555,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       marginBottom: '18px'
                     }}
                   >
-                    請輸入帳號 ID 和密碼，密碼正確才可以登入。
+                    請輸入使用者 ID 或 Email 和密碼，密碼正確才可以登入。
                   </p>
 
                   <form
@@ -8515,13 +8576,13 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       }}
                     >
                       <label style={{ color: '#aaa', fontSize: '14px' }}>
-                        使用者 ID
+                        使用者 ID 或 Email
                       </label>
 
                       <input
                         className="comment-text-input"
                         type="text"
-                        placeholder="例如：user_1234"
+                        placeholder="例如：user_1234 或 leaf@example.com"
                         value={loginIdInput}
                         onChange={(e) => setLoginIdInput(e.target.value)}
                         required
@@ -8549,6 +8610,16 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                         required
                       />
                     </div>
+
+
+                    <button
+                      type="button"
+                      className="clear-btn"
+                      onClick={() => handleGoogleAuth({ bindOnly: false })}
+                      style={{ height: '38px', fontWeight: 800 }}
+                    >
+                      使用 Google 登入
+                    </button>
 
                     <div
                       className="modal-footer-actions"
