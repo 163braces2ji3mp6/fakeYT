@@ -1059,6 +1059,194 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
     }
   });
 
+  // =========================================================
+  // Cloud User Library / 每個 USER ID 獨立保存：訂閱、觀看紀錄、喜歡影片
+  // ---------------------------------------------------------
+  // 主要雲端位置：Users/{USER_ID}/privateData/library
+  // 同時保留每個帳號自己的 localStorage 快取，避免離線或 Firebase 權限暫時未開時資料遺失。
+  // =========================================================
+  const [isUserLibraryLoaded, setIsUserLibraryLoaded] = useState(false);
+  const userLibraryLoadedForRef = useRef('');
+  const userLibrarySaveTimerRef = useRef(null);
+
+  const getSafeLibraryUserId = () => {
+    const uid = String(currentUserId || '').trim();
+    if (!uid || uid === 'loading...' || uid.includes('/')) return '';
+    return uid;
+  };
+
+  const safeParseArrayFromStorage = (key) => {
+    try {
+      const value = localStorage.getItem(key);
+      const parsed = value ? JSON.parse(value) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const normalizeLibraryArray = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
+
+  const normalizeLibraryData = (data = {}) => ({
+    likedVideoIds: normalizeLibraryArray(data.likedVideoIds).map(item => String(item)).filter(Boolean),
+    subscribedChannels: normalizeLibraryArray(data.subscribedChannels)
+      .map(item => String(item).trim())
+      .filter(item => item && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(item)),
+    subscribedChannelDetails: normalizeLibraryArray(data.subscribedChannelDetails),
+    watchHistory: normalizeLibraryArray(data.watchHistory).slice(0, 300)
+  });
+
+  const getLegacyLocalLibraryData = () => normalizeLibraryData({
+    likedVideoIds: safeParseArrayFromStorage('leafhub_likedVideos'),
+    subscribedChannels: safeParseArrayFromStorage('leafhub_subscriptions'),
+    subscribedChannelDetails: safeParseArrayFromStorage('leafhub_subscriptionDetails'),
+    watchHistory: safeParseArrayFromStorage('leafhub_watchHistory')
+  });
+
+  const getPerUserLocalLibraryKey = (uid) => `leafhub_userLibrary_${uid}`;
+
+  const getPerUserLocalLibraryData = (uid) => {
+    try {
+      const saved = localStorage.getItem(getPerUserLocalLibraryKey(uid));
+      return normalizeLibraryData(saved ? JSON.parse(saved) : {});
+    } catch {
+      return normalizeLibraryData({});
+    }
+  };
+
+  const hasAnyLibraryData = (library = {}) => (
+    normalizeLibraryArray(library.likedVideoIds).length > 0 ||
+    normalizeLibraryArray(library.subscribedChannels).length > 0 ||
+    normalizeLibraryArray(library.subscribedChannelDetails).length > 0 ||
+    normalizeLibraryArray(library.watchHistory).length > 0
+  );
+
+  const applyUserLibraryToState = (library = {}) => {
+    const normalized = normalizeLibraryData(library);
+    setLikedVideoIds(normalized.likedVideoIds);
+    setSubscribedChannels(normalized.subscribedChannels);
+    setSubscribedChannelDetails(normalized.subscribedChannelDetails);
+    setWatchHistory(normalized.watchHistory);
+
+    // 保留原本頁面用到的舊 key，但內容會隨目前 USER ID 替換，避免不同帳號互相污染。
+    localStorage.setItem('leafhub_likedVideos', JSON.stringify(normalized.likedVideoIds));
+    localStorage.setItem('leafhub_subscriptions', JSON.stringify(normalized.subscribedChannels));
+    localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(normalized.subscribedChannelDetails));
+    localStorage.setItem('leafhub_watchHistory', JSON.stringify(normalized.watchHistory));
+  };
+
+  const buildCurrentUserLibraryPayload = (uid) => normalizeLibraryData({
+    likedVideoIds,
+    subscribedChannels,
+    subscribedChannelDetails,
+    watchHistory
+  });
+
+  const getUserLibraryDocRef = (uid) => doc(db, 'Users', uid, 'privateData', 'library');
+
+  useEffect(() => {
+    const uid = getSafeLibraryUserId();
+
+    if (!uid) {
+      setIsUserLibraryLoaded(false);
+      userLibraryLoadedForRef.current = '';
+      return;
+    }
+
+    let cancelled = false;
+    setIsUserLibraryLoaded(false);
+    userLibraryLoadedForRef.current = '';
+
+    const loadUserLibrary = async () => {
+      const perUserLocalLibrary = getPerUserLocalLibraryData(uid);
+      const legacyLocalLibrary = getLegacyLocalLibraryData();
+      const fallbackLibrary = hasAnyLibraryData(perUserLocalLibrary) ? perUserLocalLibrary : legacyLocalLibrary;
+
+      try {
+        const libraryRef = getUserLibraryDocRef(uid);
+        const librarySnap = await getDoc(libraryRef);
+        const cloudLibrary = librarySnap.exists() ? normalizeLibraryData(librarySnap.data()) : null;
+        const nextLibrary = cloudLibrary || fallbackLibrary;
+
+        if (cancelled) return;
+        applyUserLibraryToState(nextLibrary);
+        localStorage.setItem(getPerUserLocalLibraryKey(uid), JSON.stringify(nextLibrary));
+        setIsUserLibraryLoaded(true);
+        userLibraryLoadedForRef.current = uid;
+
+        // 第一次使用雲端資料庫時，把原本 localStorage 的資料搬到這個 USER ID 的 library 文件。
+        if (!librarySnap.exists() && hasAnyLibraryData(nextLibrary)) {
+          await setDoc(doc(db, 'Users', uid), {
+            userId: uid,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+          await setDoc(libraryRef, {
+            ...nextLibrary,
+            userId: uid,
+            migratedFromLocalStorage: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        }
+      } catch (error) {
+        console.error('讀取使用者雲端資料庫失敗，改用本機快取:', error);
+        if (cancelled) return;
+        applyUserLibraryToState(fallbackLibrary);
+        setIsUserLibraryLoaded(true);
+        userLibraryLoadedForRef.current = uid;
+      }
+    };
+
+    loadUserLibrary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    const uid = getSafeLibraryUserId();
+    if (!uid || !isUserLibraryLoaded || userLibraryLoadedForRef.current !== uid) return;
+
+    const library = buildCurrentUserLibraryPayload(uid);
+
+    // 每個帳號自己的本機快取。
+    localStorage.setItem(getPerUserLocalLibraryKey(uid), JSON.stringify(library));
+
+    // 舊 key 仍同步目前帳號資料，讓既有頁面不需要大改。
+    localStorage.setItem('leafhub_likedVideos', JSON.stringify(library.likedVideoIds));
+    localStorage.setItem('leafhub_subscriptions', JSON.stringify(library.subscribedChannels));
+    localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(library.subscribedChannelDetails));
+    localStorage.setItem('leafhub_watchHistory', JSON.stringify(library.watchHistory));
+
+    if (userLibrarySaveTimerRef.current) {
+      clearTimeout(userLibrarySaveTimerRef.current);
+    }
+
+    userLibrarySaveTimerRef.current = setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'Users', uid), {
+          userId: uid,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        await setDoc(getUserLibraryDocRef(uid), {
+          ...library,
+          userId: uid,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (error) {
+        console.error('儲存使用者雲端資料庫失敗:', error);
+      }
+    }, 450);
+
+    return () => {
+      if (userLibrarySaveTimerRef.current) {
+        clearTimeout(userLibrarySaveTimerRef.current);
+      }
+    };
+  }, [currentUserId, isUserLibraryLoaded, likedVideoIds, subscribedChannels, subscribedChannelDetails, watchHistory]);
+
 
   /* ------------------------------
     07-6. UI Refs / Upload / Comment State
@@ -4073,6 +4261,7 @@ useEffect(() => {
     if (!uid || uid === 'loading...' || !videoKey) return;
 
     try {
+      const watchedAt = new Date().toISOString();
       await setDoc(doc(db, 'Users', uid, 'watchHistory', videoKey), {
         userId: uid,
         videoId: video?.id || '',
@@ -4081,8 +4270,21 @@ useEffect(() => {
         channel: getVideoDisplayName(video),
         thumbnail: video?.thumbnail || '',
         category: video?.category || '未分類',
-        watchedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        watchedAt,
+        updatedAt: watchedAt
+      }, { merge: true });
+
+      // 也立即同步到彙整文件，讓重新登入時可一次讀回完整觀看紀錄。
+      const currentLibrary = buildCurrentUserLibraryPayload(uid);
+      const nextHistory = [
+        { ...video, watchedAt },
+        ...normalizeLibraryArray(currentLibrary.watchHistory).filter(item => getVideoMenuKey(item) !== videoKey)
+      ].slice(0, 300);
+      await setDoc(getUserLibraryDocRef(uid), {
+        ...currentLibrary,
+        watchHistory: nextHistory,
+        userId: uid,
+        updatedAt: watchedAt
       }, { merge: true });
     } catch (error) {
       console.error('同步觀看紀錄到 Firebase 失敗:', error);
@@ -4111,7 +4313,11 @@ const handleVideoClick = async (video) => {
     }, 450);
 
     setWatchHistory(prev => {
-      const nextHistory = [video, ...prev.filter(item => item.id !== video.id)];
+      const videoKey = getVideoMenuKey(video);
+      const nextHistory = [
+        { ...video, watchedAt: new Date().toISOString() },
+        ...normalizeLibraryArray(prev).filter(item => getVideoMenuKey(item) !== videoKey)
+      ].slice(0, 300);
       localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
       return nextHistory;
     });
@@ -4205,8 +4411,11 @@ const handleVideoClick = async (video) => {
   const toggleLike = async (id) => {
     let shouldLike = false;
     setLikedVideoIds(prev => {
-      shouldLike = !prev.includes(id);
-      const nextLikes = shouldLike ? [...prev, id] : prev.filter(item => item !== id);
+      const safePrev = normalizeLibraryArray(prev).map(item => String(item));
+      shouldLike = !safePrev.includes(String(id));
+      const nextLikes = shouldLike
+        ? Array.from(new Set([...safePrev, String(id)]))
+        : safePrev.filter(item => item !== String(id));
       localStorage.setItem('leafhub_likedVideos', JSON.stringify(nextLikes));
       return nextLikes;
     });
@@ -4220,6 +4429,25 @@ const handleVideoClick = async (video) => {
         });
       } catch (error) {
         console.warn('同步影片按讚數失敗：', error);
+      }
+    }
+
+    const uid = getSafeLibraryUserId();
+    if (uid && isUserLibraryLoaded) {
+      try {
+        const currentLibrary = buildCurrentUserLibraryPayload(uid);
+        const safeLikes = normalizeLibraryArray(currentLibrary.likedVideoIds).map(item => String(item));
+        const nextLikes = shouldLike
+          ? Array.from(new Set([...safeLikes, String(id)]))
+          : safeLikes.filter(item => item !== String(id));
+        await setDoc(getUserLibraryDocRef(uid), {
+          ...currentLibrary,
+          likedVideoIds: nextLikes,
+          userId: uid,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (error) {
+        console.warn('同步喜歡影片到使用者資料庫失敗：', error);
       }
     }
   };
@@ -4333,7 +4561,7 @@ const handleVideoClick = async (video) => {
 
     const applyLocalSubscriptionState = (nextSubscriberCount, channelDocId = normalizedChannelInfo.userId || '') => {
       setSubscribedChannels(prev => {
-        const safePrev = Array.isArray(prev) ? prev : [];
+        const safePrev = normalizeLibraryArray(prev).map(item => String(item).trim()).filter(Boolean);
         const nextSubs = isCurrentlySubbed
           ? safePrev.filter(item => !sameText(item, cleanChannelName))
           : Array.from(new Set([...safePrev, cleanChannelName]));
@@ -4342,7 +4570,7 @@ const handleVideoClick = async (video) => {
       });
 
       setSubscribedChannelDetails(prev => {
-        const safePrev = Array.isArray(prev) ? prev : [];
+        const safePrev = normalizeLibraryArray(prev);
         const nextDetails = isCurrentlySubbed
           ? safePrev.filter(item => {
               const detailCandidates = getChannelIdentityCandidates(item);
@@ -4398,6 +4626,9 @@ const handleVideoClick = async (video) => {
 
     // 先更新畫面：按下去後立即看到訂閱數 +1 / 按鈕變「已訂閱」，不等 Firebase。
     applyLocalSubscriptionState(optimisticSubscriberCount);
+
+    // 彙整資料會由 useEffect 自動同步到 Users/{USER_ID}/privateData/library。
+    // 下方仍會繼續更新被訂閱頻道本身的 subscriberCount。
 
     try {
       const channelDocId = await findExistingChannelDocId();
