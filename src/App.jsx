@@ -2289,21 +2289,20 @@ const findChannelByAuthUser = async (firebaseUser) => {
     const email = String(firebaseUser.email || '').trim();
     const emailLower = normalizeEmailValue(email);
 
-    const repairAndReturn = async (channelDoc, matchType = 'unknown') => {
+    const repairAndReturnChannel = async (channelDoc, matchType = 'unknown') => {
       if (!channelDoc) return null;
       const data = channelDoc.data() || {};
-      const shouldRepair = Boolean(
-        uid &&
+      const providerList = Array.from(new Set([
+        ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
+        'custom-id',
+        'email'
+      ]));
+      const needsRepair = Boolean(
+        uid && emailLower &&
         (!data.ownerUid || data.ownerUid !== uid || data.idLocked !== true || data.emailLower !== emailLower)
       );
 
-      if (shouldRepair) {
-        const providerList = Array.from(new Set([
-          ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
-          'custom-id',
-          'email'
-        ]));
-
+      if (needsRepair) {
         await setDoc(doc(db, 'Channels', channelDoc.id), {
           userId: data.userId || channelDoc.id,
           customId: data.customId || channelDoc.id,
@@ -2318,47 +2317,55 @@ const findChannelByAuthUser = async (firebaseUser) => {
           idLockReason: matchType === 'ownerUid' ? 'ownerUid-login-refresh' : 'auto-repair-email-login',
           updatedAt: new Date().toISOString()
         }, { merge: true });
-
         const repairedSnap = await getDoc(doc(db, 'Channels', channelDoc.id));
         return { id: channelDoc.id, data: repairedSnap.exists() ? repairedSnap.data() : data };
       }
-
       return { id: channelDoc.id, data };
     };
 
     if (uid) {
-      const ownerQuery = await getDocs(query(
-        collection(db, 'Channels'),
-        where('ownerUid', '==', uid),
-        limit(1)
-      ));
-      if (!ownerQuery.empty) {
-        return repairAndReturn(ownerQuery.docs[0], 'ownerUid');
-      }
+      const ownerQuery = await getDocs(query(collection(db, 'Channels'), where('ownerUid', '==', uid), limit(1)));
+      if (!ownerQuery.empty) return repairAndReturnChannel(ownerQuery.docs[0], 'ownerUid');
     }
-
     if (emailLower) {
-      const emailLowerQuery = await getDocs(query(
-        collection(db, 'Channels'),
-        where('emailLower', '==', emailLower),
-        limit(1)
-      ));
-      if (!emailLowerQuery.empty) {
-        return repairAndReturn(emailLowerQuery.docs[0], 'emailLower');
-      }
+      const emailLowerQuery = await getDocs(query(collection(db, 'Channels'), where('emailLower', '==', emailLower), limit(1)));
+      if (!emailLowerQuery.empty) return repairAndReturnChannel(emailLowerQuery.docs[0], 'emailLower');
     }
-
     if (email) {
-      const emailQuery = await getDocs(query(
-        collection(db, 'Channels'),
-        where('email', '==', email),
-        limit(1)
-      ));
-      if (!emailQuery.empty) {
-        return repairAndReturn(emailQuery.docs[0], 'email');
-      }
+      const emailQuery = await getDocs(query(collection(db, 'Channels'), where('email', '==', email), limit(1)));
+      if (!emailQuery.empty) return repairAndReturnChannel(emailQuery.docs[0], 'email');
     }
 
+    // 兼容已經寫到 Users/{auth.uid} 的舊資料：只用 Users 找回 channelId，不把 Users 當主要帳號資料。
+    if (uid) {
+      const userIndexSnap = await getDoc(doc(db, 'Users', uid));
+      if (userIndexSnap.exists()) {
+        const indexData = userIndexSnap.data() || {};
+        const indexedChannelId = String(indexData.channelId || indexData.userId || '').trim();
+        if (indexedChannelId && !indexedChannelId.includes('/')) {
+          const channelSnap = await getDoc(doc(db, 'Channels', indexedChannelId));
+          if (channelSnap.exists()) return repairAndReturnChannel(channelSnap, 'users-index');
+          return {
+            id: indexedChannelId,
+            data: {
+              userId: indexedChannelId,
+              customId: indexedChannelId,
+              name: indexData.name || indexedChannelId,
+              username: indexData.username || indexData.name || indexedChannelId,
+              channelName: indexData.channelName || indexData.name || indexedChannelId,
+              avatar: indexData.avatar || GUEST_AVATAR,
+              ownerUid: uid,
+              email: indexData.email || email,
+              emailLower: indexData.emailLower || emailLower,
+              authProvider: indexData.provider || 'email',
+              linkedProviders: ['custom-id', 'email'],
+              idLocked: true,
+              subscriberCount: 0
+            }
+          };
+        }
+      }
+    }
     return null;
   };
 
@@ -2438,31 +2445,23 @@ const findChannelByAuthUser = async (firebaseUser) => {
     return true;
   };
 
-  // leafhub-email-binding-auto-repair-v3
-  // 如果 Auth 已登入 Email，但 Channels/{currentUserId} 還沒有 ownerUid/emailLower/idLocked，就補寫 Channels。
+  // leafhub-auth-channel-restore-v4
+  // 只負責把已登入 Auth 帳號還原到正確 Channels；不在背景自動 claim 目前 currentUserId，避免幾秒後跳成別的帳號。
   useEffect(() => {
-    const repairEmailBinding = async () => {
-      const uid = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
+    const restoreAuthChannel = async () => {
       const firebaseUser = auth.currentUser || authUser;
-      if (!uid || uid === 'loading...' || uid.includes('/')) return;
       if (!firebaseUser?.uid || firebaseUser?.isAnonymous || !firebaseUser?.email) return;
-
       try {
-        const channelRef = doc(db, 'Channels', uid);
-        const channelSnap = await getDoc(channelRef);
-        const data = channelSnap.exists() ? channelSnap.data() : {};
-        const emailLower = normalizeEmailValue(firebaseUser.email);
-        const alreadyLinked = data.ownerUid === firebaseUser.uid && data.emailLower === emailLower && data.idLocked === true;
-        if (alreadyLinked) return;
-        await bindCurrentChannelToAuthUser(firebaseUser, 'email', uid);
+        const found = await findChannelByAuthUser(firebaseUser);
+        if (found && String(found.id || '') !== String(currentUserId || '')) {
+          applyChannelLoginData(found.id, found.data, firebaseUser);
+        }
       } catch (error) {
-        console.error('Email 綁定自動修復失敗:', error);
+        console.error('Auth 頻道還原失敗:', error);
       }
     };
-
-    repairEmailBinding();
-  }, [currentUserId, authUser?.uid, authUser?.email]);
-
+    restoreAuthChannel();
+  }, [authUser?.uid, authUser?.email]);
 
   const handleEmailAuthSubmit = async (e) => {
     e.preventDefault();
@@ -3199,45 +3198,48 @@ const handleLogoutId = async () => {
       let savedId = localStorage.getItem('device_user_id');
       let savedName = localStorage.getItem('device_user_name');
       let savedAvatar = localStorage.getItem('device_user_avatar');
-
-      // 不要把 Firebase Auth 的 uid 顯示成使用者 ID。
-      // 若舊資料把 Firebase uid 存進 device_user_id，且使用者不是手動用 ID 登入，改用顯示名稱或重新建立 user_xxxx。
       const isManualIdLogin = localStorage.getItem('leafhub_is_id_logged_in') === 'true';
       const looksLikeFirebaseUid = savedId && /^[A-Za-z0-9]{20,}$/.test(savedId) && !String(savedId).startsWith('user_');
-
       if (!savedId || savedId === 'loading...' || (looksLikeFirebaseUid && !isManualIdLogin)) {
-        if (savedName && savedName !== '載入中...' && !/^[A-Za-z0-9]{20,}$/.test(savedName)) {
-          savedId = savedName;
-        } else {
-          const randomUser = generateRandomIdentity();
-          savedId = randomUser.id;
-          savedName = randomUser.name;
-        }
-
+        const randomUser = generateRandomIdentity();
+        savedId = randomUser.id;
+        savedName = randomUser.name;
         savedAvatar = savedAvatar || generateRandomAvatar();
-
         localStorage.setItem('device_user_id', savedId);
         localStorage.setItem('device_user_name', savedName || savedId);
         localStorage.setItem('device_user_avatar', savedAvatar);
       }
-
       setCurrentUserId(savedId);
       setLocalUsername(savedName || savedId);
       setInputUsername(savedName || savedId);
+      if (savedAvatar) setCurrentUserAvatar(savedAvatar);
+    };
 
-      if (savedAvatar) {
-        setCurrentUserAvatar(savedAvatar);
+    const restoreSignedInChannel = async (firebaseUser) => {
+      const found = await findChannelByAuthUser(firebaseUser);
+      if (found) {
+        applyChannelLoginData(found.id, found.data, firebaseUser);
+        return true;
       }
+      return false;
     };
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setAuthUser(user);
         localStorage.setItem('firebase_auth_uid', user.uid);
+        // 已登入正式 Email/Google 帳號時，絕對不要再套用本機隨機訪客身份。
+        if (!user.isAnonymous && (user.email || user.providerData?.length)) {
+          const restored = await restoreSignedInChannel(user);
+          if (!restored) {
+            const savedId = localStorage.getItem('device_user_id');
+            if (savedId && savedId !== 'loading...') applyLocalDisplayIdentity();
+          }
+          return;
+        }
         applyLocalDisplayIdentity();
         return;
       }
-
       try {
         const result = await signInAnonymously(auth);
         setAuthUser(result.user);
@@ -3248,7 +3250,6 @@ const handleLogoutId = async () => {
         showToast('帳號初始化失敗，請重新整理頁面', 'error');
       }
     });
-
     return () => unsubscribe();
   }, []);
 
