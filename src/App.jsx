@@ -54,7 +54,8 @@ const YOUTUBE_API_KEY = import.meta.env?.VITE_YOUTUBE_API_KEY || '';
 const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
 const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
-const HOME_VIDEO_PAGE_SIZE = 24; // 首頁每次只讀取 24 部 Firebase 影片，避免一次監聽/讀取全部影片
+const HOME_VIDEO_PAGE_SIZE = 24; // 首頁每次顯示 24 部影片
+const HOME_RECOMMENDATION_POOL_SIZE = 96; // 每次先抓較大的候選池，再做推薦與隨機洗牌，避免首頁永遠只看到最新 24 部
 
 // ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
 // 只要登入時輸入這組密碼，就可以登入任何已存在的頻道 ID。
@@ -1256,6 +1257,8 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   const contentAreaRef = useRef(null);
 const homeLoadMoreTriggerRef = useRef(null);
   const homeLoadMoreLockRef = useRef(false);
+  const homeRecommendedQueueRef = useRef([]);
+  const homeHasMoreFromFirebaseRef = useRef(true);
   const [channelTab, setChannelTab] = useState('videos');
   // 🟢 排序系統：頻道影片預設最新；留言預設最多讚
   const [channelVideoSort, setChannelVideoSort] = useState('latest');
@@ -3275,10 +3278,12 @@ const handleLogoutId = () => {
       ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
     ];
 
-    const matchedVideo = allVideos.find(video => {
+    const matchedByUserId = allVideos.find(video => String(video.userId || '') === decodedKey);
+    const matchedByDisplayName = allVideos.find(video => {
       const displayName = video.channel || video.author || video.creatorName || video.username || '';
-      return String(video.userId || '') === decodedKey || String(displayName) === decodedKey;
+      return String(displayName) === decodedKey;
     });
+    const matchedVideo = matchedByUserId || matchedByDisplayName;
 
     if (matchedVideo) {
       const channelName = matchedVideo.channel || matchedVideo.author || matchedVideo.creatorName || matchedVideo.username || decodedKey;
@@ -3329,26 +3334,14 @@ const handleLogoutId = () => {
     }
     stopChannelContentBuffer();
     if (location.pathname !== '/') navigate('/');
-    setIsPageLoading(true); 
+    setIsPageLoading(true);
     setSearchInputStr('');
     setSearchQuery('');
     setActiveCategory('全部');
-    window.scrollTo(0, 0); 
+    setCurrentView('home');
+    window.scrollTo(0, 0);
     setJustUploadedVideo(null);
-
-    const totallyShuffled = shuffleArray([...rawFirebaseVideos, ...MOCK_VIDEOS]);
-
-    if (currentView === 'watch') {
-      setVideos(totallyShuffled);
-      setCurrentView('home');
-    } else {
-      setCurrentView('home');
-      setVideos(totallyShuffled);
-    }
-
-    setTimeout(() => {
-      setIsPageLoading(false);
-    }, 400);
+    loadHomeVideosPage({ reset: true });
   };
 
   const handleInternalViewNavigation = (view, path) => {
@@ -3432,7 +3425,14 @@ const handleLogoutId = () => {
     const routeKey = providedUserId || finalName;
     const finalAvatar = channelAvatar || GUEST_AVATAR;
     const initialBio = getRandomBio();
-    if (routeKey) navigate(`/channel/${encodeURIComponent(routeKey)}`);
+
+    // 修正：點頻道時會先 setCurrentView 再 navigate，/channel 路由的 useEffect 也會被觸發。
+    // 先把這次要前往的 routeKey 記起來，避免 route effect 又建立新的 requestId，
+    // 導致下面這個點擊流程被當成「舊請求」而中斷，出現第一次跳錯、第二次才正常。
+    if (routeKey) {
+      lastChannelBufferKeyRef.current = String(routeKey);
+      navigate(`/channel/${encodeURIComponent(routeKey)}`);
+    }
 
     // 每次點進頻道都重新載入一次；這裡只放暫存資料，避免名稱短暫空白。
     setTargetChannel({
@@ -3924,6 +3924,8 @@ const getHomeRecommendationScore = (video = {}) => {
     const channelName = getVideoDisplayName(video);
     const watchedCategories = new Set((Array.isArray(watchHistory) ? watchHistory : []).map(item => item?.category).filter(Boolean));
 
+    // 推薦分數：觀看/喜歡/新鮮度/訂閱/曾看類別。
+    // 注意：這裡不是直接照 createdAt 排序；createdAt 只作為推薦分數的一部分。
     score += Math.min(views, 100000) * 0.03;
     score += Math.min(likes, 20000) * 0.8;
     score += Math.max(0, 45 - ageDays) * 2.2;
@@ -3939,13 +3941,68 @@ const getHomeRecommendationScore = (video = {}) => {
     return score;
   };
 
+  const getHomeRandomTieBreaker = (video = {}) => {
+    // 每次進首頁都加入小幅隨機值，避免推薦分數相同或接近時永遠固定順序。
+    // 不是完全亂排：推薦分數仍是主體，隨機只負責洗牌與探索。
+    const channelName = getVideoDisplayName(video);
+    const hasLowSignal = getViewCount(video) < 100 && getLikeCount(video) < 10;
+    const explorationBoost = hasLowSignal ? 35 : 18;
+    const channelNoise = channelName ? (channelName.length % 7) * 2 : 0;
+    return Math.random() * (70 + explorationBoost) + channelNoise;
+  };
+
+  const diversifyHomeVideos = (rankedItems = []) => {
+    const remaining = [...rankedItems];
+    const result = [];
+    const recentChannels = [];
+
+    while (remaining.length > 0) {
+      let pickIndex = remaining.findIndex(item => {
+        const channelName = getVideoDisplayName(item.video);
+        return !recentChannels.includes(channelName);
+      });
+
+      if (pickIndex === -1) pickIndex = 0;
+
+      const [picked] = remaining.splice(pickIndex, 1);
+      result.push(picked.video);
+
+      const pickedChannel = getVideoDisplayName(picked.video);
+      recentChannels.push(pickedChannel);
+      if (recentChannels.length > 2) recentChannels.shift();
+    }
+
+    return result;
+  };
+
   const recommendVideosForHome = (videoList = []) => {
     const list = (Array.isArray(videoList) ? videoList : []).filter(isVideoVisible);
-    return [...list].sort((a, b) => getHomeRecommendationScore(b) - getHomeRecommendationScore(a));
+
+    const rankedItems = list
+      .map(video => ({
+        video,
+        score: getHomeRecommendationScore(video) + getHomeRandomTieBreaker(video)
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    return diversifyHomeVideos(rankedItems);
+  };
+
+  const takeNextHomeVideosFromQueue = () => {
+    const queuedVideos = Array.isArray(homeRecommendedQueueRef.current) ? homeRecommendedQueueRef.current : [];
+    const nextVideos = queuedVideos.slice(0, HOME_VIDEO_PAGE_SIZE);
+    homeRecommendedQueueRef.current = queuedVideos.slice(HOME_VIDEO_PAGE_SIZE);
+    return nextVideos;
+  };
+
+  const updateHomeHasMoreState = () => {
+    const queuedCount = Array.isArray(homeRecommendedQueueRef.current) ? homeRecommendedQueueRef.current.length : 0;
+    setHasMoreHomeVideos(queuedCount > 0 || homeHasMoreFromFirebaseRef.current);
   };
 
   const loadHomeVideosPage = async ({ reset = false } = {}) => {
     if (!reset && (homeLoadMoreLockRef.current || isLoadingMoreHomeVideos || !hasMoreHomeVideos)) return;
+
     if (!reset) {
       homeLoadMoreLockRef.current = true;
     }
@@ -3953,14 +4010,28 @@ const getHomeRecommendationScore = (video = {}) => {
     try {
       if (reset) {
         setIsPageLoading(true);
+        homeRecommendedQueueRef.current = [];
+        homeHasMoreFromFirebaseRef.current = true;
       } else {
         setIsLoadingMoreHomeVideos(true);
+
+        // 先吃上次已經推薦洗牌好的候選池，不要每滑一次都重新只抓最新 24 部。
+        const queuedVideos = takeNextHomeVideosFromQueue();
+        if (queuedVideos.length > 0) {
+          setTimeout(() => {
+            setVideos(prev => mergeUniqueVideosById(prev, queuedVideos));
+            updateHomeHasMoreState();
+          }, 260);
+          setIsFirstInit(false);
+          return;
+        }
       }
 
+      const fetchLimit = HOME_RECOMMENDATION_POOL_SIZE;
       const queryParts = [
         collection(db, 'Videos'),
         orderBy('createdAt', 'desc'),
-        limit(HOME_VIDEO_PAGE_SIZE)
+        limit(fetchLimit)
       ];
 
       if (!reset && homeLastVideoDoc) {
@@ -3974,7 +4045,7 @@ const getHomeRecommendationScore = (video = {}) => {
 
       setHasFirebaseVideosSnapshot(true);
       setHomeLastVideoDoc(snapshot.docs[snapshot.docs.length - 1] || null);
-      setHasMoreHomeVideos(snapshot.docs.length === HOME_VIDEO_PAGE_SIZE);
+      homeHasMoreFromFirebaseRef.current = snapshot.docs.length === fetchLimit;
 
       const justUploadedYoutubeId = String(justUploadedVideo?.youtubeId ?? '');
       const moveJustUploadedToFront = (list) => {
@@ -3990,16 +4061,22 @@ const getHomeRecommendationScore = (video = {}) => {
         return [uploadedVideo, ...next];
       };
 
+      const recommendedPool = moveJustUploadedToFront(recommendVideosForHome(validFirebaseVideos));
+      const videosToShowNow = recommendedPool.slice(0, HOME_VIDEO_PAGE_SIZE);
+      homeRecommendedQueueRef.current = recommendedPool.slice(HOME_VIDEO_PAGE_SIZE);
+
       if (reset) {
         setRawFirebaseVideos(validFirebaseVideos);
-        setVideos(recommendVideosForHome(moveJustUploadedToFront(validFirebaseVideos)));
+        setVideos(videosToShowNow);
       } else {
-        // 載入更多時只追加下一頁 24 部，不重新推薦排序舊影片，避免畫面一直跳動。
+        // 載入更多時追加「下一批推薦結果」，不是再把首頁照上傳時間重排。
         setTimeout(() => {
           setRawFirebaseVideos(prev => mergeUniqueVideosById(prev, validFirebaseVideos));
-          setVideos(prev => moveJustUploadedToFront(mergeUniqueVideosById(prev, validFirebaseVideos)));
+          setVideos(prev => mergeUniqueVideosById(prev, videosToShowNow));
         }, 260);
       }
+
+      updateHomeHasMoreState();
 
       if (justUploadedYoutubeId && !validFirebaseVideos.some(video => String(video.youtubeId ?? '') === justUploadedYoutubeId)) {
         return;
@@ -4031,7 +4108,8 @@ const getHomeRecommendationScore = (video = {}) => {
     }
   };
 
-  useEffect(() => {
+  
+useEffect(() => {
     loadHomeVideosPage({ reset: true });
     // 只在第一次載入或剛上傳影片後重抓第一頁；不要即時監聽整個 Videos 集合。
   }, [justUploadedVideo]);
