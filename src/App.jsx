@@ -2156,7 +2156,32 @@ const homeLoadMoreTriggerRef = useRef(null);
       liveSubscriberCount,
       0
     );
+    const emailValue = channelData.email || firebaseUser?.email || '';
+    const emailLowerValue = channelData.emailLower || normalizeEmailValue(emailValue);
+    const ownerUidValue = channelData.ownerUid || firebaseUser?.uid || '';
+    const linkedProvidersValue = Array.isArray(channelData.linkedProviders)
+      ? channelData.linkedProviders
+      : (firebaseUser?.email ? ['custom-id', 'email'] : []);
+    const nextTargetChannel = {
+      ...channelData,
+      userId: channelId,
+      customId: channelData.customId || channelId,
+      name: displayName,
+      username: channelData.username || displayName,
+      channelName: channelData.channelName || displayName,
+      avatar: avatarUrl,
+      email: emailValue,
+      emailLower: emailLowerValue,
+      ownerUid: ownerUidValue,
+      linkedProviders: linkedProvidersValue,
+      idLocked: Boolean(channelData.idLocked || ownerUidValue),
+      bio: bioValue,
+      BIO: channelData.BIO || bioValue,
+      channelBio: channelData.channelBio || bioValue,
+      subscriberCount
+    };
 
+    setAuthUser(firebaseUser || null);
     setCurrentUserId(channelId);
     setLocalUsername(displayName);
     setInputUsername(displayName);
@@ -2164,23 +2189,7 @@ const homeLoadMoreTriggerRef = useRef(null);
     setPreviewAvatar(avatarUrl);
     setInputBio(bioValue);
     setLiveSubscriberCount(subscriberCount);
-    setTargetChannel({
-      ...channelData,
-      userId: channelId,
-      name: displayName,
-      username: channelData.username || displayName,
-      channelName: channelData.channelName || displayName,
-      avatar: avatarUrl,
-      email: channelData.email || firebaseUser?.email || '',
-      emailLower: channelData.emailLower || normalizeEmailValue(channelData.email || firebaseUser?.email || ''),
-      ownerUid: channelData.ownerUid || firebaseUser?.uid || '',
-      linkedProviders: Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [],
-      idLocked: channelData.idLocked || false,
-      bio: bioValue,
-      BIO: channelData.BIO || bioValue,
-      channelBio: channelData.channelBio || bioValue,
-      subscriberCount
-    });
+    setTargetChannel(nextTargetChannel);
     setTargetChannelUserId(channelId);
 
     localStorage.setItem('device_user_id', channelId);
@@ -2188,6 +2197,7 @@ const homeLoadMoreTriggerRef = useRef(null);
     localStorage.setItem('device_user_avatar', avatarUrl);
     localStorage.setItem('device_user_bio', bioValue);
     localStorage.setItem('leafhub_is_id_logged_in', 'true');
+    localStorage.setItem('leafhub_targetChannel', JSON.stringify(nextTargetChannel));
     setIsIdLoggedIn(true);
   };
 
@@ -2274,35 +2284,86 @@ const homeLoadMoreTriggerRef = useRef(null);
 
 const findChannelByAuthUser = async (firebaseUser) => {
     if (!firebaseUser) return null;
-    const emailLower = normalizeEmailValue(firebaseUser.email);
 
-    const ownerQuery = await getDocs(query(
-      collection(db, 'Channels'),
-      where('ownerUid', '==', firebaseUser.uid),
-      limit(1)
-    ));
-    if (!ownerQuery.empty) {
-      const channelDoc = ownerQuery.docs[0];
-      return { id: channelDoc.id, data: channelDoc.data() || {} };
+    const uid = String(firebaseUser.uid || '').trim();
+    const email = String(firebaseUser.email || '').trim();
+    const emailLower = normalizeEmailValue(email);
+
+    const repairAndReturn = async (channelDoc, matchType = 'unknown') => {
+      if (!channelDoc) return null;
+      const data = channelDoc.data() || {};
+      const shouldRepair = Boolean(
+        uid &&
+        (!data.ownerUid || data.ownerUid !== uid || data.idLocked !== true || data.emailLower !== emailLower)
+      );
+
+      if (shouldRepair) {
+        const providerList = Array.from(new Set([
+          ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
+          'custom-id',
+          'email'
+        ]));
+
+        await setDoc(doc(db, 'Channels', channelDoc.id), {
+          userId: data.userId || channelDoc.id,
+          customId: data.customId || channelDoc.id,
+          ownerUid: uid,
+          email,
+          emailLower,
+          emailVerified: Boolean(firebaseUser.emailVerified),
+          authProvider: 'email',
+          linkedProviders: providerList,
+          idLocked: true,
+          idLockedAt: data.idLockedAt || new Date().toISOString(),
+          idLockReason: matchType === 'ownerUid' ? 'ownerUid-login-refresh' : 'auto-repair-email-login',
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        const repairedSnap = await getDoc(doc(db, 'Channels', channelDoc.id));
+        return { id: channelDoc.id, data: repairedSnap.exists() ? repairedSnap.data() : data };
+      }
+
+      return { id: channelDoc.id, data };
+    };
+
+    if (uid) {
+      const ownerQuery = await getDocs(query(
+        collection(db, 'Channels'),
+        where('ownerUid', '==', uid),
+        limit(1)
+      ));
+      if (!ownerQuery.empty) {
+        return repairAndReturn(ownerQuery.docs[0], 'ownerUid');
+      }
     }
 
     if (emailLower) {
-      const emailQuery = await getDocs(query(
+      const emailLowerQuery = await getDocs(query(
         collection(db, 'Channels'),
         where('emailLower', '==', emailLower),
         limit(1)
       ));
+      if (!emailLowerQuery.empty) {
+        return repairAndReturn(emailLowerQuery.docs[0], 'emailLower');
+      }
+    }
+
+    if (email) {
+      const emailQuery = await getDocs(query(
+        collection(db, 'Channels'),
+        where('email', '==', email),
+        limit(1)
+      ));
       if (!emailQuery.empty) {
-        const channelDoc = emailQuery.docs[0];
-        return { id: channelDoc.id, data: channelDoc.data() || {} };
+        return repairAndReturn(emailQuery.docs[0], 'email');
       }
     }
 
     return null;
   };
 
-  const bindCurrentChannelToAuthUser = async (firebaseUser, provider = 'email') => {
-    const cleanCurrentUserId = String(currentUserId || '').trim();
+  const bindCurrentChannelToAuthUser = async (firebaseUser, provider = 'email', forcedChannelId = '') => {
+    const cleanCurrentUserId = String(forcedChannelId || currentUserId || localStorage.getItem('device_user_id') || '').trim();
     if (!firebaseUser) {
       showToast('尚未取得登入帳號，請再試一次', 'warning');
       return false;
@@ -2315,55 +2376,99 @@ const findChannelByAuthUser = async (firebaseUser) => {
     const channelRef = doc(db, 'Channels', cleanCurrentUserId);
     const channelSnap = await getDoc(channelRef);
     const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
-    const emailLower = normalizeEmailValue(firebaseUser.email);
+    const email = String(firebaseUser.email || oldChannelData.email || '').trim();
+    const emailLower = normalizeEmailValue(email || oldChannelData.emailLower || '');
     const providerList = Array.from(new Set([
       ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
       'custom-id',
-      provider
+      provider || 'email'
     ]));
+    const bioValue = getChannelBioValue(oldChannelData);
+    const displayName = oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId;
+    const avatarUrl = oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR;
+    const subscriberCount = preserveSubscriberCount(
+      oldChannelData.subscriberCount,
+      oldChannelData.subscribers,
+      oldChannelData.subsCount,
+      liveSubscriberCount,
+      0
+    );
 
-    await setDoc(channelRef, {
-      ...oldChannelData,
+    const channelPayload = {
       userId: cleanCurrentUserId,
       customId: cleanCurrentUserId,
       ownerUid: firebaseUser.uid,
-      email: firebaseUser.email || oldChannelData.email || '',
-      emailLower: emailLower || oldChannelData.emailLower || '',
+      email,
+      emailLower,
       emailVerified: Boolean(firebaseUser.emailVerified),
-      authProvider: provider,
+      authProvider: provider || 'email',
       linkedProviders: providerList,
       idLocked: true,
       idLockedAt: oldChannelData.idLockedAt || new Date().toISOString(),
       idLockReason: 'ownerUid-bound',
       updatedAt: new Date().toISOString(),
-      name: oldChannelData.name || localUsername || cleanCurrentUserId,
-      username: oldChannelData.username || localUsername || cleanCurrentUserId,
-      channelName: oldChannelData.channelName || localUsername || cleanCurrentUserId,
-      avatar: oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR,
-      bio: getChannelBioValue(oldChannelData),
-      BIO: oldChannelData.BIO || getChannelBioValue(oldChannelData),
-      channelBio: oldChannelData.channelBio || getChannelBioValue(oldChannelData)
+      name: displayName,
+      username: oldChannelData.username || displayName,
+      channelName: oldChannelData.channelName || displayName,
+      avatar: avatarUrl,
+      bio: bioValue,
+      BIO: oldChannelData.BIO || bioValue,
+      channelBio: oldChannelData.channelBio || bioValue,
+      subscriberCount
+    };
+
+    // 正式帳號資料一定寫在 Channels/{USER_ID}。
+    await setDoc(channelRef, channelPayload, { merge: true });
+
+    // Users/{authUid} 只作為反查索引，避免之後只能看到 Users 有資料、Channels 沒更新。
+    await setDoc(doc(db, 'Users', firebaseUser.uid), {
+      uid: firebaseUser.uid,
+      userId: cleanCurrentUserId,
+      channelId: cleanCurrentUserId,
+      email,
+      emailLower,
+      provider: provider || 'email',
+      updatedAt: new Date().toISOString()
     }, { merge: true });
 
     const nextSnap = await getDoc(channelRef);
-    applyChannelLoginData(cleanCurrentUserId, nextSnap.exists() ? nextSnap.data() : oldChannelData, firebaseUser);
+    const nextData = nextSnap.exists() ? nextSnap.data() : channelPayload;
+    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser);
+    setAuthUser(firebaseUser);
     return true;
   };
+
+  // leafhub-email-binding-auto-repair-v3
+  // 如果 Auth 已登入 Email，但 Channels/{currentUserId} 還沒有 ownerUid/emailLower/idLocked，就補寫 Channels。
+  useEffect(() => {
+    const repairEmailBinding = async () => {
+      const uid = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
+      const firebaseUser = auth.currentUser || authUser;
+      if (!uid || uid === 'loading...' || uid.includes('/')) return;
+      if (!firebaseUser?.uid || firebaseUser?.isAnonymous || !firebaseUser?.email) return;
+
+      try {
+        const channelRef = doc(db, 'Channels', uid);
+        const channelSnap = await getDoc(channelRef);
+        const data = channelSnap.exists() ? channelSnap.data() : {};
+        const emailLower = normalizeEmailValue(firebaseUser.email);
+        const alreadyLinked = data.ownerUid === firebaseUser.uid && data.emailLower === emailLower && data.idLocked === true;
+        if (alreadyLinked) return;
+        await bindCurrentChannelToAuthUser(firebaseUser, 'email', uid);
+      } catch (error) {
+        console.error('Email 綁定自動修復失敗:', error);
+      }
+    };
+
+    repairEmailBinding();
+  }, [currentUserId, authUser?.uid, authUser?.email]);
+
 
   const handleEmailAuthSubmit = async (e) => {
     e.preventDefault();
     const cleanEmail = normalizeEmailValue(emailInput);
     const password = emailPasswordInput;
-    const currentIdForEmailMode = String(currentUserId || '').trim();
-    const emailAlreadyBound = Boolean(targetChannel?.email || targetChannel?.emailLower || authUser?.email);
-    const shouldCreateEmailAccount =
-      !emailAlreadyBound &&
-      !isIdLoggedIn &&
-      currentIdForEmailMode.startsWith('user_') &&
-      !targetChannel?.ownerUid;
-    const effectiveEmailAuthMode = !emailAlreadyBound
-      ? (shouldCreateEmailAccount ? 'register' : 'bind')
-      : emailAuthMode;
+    const channelIdBeforeAuth = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
 
     if (!cleanEmail) {
       showToast('請輸入 Email', 'warning');
@@ -2373,7 +2478,15 @@ const findChannelByAuthUser = async (firebaseUser) => {
       showToast('密碼至少需要 6 個字', 'warning');
       return;
     }
-    if ((effectiveEmailAuthMode === 'register' || effectiveEmailAuthMode === 'bind') && password !== emailPasswordConfirmInput) {
+
+    const shouldBindToCurrentChannel = Boolean(
+      emailAuthMode === 'register' ||
+      emailAuthMode === 'bind' ||
+      !targetChannel?.ownerUid ||
+      !targetChannel?.idLocked
+    );
+
+    if (shouldBindToCurrentChannel && password !== emailPasswordConfirmInput) {
       showToast('兩次密碼輸入不一致', 'error');
       return;
     }
@@ -2381,9 +2494,11 @@ const findChannelByAuthUser = async (firebaseUser) => {
     try {
       let userCredential = null;
 
-      if (effectiveEmailAuthMode === 'login') {
+      if (!shouldBindToCurrentChannel && emailAuthMode === 'login') {
         userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
-      } else if (effectiveEmailAuthMode === 'bind') {
+      } else {
+        // 建立正式帳號 / 綁定 Email。
+        // 若 Authentication 已經有這個 Email，就登入那個 Auth 帳號，再把目前 USER ID 回寫到 Channels。
         const credential = EmailAuthProvider.credential(cleanEmail, password);
         try {
           if (auth.currentUser && auth.currentUser.isAnonymous) {
@@ -2398,19 +2513,17 @@ const findChannelByAuthUser = async (firebaseUser) => {
             throw error;
           }
         }
-        const ok = await bindCurrentChannelToAuthUser(userCredential.user, 'email');
-        if (!ok) return;
-      } else {
-        userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        const found = await findChannelByAuthUser(userCredential.user);
-        if (found) {
-          applyChannelLoginData(found.id, found.data, userCredential.user);
-        } else {
-          await bindCurrentChannelToAuthUser(userCredential.user, 'email');
-        }
       }
 
-      if (effectiveEmailAuthMode === 'login') {
+      if (!userCredential?.user) {
+        showToast('Email 操作失敗，尚未取得 Firebase Auth 使用者', 'error');
+        return;
+      }
+
+      if (shouldBindToCurrentChannel) {
+        const ok = await bindCurrentChannelToAuthUser(userCredential.user, 'email', channelIdBeforeAuth);
+        if (!ok) return;
+      } else {
         const found = await findChannelByAuthUser(userCredential.user);
         if (!found) {
           showToast('這個 Email 還沒有綁定頻道，請先用 USER ID 登入後綁定 Email', 'warning');
@@ -2419,14 +2532,20 @@ const findChannelByAuthUser = async (firebaseUser) => {
         applyChannelLoginData(found.id, found.data, userCredential.user);
       }
 
+      setAuthUser(userCredential.user);
+      localStorage.setItem('leafhub_is_id_logged_in', 'true');
+      setIsIdLoggedIn(true);
       setIsEmailAuthModalOpen(false);
       setEmailInput('');
       setEmailPasswordInput('');
       setEmailPasswordConfirmInput('');
-      showToast(effectiveEmailAuthMode === 'bind' ? 'Email 已綁定到目前 USER ID' : 'Email 登入成功', 'success');
+      showToast(shouldBindToCurrentChannel ? 'Email 已建立並綁定成正式帳號' : 'Email 登入成功', 'success');
     } catch (error) {
       console.error('Email Auth 失敗:', error);
-      showToast(error?.code === 'auth/wrong-password' ? 'Email 或密碼錯誤' : 'Email 操作失敗，請確認 Firebase Auth 已啟用 Email/Password', 'error');
+      const message = error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
+        ? 'Email 或密碼錯誤'
+        : 'Email 操作失敗，請確認 Firebase Auth 已啟用 Email/Password，且 Firestore Rules 允許寫入 Channels';
+      showToast(message, 'error');
     }
   };
 
