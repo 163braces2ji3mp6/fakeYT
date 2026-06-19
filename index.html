@@ -4,6 +4,48 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/fakeYT/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#050505" />
+
+    <!-- LeafHub: 防止重整時瀏覽器預設白底閃一下。這段必須放在 head，且要早於 React 載入。 -->
+    <style id="leafhub-no-white-flash">
+      :root {
+        color-scheme: dark;
+        background: #050505;
+      }
+
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        min-height: 100%;
+        background: #050505 !important;
+        background-color: #050505 !important;
+        color: #ffffff;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      /* React 還沒掛載完成、#root 還是空的時候，先用黑底蓋住整個畫面 */
+      #root:empty::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: #050505;
+        z-index: 2147483647;
+        pointer-events: none;
+      }
+    </style>
+
     <title>Leaf Hub</title>
     <script>
       // GitHub Pages SPA fallback：把 404.html 暫存到 query 的路徑還原成正常前端路由。
@@ -16,7 +58,6 @@
               return s.replace(/~and~/g, '&')
             })
             .join('?');
-
           window.history.replaceState(
             null,
             null,
@@ -25,10 +66,10 @@
         }
       }(window.location))
     </script>
-    <script type="module" crossorigin src="/fakeYT/assets/index-oerT4o72.js"></script>
-    <link rel="stylesheet" crossorigin href="/fakeYT/assets/index-tpJMEOv7.css">
+    <script type="module" crossorigin src="/fakeYT/assets/index-C1a8spOK.js"></script>
+    <link rel="stylesheet" crossorigin href="/fakeYT/assets/index-Bfw66Vo1.css">
   </head>
-  <body>
+  <body style="background:#050505; margin:0; color:#fff;">
     <div id="root"></div>
   </body>
 </html>
