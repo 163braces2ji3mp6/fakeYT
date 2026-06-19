@@ -16,6 +16,8 @@ import {
   onAuthStateChanged,
   updateProfile,
   updatePassword,
+updateEmail,
+reauthenticateWithCredential,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -1288,6 +1290,8 @@ const homeLoadMoreTriggerRef = useRef(null);
   const [emailInput, setEmailInput] = useState('');
   const [emailPasswordInput, setEmailPasswordInput] = useState('');
   const [emailPasswordConfirmInput, setEmailPasswordConfirmInput] = useState('');
+const [changeEmailInput, setChangeEmailInput] = useState('');
+const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
   const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState(false);
   const [forgotPasswordEmailInput, setForgotPasswordEmailInput] = useState('');
   const [isDeleteAccountModalOpen, setIsDeleteAccountModalOpen] = useState(false);
@@ -2145,6 +2149,41 @@ const homeLoadMoreTriggerRef = useRef(null);
 
   const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
 
+  const assertEmailNotBoundToAnotherChannel = async (emailValue, currentChannelId = currentUserId) => {
+    const cleanEmail = normalizeEmailValue(emailValue);
+    const cleanCurrentChannelId = String(currentChannelId || '').trim();
+    if (!cleanEmail) return true;
+
+    const checkSnapshot = async (fieldName) => {
+      const snap = await getDocs(query(
+        collection(db, 'Channels'),
+        where(fieldName, '==', cleanEmail),
+        limit(5)
+      ));
+      return snap.docs;
+    };
+
+    const matchedDocs = [
+      ...(await checkSnapshot('emailLower')),
+      ...(await checkSnapshot('email'))
+    ];
+
+    const blockingDoc = matchedDocs.find(channelDoc => {
+      const data = channelDoc.data() || {};
+      const docChannelId = String(channelDoc.id || '').trim();
+      const dataUserId = String(data.userId || data.customId || '').trim();
+      return docChannelId !== cleanCurrentChannelId && dataUserId !== cleanCurrentChannelId;
+    });
+
+    if (blockingDoc) {
+      showToast('這個 Email 已經綁定其他 USER ID，不能重複綁定', 'error');
+      return false;
+    }
+
+    return true;
+  };
+
+
   const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser) => {
     const displayName = channelData.name || channelData.username || channelData.channelName || channelId;
     const avatarUrl = channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR;
@@ -2385,6 +2424,8 @@ const findChannelByAuthUser = async (firebaseUser) => {
     const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
     const email = String(firebaseUser.email || oldChannelData.email || '').trim();
     const emailLower = normalizeEmailValue(email || oldChannelData.emailLower || '');
+    if (!(await assertEmailNotBoundToAnotherChannel(emailLower || email, cleanCurrentUserId))) return false;
+
     const providerList = Array.from(new Set([
       ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
       'custom-id',
@@ -2490,6 +2531,9 @@ const findChannelByAuthUser = async (firebaseUser) => {
       return;
     }
 
+    // Email uniqueness guard before create/bind/login: an Email already bound to another Channels document cannot be reused.
+    if (!(await assertEmailNotBoundToAnotherChannel(cleanEmail, channelIdBeforeAuth))) return;
+
     try {
       let userCredential = null;
 
@@ -2547,6 +2591,100 @@ const findChannelByAuthUser = async (firebaseUser) => {
       showToast(message, 'error');
     }
   };
+
+  const handleChangeBoundEmailSubmit = async (e) => {
+    e.preventDefault();
+
+    const firebaseUser = auth.currentUser || authUser;
+    const cleanCurrentUserId = String(currentUserId || targetChannel?.userId || localStorage.getItem('device_user_id') || '').trim();
+    const oldEmail = normalizeEmailValue(targetChannel?.email || firebaseUser?.email || targetChannel?.emailLower || '');
+    const newEmail = normalizeEmailValue(changeEmailInput);
+    const password = changeEmailPasswordInput;
+
+    if (!firebaseUser?.uid || firebaseUser?.isAnonymous) {
+      showToast('請先登入目前綁定的 Email 帳號', 'warning');
+      return;
+    }
+    if (!cleanCurrentUserId || cleanCurrentUserId === 'loading...' || cleanCurrentUserId.includes('/')) {
+      showToast('目前 USER ID 尚未載入完成', 'warning');
+      return;
+    }
+    if (!oldEmail) {
+      showToast('目前帳號沒有可更換的 Email', 'warning');
+      return;
+    }
+    if (!newEmail) {
+      showToast('請輸入新的 Email', 'warning');
+      return;
+    }
+    if (newEmail === oldEmail) {
+      showToast('新的 Email 與目前 Email 相同', 'warning');
+      return;
+    }
+    if (!password || password.length < 6) {
+      showToast('請輸入目前 Email 的密碼', 'warning');
+      return;
+    }
+
+    try {
+      if (!(await assertEmailNotBoundToAnotherChannel(newEmail, cleanCurrentUserId))) return;
+
+      const credential = EmailAuthProvider.credential(oldEmail, password);
+      await reauthenticateWithCredential(firebaseUser, credential);
+      await updateEmail(firebaseUser, newEmail);
+
+      const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+      const channelSnap = await getDoc(channelRef);
+      const oldChannelData = channelSnap.exists() ? channelSnap.data() : targetChannel || {};
+      const providerList = Array.from(new Set([
+        ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
+        'custom-id',
+        'email'
+      ]));
+
+      const updatePayload = {
+        email: newEmail,
+        emailLower: newEmail,
+        emailVerified: Boolean(firebaseUser.emailVerified),
+        ownerUid: firebaseUser.uid,
+        authProvider: 'email',
+        linkedProviders: providerList,
+        idLocked: true,
+        emailChangedAt: new Date().toISOString(),
+        previousEmailClearedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(channelRef, updatePayload, { merge: true });
+      await setDoc(doc(db, 'Users', firebaseUser.uid), {
+        uid: firebaseUser.uid,
+        userId: cleanCurrentUserId,
+        channelId: cleanCurrentUserId,
+        email: newEmail,
+        emailLower: newEmail,
+        provider: 'email',
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      const repairedSnap = await getDoc(channelRef);
+      const nextData = repairedSnap.exists() ? repairedSnap.data() : { ...oldChannelData, ...updatePayload };
+      applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser);
+      setChangeEmailInput('');
+      setChangeEmailPasswordInput('');
+      showToast('已更換綁定 Email，舊 Email 已從此 USER ID 移除，可重新綁定其他帳號', 'success');
+    } catch (error) {
+      console.error('更換綁定 Email 失敗:', error);
+      const message = error?.code === 'auth/email-already-in-use'
+        ? '新的 Email 已被 Firebase Authentication 使用，不能更換'
+        : error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
+          ? '目前 Email 密碼錯誤'
+          : error?.code === 'auth/requires-recent-login'
+            ? '登入狀態過期，請登出後重新登入再更換 Email'
+            : '更換 Email 失敗，請確認 Firebase Auth 與 Firestore Rules 權限';
+      showToast(message, 'error');
+    }
+  };
+
 
   const handleGoogleAuth = async ({ bindOnly = false } = {}) => {
     try {
@@ -2716,6 +2854,8 @@ const handleLogoutId = async () => {
     setEmailInput('');
     setEmailPasswordInput('');
     setEmailPasswordConfirmInput('');
+    setChangeEmailInput('');
+    setChangeEmailPasswordInput('');
     setForgotPasswordEmailInput('');
     setNewPasswordInput('');
     setConfirmNewPasswordInput('');
@@ -7860,9 +8000,21 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                           {hasBoundEmail ? 'Email 綁定狀態' : shouldShowCreateEmailOnly ? '建立 Email 帳號' : '綁定 Email'}
                         </h3>
                         {hasBoundEmail ? (
-                          <div style={{ border: '1px solid #1f3d2b', background: 'rgba(34,197,94,0.08)', color: '#d6ffe4', borderRadius: '12px', padding: '14px', lineHeight: 1.7 }}>
-                            Email 已綁定：<b>{accountEmailDisplay}</b>
-                          </div>
+                          <>
+                            <div style={{ border: '1px solid #1f3d2b', background: 'rgba(34,197,94,0.08)', color: '#d6ffe4', borderRadius: '12px', padding: '14px', lineHeight: 1.7, marginBottom: '14px' }}>
+                              Email 已綁定：<b>{accountEmailDisplay}</b>
+                            </div>
+                            <form onSubmit={handleChangeBoundEmailSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', alignItems: 'end' }}>
+                              <input className="comment-text-input" type="email" placeholder="新的 Email" value={changeEmailInput} onChange={(e) => setChangeEmailInput(e.target.value)} required />
+                              <input className="comment-text-input" type="password" placeholder="目前 Email 的密碼" value={changeEmailPasswordInput} onChange={(e) => setChangeEmailPasswordInput(e.target.value)} required />
+                              <button type="submit" className="comment-submit-btn" style={{ height: '40px' }}>
+                                綁定其他 Email
+                              </button>
+                            </form>
+                            <p style={{ color: '#888', fontSize: '12px', lineHeight: 1.7, marginBottom: 0 }}>
+                              更換成功後，舊 Email 會從這個 USER ID 移除，之後可以重新綁定到其他帳號。
+                            </p>
+                          </>
                         ) : (
                           <>
                             <p style={{ color: '#aaa', marginTop: 0, lineHeight: 1.7 }}>
