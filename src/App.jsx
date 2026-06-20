@@ -2149,6 +2149,79 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
   const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
 
+  const getGoogleProfileFromFirebaseUser = (firebaseUser, fallbackName = '', fallbackAvatar = '') => {
+    const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
+    const googleProviderProfile = authProviders.find(provider => provider?.providerId === 'google.com') || null;
+    const displayName = String(
+      googleProviderProfile?.displayName ||
+      firebaseUser?.displayName ||
+      fallbackName ||
+      ''
+    ).trim();
+    const avatarUrl = String(
+      googleProviderProfile?.photoURL ||
+      firebaseUser?.photoURL ||
+      fallbackAvatar ||
+      GUEST_AVATAR
+    ).trim();
+
+    return { displayName, avatarUrl };
+  };
+
+  const syncGoogleProfileToChannel = async (channelId, channelData = {}, firebaseUser) => {
+    const cleanChannelId = String(channelId || '').trim();
+    if (!cleanChannelId || cleanChannelId.includes('/') || !firebaseUser) return channelData;
+
+    const { displayName, avatarUrl } = getGoogleProfileFromFirebaseUser(
+      firebaseUser,
+      channelData.name || channelData.username || channelData.channelName || cleanChannelId,
+      channelData.avatar
+    );
+    const providerList = Array.from(new Set([
+      ...((Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [])),
+      'custom-id',
+      'google'
+    ]));
+    const email = String(firebaseUser.email || channelData.email || '').trim();
+    const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
+    const googleProfilePatch = {
+      userId: channelData.userId || cleanChannelId,
+      customId: channelData.customId || cleanChannelId,
+      ownerUid: firebaseUser.uid || channelData.ownerUid || '',
+      email,
+      emailLower,
+      emailVerified: Boolean(firebaseUser.emailVerified),
+      authProvider: 'google',
+      linkedProviders: providerList,
+      idLocked: true,
+      name: displayName || cleanChannelId,
+      username: displayName || cleanChannelId,
+      channelName: displayName || cleanChannelId,
+      avatar: avatarUrl || GUEST_AVATAR,
+      updatedAt: new Date().toISOString()
+    };
+
+    await setDoc(doc(db, 'Channels', cleanChannelId), googleProfilePatch, { merge: true });
+
+    if (firebaseUser.uid) {
+      await setDoc(doc(db, 'Users', firebaseUser.uid), {
+        uid: firebaseUser.uid,
+        userId: cleanChannelId,
+        channelId: cleanChannelId,
+        email,
+        emailLower,
+        provider: 'google',
+        name: googleProfilePatch.name,
+        username: googleProfilePatch.username,
+        channelName: googleProfilePatch.channelName,
+        avatar: googleProfilePatch.avatar,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+
+    return { ...channelData, ...googleProfilePatch };
+  };
+
   const assertEmailNotBoundToAnotherChannel = async (emailValue, currentChannelId = currentUserId) => {
     const cleanEmail = normalizeEmailValue(emailValue);
     const cleanCurrentChannelId = String(currentChannelId || '').trim();
@@ -2184,9 +2257,25 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
   };
 
 
-  const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser) => {
-    const displayName = channelData.name || channelData.username || channelData.channelName || channelId;
-    const avatarUrl = channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR;
+  const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser, options = {}) => {
+    const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
+    const googleProviderProfile = authProviders.find(provider => provider?.providerId === 'google.com') || null;
+    const linkedProviders = Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [];
+    const shouldPreferGoogleProfile = Boolean(
+      options.preferGoogleProfile ||
+      googleProviderProfile ||
+      channelData.authProvider === 'google' ||
+      linkedProviders.includes('google') ||
+      linkedProviders.includes('google.com')
+    );
+    const googleDisplayName = String(googleProviderProfile?.displayName || firebaseUser?.displayName || '').trim();
+    const googleAvatarUrl = String(googleProviderProfile?.photoURL || firebaseUser?.photoURL || '').trim();
+    const displayName = shouldPreferGoogleProfile
+      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || channelId)
+      : (channelData.name || channelData.username || channelData.channelName || channelId);
+    const avatarUrl = shouldPreferGoogleProfile
+      ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
+      : (channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR);
     const bioValue = getChannelBioValue(channelData);
     const subscriberCount = preserveSubscriberCount(
       channelData.subscriberCount,
@@ -2206,8 +2295,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       userId: channelId,
       customId: channelData.customId || channelId,
       name: displayName,
-      username: channelData.username || displayName,
-      channelName: channelData.channelName || displayName,
+      username: shouldPreferGoogleProfile ? displayName : (channelData.username || displayName),
+      channelName: shouldPreferGoogleProfile ? displayName : (channelData.channelName || displayName),
       avatar: avatarUrl,
       email: emailValue,
       emailLower: emailLowerValue,
@@ -2432,8 +2521,18 @@ const findChannelByAuthUser = async (firebaseUser) => {
       provider || 'email'
     ]));
     const bioValue = getChannelBioValue(oldChannelData);
-    const displayName = oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId;
-    const avatarUrl = oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR;
+    const isGoogleProvider = provider === 'google' || provider === 'google.com';
+    const googleProfile = getGoogleProfileFromFirebaseUser(
+      firebaseUser,
+      oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId,
+      oldChannelData.avatar || unifiedAvatar || GUEST_AVATAR
+    );
+    const displayName = isGoogleProvider
+      ? (googleProfile.displayName || cleanCurrentUserId)
+      : (oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId);
+    const avatarUrl = isGoogleProvider
+      ? (googleProfile.avatarUrl || GUEST_AVATAR)
+      : (oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR);
     const subscriberCount = preserveSubscriberCount(
       oldChannelData.subscriberCount,
       oldChannelData.subscribers,
@@ -2456,8 +2555,8 @@ const findChannelByAuthUser = async (firebaseUser) => {
       idLockReason: 'ownerUid-bound',
       updatedAt: new Date().toISOString(),
       name: displayName,
-      username: oldChannelData.username || displayName,
-      channelName: oldChannelData.channelName || displayName,
+      username: isGoogleProvider ? displayName : (oldChannelData.username || displayName),
+      channelName: isGoogleProvider ? displayName : (oldChannelData.channelName || displayName),
       avatar: avatarUrl,
       bio: bioValue,
       BIO: oldChannelData.BIO || bioValue,
@@ -2476,12 +2575,16 @@ const findChannelByAuthUser = async (firebaseUser) => {
       email,
       emailLower,
       provider: provider || 'email',
+      name: displayName,
+      username: displayName,
+      channelName: displayName,
+      avatar: avatarUrl,
       updatedAt: new Date().toISOString()
     }, { merge: true });
 
     const nextSnap = await getDoc(channelRef);
     const nextData = nextSnap.exists() ? nextSnap.data() : channelPayload;
-    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser);
+    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser, { preferGoogleProfile: isGoogleProvider });
     setAuthUser(firebaseUser);
     return true;
   };
@@ -2705,7 +2808,8 @@ const findChannelByAuthUser = async (firebaseUser) => {
 
       const found = await findChannelByAuthUser(result.user);
       if (found) {
-        applyChannelLoginData(found.id, found.data, result.user);
+        const syncedGoogleData = await syncGoogleProfileToChannel(found.id, found.data, result.user);
+        applyChannelLoginData(found.id, syncedGoogleData, result.user, { preferGoogleProfile: true });
         setIsIdLoginModalOpen(false);
         setLoginIdInput('');
         setLoginPasswordInput('');
@@ -2743,8 +2847,21 @@ const findChannelByAuthUser = async (firebaseUser) => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }, { merge: true });
+      await setDoc(doc(db, 'Users', result.user.uid), {
+        uid: result.user.uid,
+        userId: fallbackId,
+        channelId: fallbackId,
+        email: result.user.email || '',
+        emailLower: normalizeEmailValue(result.user.email),
+        provider: 'google',
+        name: result.user.displayName || fallbackId,
+        username: result.user.displayName || fallbackId,
+        channelName: result.user.displayName || fallbackId,
+        avatar: result.user.photoURL || GUEST_AVATAR,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
       const newSnap = await getDoc(doc(db, 'Channels', fallbackId));
-      applyChannelLoginData(fallbackId, newSnap.data() || {}, result.user);
+      applyChannelLoginData(fallbackId, newSnap.data() || {}, result.user, { preferGoogleProfile: true });
       showToast('已用 Google 建立新頻道', 'success');
     } catch (error) {
       console.error('Google Auth 失敗:', error);
