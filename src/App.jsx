@@ -936,10 +936,28 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   }, [targetChannel]);
 
   useEffect(() => {
-    if (localUsername !== '載入中...' && (targetChannel.name === localUsername || !targetChannel.name)) {
-      setTargetChannel(prev => ({ ...prev, name: localUsername, avatar: unifiedAvatar }));
+    if (localUsername === '載入中...') return;
+
+    const targetId = String(targetChannel?.userId || targetChannelUserId || '').trim();
+    const targetName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const ownId = String(currentUserId || '').trim();
+    const isOwnTarget = Boolean(
+      (targetId && ownId && targetId === ownId) ||
+      (targetName && targetName === localUsername)
+    );
+
+    // 只同步「自己的頻道」。不要因為 targetChannel 暫時是空的，就把別人的頻道蓋成自己。
+    if (currentView === 'channel' && isOwnTarget) {
+      setTargetChannel(prev => ({
+        ...prev,
+        userId: ownId || prev.userId,
+        name: localUsername,
+        username: localUsername,
+        channelName: localUsername,
+        avatar: unifiedAvatar
+      }));
     }
-  }, [localUsername, currentUserAvatar]);
+  }, [localUsername, currentUserAvatar, currentUserId, currentView, targetChannel?.userId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName, targetChannelUserId]);
 
   // 🟢 修正版：只處理自己（localUsername）的同步，絕對不亂用 'member' 覆蓋 ID！
   useEffect(() => {
@@ -1778,21 +1796,28 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
       if (rename) {
         updates.channel = toName;
+        updates.author = toName;
         updates.creatorName = toName;
         updates.username = toName;
+        updates.channelName = toName;
       }
 
+      updates.channelAvatar = avatarUrl;
+      updates.authorAvatar = avatarUrl;
       return updates;
     });
 
     await updateMatchingDocs('comments', () => {
       const updates = {
-        avatar: avatarUrl
+        avatar: avatarUrl,
+        userAvatar: avatarUrl,
+        authorAvatar: avatarUrl
       };
 
       if (rename) {
         updates.author = toName;
         updates.username = toName;
+        updates.channelName = toName;
       }
 
       return updates;
@@ -1800,16 +1825,67 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
     await updateMatchingDocs('replies', () => {
       const updates = {
-        avatar: avatarUrl
+        avatar: avatarUrl,
+        userAvatar: avatarUrl,
+        authorAvatar: avatarUrl
       };
 
       if (rename) {
         updates.author = toName;
         updates.username = toName;
+        updates.channelName = toName;
       }
 
       return updates;
     });
+
+    const shouldPatchItem = (item = {}) => {
+      if (!item) return false;
+      const nameFields = [item.channel, item.author, item.username, item.creatorName, item.name, item.channelName];
+      const idFields = [item.userId, item.uid, item.ownerId, item.authorId, item.channelId, item.id];
+      return nameFields.some(value => sameString(value, fromName)) || idFields.some(value => sameString(value, fromUserId));
+    };
+
+    const patchIdentityItem = (item = {}) => {
+      if (!item || !shouldPatchItem(item)) return item;
+      const patched = {
+        ...item,
+        userId: item.userId || toUserId,
+        avatar: avatarUrl,
+        creatorAvatar: avatarUrl,
+        channelAvatar: avatarUrl,
+        authorAvatar: avatarUrl,
+        userAvatar: avatarUrl
+      };
+
+      if (rename) {
+        patched.channel = toName;
+        patched.author = toName;
+        patched.creatorName = toName;
+        patched.username = toName;
+        patched.channelName = toName;
+        if (item.name) patched.name = toName;
+      }
+
+      return patched;
+    };
+
+    const patchIdentityList = (list = []) => Array.isArray(list) ? list.map(patchIdentityItem) : list;
+
+    setVideos(prev => patchIdentityList(prev));
+    setRawFirebaseVideos(prev => patchIdentityList(prev));
+    setSearchFirebaseVideos(prev => patchIdentityList(prev));
+    setChannelVideos(prev => patchIdentityList(prev));
+    setWatchRecommendedVideos(prev => patchIdentityList(prev));
+    setWatchHistory(prev => patchIdentityList(prev));
+    setWatchLaterVideos(prev => patchIdentityList(prev));
+    setComments(prev => patchIdentityList(prev));
+    setOptimisticComments(prev => patchIdentityList(prev));
+    setOptimisticReplies(prev => patchIdentityList(prev));
+    setSubscribedChannelDetails(prev => patchIdentityList(prev));
+
+    setSelectedVideo(prev => prev ? patchIdentityItem(prev) : prev);
+    setTargetChannel(prev => patchIdentityItem(prev));
   };
 
 
@@ -2219,7 +2295,19 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       }, { merge: true });
     }
 
-    return { ...channelData, ...googleProfilePatch };
+    const mergedGoogleData = { ...channelData, ...googleProfilePatch };
+
+    await syncCurrentUserProfileEverywhere({
+      avatarUrl: googleProfilePatch.avatar,
+      fromName: channelData.name || channelData.username || channelData.channelName || cleanChannelId,
+      fromUserId: cleanChannelId,
+      toName: googleProfilePatch.name,
+      toUserId: cleanChannelId,
+      subscriberCount: preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, liveSubscriberCount, 0),
+      rename: true
+    });
+
+    return mergedGoogleData;
   };
 
   const assertEmailNotBoundToAnotherChannel = async (emailValue, currentChannelId = currentUserId) => {
@@ -2317,15 +2405,20 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     setPreviewAvatar(avatarUrl);
     setInputBio(bioValue);
     setLiveSubscriberCount(subscriberCount);
-    setTargetChannel(nextTargetChannel);
-    setTargetChannelUserId(channelId);
+
+    // 背景還原登入狀態時，不要覆蓋使用者正在看的別人頻道；只有登入/綁定/自己的頻道才更新 targetChannel。
+    const shouldUpdateTargetChannel = options.updateTargetChannel !== false;
+    if (shouldUpdateTargetChannel) {
+      setTargetChannel(nextTargetChannel);
+      setTargetChannelUserId(channelId);
+      localStorage.setItem('leafhub_targetChannel', JSON.stringify(nextTargetChannel));
+    }
 
     localStorage.setItem('device_user_id', channelId);
     localStorage.setItem('device_user_name', displayName);
     localStorage.setItem('device_user_avatar', avatarUrl);
     localStorage.setItem('device_user_bio', bioValue);
     localStorage.setItem('leafhub_is_id_logged_in', 'true');
-    localStorage.setItem('leafhub_targetChannel', JSON.stringify(nextTargetChannel));
     setIsIdLoggedIn(true);
   };
 
@@ -2583,8 +2676,11 @@ const findChannelByAuthUser = async (firebaseUser) => {
     }, { merge: true });
 
     const nextSnap = await getDoc(channelRef);
-    const nextData = nextSnap.exists() ? nextSnap.data() : channelPayload;
-    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser, { preferGoogleProfile: isGoogleProvider });
+    let nextData = nextSnap.exists() ? nextSnap.data() : channelPayload;
+    if (isGoogleProvider) {
+      nextData = await syncGoogleProfileToChannel(cleanCurrentUserId, nextData, firebaseUser);
+    }
+    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser, { preferGoogleProfile: isGoogleProvider, updateTargetChannel: true });
     setAuthUser(firebaseUser);
     return true;
   };
@@ -2598,7 +2694,17 @@ const findChannelByAuthUser = async (firebaseUser) => {
       try {
         const found = await findChannelByAuthUser(firebaseUser);
         if (found && String(found.id || '') !== String(currentUserId || '')) {
-          applyChannelLoginData(found.id, found.data, firebaseUser);
+          const routeKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+          const foundCandidates = getChannelIdentityCandidates({
+            ...found.data,
+            userId: found.id,
+            id: found.id
+          });
+          const isViewingFoundOwnChannel = currentView === 'channel' && routeKey && foundCandidates.some(candidate => sameChannelValue(candidate, routeKey));
+          applyChannelLoginData(found.id, found.data, firebaseUser, {
+            preferGoogleProfile: Boolean((found.data?.linkedProviders || []).includes('google') || found.data?.authProvider === 'google'),
+            updateTargetChannel: currentView !== 'channel' || isViewingFoundOwnChannel
+          });
         }
       } catch (error) {
         console.error('Auth 頻道還原失敗:', error);
@@ -3740,8 +3846,63 @@ const handleLogoutId = async () => {
         bio: '',
         subscriberCount: 0
       });
-      setTargetChannelUserId(decodedKey);
+      setTargetChannelUserId('');
     }
+
+    // 重新整理 /channel/:key 時直接讀 Channels，避免影片清單還沒載入時退回自己的頻道。
+    (async () => {
+      try {
+        let channelDocId = decodedKey;
+        let channelData = {};
+        const directSnap = await getDoc(doc(db, 'Channels', decodedKey));
+
+        if (directSnap.exists()) {
+          channelData = directSnap.data() || {};
+          channelDocId = channelData.userId || directSnap.id;
+        } else {
+          const fieldsToCheck = ['username', 'name', 'channelName'];
+          for (const fieldName of fieldsToCheck) {
+            const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', decodedKey), limit(1)));
+            if (!snap.empty) {
+              const foundDoc = snap.docs[0];
+              channelData = foundDoc.data() || {};
+              channelDocId = channelData.userId || foundDoc.id;
+              break;
+            }
+          }
+        }
+
+        if (!channelData || Object.keys(channelData).length === 0) return;
+        if (channelNavigationRequestRef.current !== routeRequestId) return;
+
+        const resolvedName = channelData.name || channelData.username || channelData.channelName || decodedKey;
+        const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || GUEST_AVATAR);
+        const resolvedBio = getChannelBioValue(channelData);
+        const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
+
+        setTargetChannel({
+          ...channelData,
+          userId: channelDocId,
+          id: channelDocId,
+          name: resolvedName,
+          username: channelData.username || resolvedName,
+          channelName: channelData.channelName || resolvedName,
+          avatar: resolvedAvatar,
+          bio: resolvedBio,
+          BIO: channelData.BIO || resolvedBio,
+          channelBio: channelData.channelBio || resolvedBio,
+          subscriberCount: resolvedSubscriberCount
+        });
+        setTargetChannelUserId(channelDocId);
+        if (String(channelDocId) !== String(currentUserId || '')) {
+          setLiveSubscriberCount(resolvedSubscriberCount);
+        }
+        setIsChannelLoading(false);
+        stopChannelContentBuffer();
+      } catch (error) {
+        console.error('路由還原頻道資料失敗:', error);
+      }
+    })();
 
     const allVideos = [
       ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
@@ -3910,7 +4071,7 @@ const handleLogoutId = async () => {
 
     // 每次點進頻道都重新載入一次；這裡只放暫存資料，避免名稱短暫空白。
     setTargetChannel({
-      userId: routeKey || '',
+      userId: providedUserId || '',
       name: finalName || routeKey || '',
       username: finalName || routeKey || '',
       channelName: finalName || routeKey || '',
@@ -3918,7 +4079,7 @@ const handleLogoutId = async () => {
       bio: '',
       subscriberCount: 0
     });
-    setTargetChannelUserId(routeKey || '');
+    setTargetChannelUserId(providedUserId || '');
 
     if (finalName === '小葉') {
       const shiauyeChannel = {
@@ -6425,8 +6586,32 @@ const canManageComment = (comment = {}) => {
     ).trim();
   };
 
+  const getKnownChannelProfileForVideo = (video = {}) => {
+    const videoUserId = String(video.userId || video.uid || video.ownerId || video.channelId || '').trim();
+    const videoName = String(video.channel || video.author || video.creatorName || video.username || video.channelName || '').trim();
+
+    const candidates = [
+      targetChannel,
+      ...(Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [])
+    ];
+
+    return candidates.find(channel => {
+      if (!channel) return false;
+      const channelUserId = String(channel.userId || channel.id || '').trim();
+      const channelName = String(channel.name || channel.username || channel.channelName || '').trim();
+      return Boolean(
+        (videoUserId && channelUserId && videoUserId === channelUserId) ||
+        (videoName && channelName && videoName === channelName)
+      );
+    }) || null;
+  };
+
   const getVideoDisplayName = (video = {}) => {
-    return video.channel || video.author || video.creatorName || video.username || localUsername || '小葉';
+    const knownChannel = getKnownChannelProfileForVideo(video);
+    if (knownChannel?.name || knownChannel?.username || knownChannel?.channelName) {
+      return knownChannel.name || knownChannel.username || knownChannel.channelName;
+    }
+    return video.channel || video.author || video.creatorName || video.username || video.channelName || localUsername || '小葉';
   };
 
   const getVideoAvatarSrc = (video = {}) => {
@@ -6443,7 +6628,11 @@ const canManageComment = (comment = {}) => {
 
     if (isShiauyeVideo) return avatarImage;
     if (isOwnVideo) return unifiedAvatar;
-    return video.avatar || video.creatorAvatar || GUEST_AVATAR;
+
+    const knownChannel = getKnownChannelProfileForVideo(video);
+    if (knownChannel?.avatar && knownChannel.avatar !== GUEST_AVATAR) return knownChannel.avatar;
+
+    return video.avatar || video.creatorAvatar || video.channelAvatar || video.authorAvatar || video.userAvatar || GUEST_AVATAR;
   };
 
 
