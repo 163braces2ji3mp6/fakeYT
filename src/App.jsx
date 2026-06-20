@@ -4940,6 +4940,152 @@ useEffect(() => {
       console.error('同步觀看紀錄到 Firebase 失敗:', error);
     }
   };
+const resolveLatestVideoChannelIdentity = async (video = {}) => {
+    const clean = (value) => String(value || '').trim();
+    const videoDocId = clean(video.id);
+    const currentRouteId = clean(getVideoChannelRouteId(video));
+    const displayName = clean(getVideoDisplayName(video));
+    const candidateNames = Array.from(new Set([
+      displayName,
+      video.channel,
+      video.author,
+      video.creatorName,
+      video.channelName,
+      video.name,
+      video.username
+    ].map(clean).filter(Boolean)));
+
+    const channelCandidates = new Map();
+    const addChannelCandidate = (id, data = {}, source = '') => {
+      const cleanId = clean(data.userId || data.customId || data.id || id);
+      if (!cleanId || cleanId.includes('/')) return;
+      channelCandidates.set(cleanId, {
+        id: cleanId,
+        source,
+        data: { ...data, userId: cleanId, id: cleanId }
+      });
+    };
+
+    try {
+      // 1. 如果影片現在的 userId 指到舊文件，先看舊文件有沒有 canonicalChannelId。
+      if (currentRouteId && !currentRouteId.includes('/')) {
+        const directSnap = await getDoc(doc(db, 'Channels', currentRouteId));
+        if (directSnap.exists()) {
+          const directData = directSnap.data() || {};
+          const canonicalId = clean(directData.canonicalChannelId || '');
+          if (canonicalId && canonicalId !== currentRouteId && !canonicalId.includes('/')) {
+            const canonicalSnap = await getDoc(doc(db, 'Channels', canonicalId));
+            if (canonicalSnap.exists()) {
+              addChannelCandidate(canonicalSnap.id, canonicalSnap.data() || {}, 'canonicalChannelId');
+            } else {
+              addChannelCandidate(canonicalId, { ...directData, userId: canonicalId }, 'canonicalChannelId-missing-doc');
+            }
+          }
+          addChannelCandidate(directSnap.id, directData, 'direct-video-userId');
+        }
+      }
+
+      // 2. 用影片顯示名稱回查 Channels，找出真正的文件 ID / userId。
+      for (const name of candidateNames) {
+        for (const fieldName of ['name', 'channelName', 'username']) {
+          const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', name), limit(5)));
+          snap.docs.forEach(channelDoc => addChannelCandidate(channelDoc.id, channelDoc.data() || {}, `${fieldName}:${name}`));
+        }
+      }
+
+      const candidates = Array.from(channelCandidates.values());
+      if (candidates.length === 0) return video;
+
+      const scoreCandidate = (candidate) => {
+        const data = candidate.data || {};
+        const id = clean(candidate.id);
+        const names = [data.name, data.username, data.channelName, data.channel, data.author]
+          .map(clean)
+          .filter(Boolean);
+        let score = 0;
+        if (id === currentRouteId) score += 20;
+        if (data.canonicalChannelId && clean(data.canonicalChannelId) !== id) score -= 40;
+        if (displayName && names.includes(displayName)) score += 80;
+        if (currentRouteId && id !== currentRouteId && displayName && names.includes(displayName)) score += 60;
+        if (data.ownerUid || data.idLocked) score += 20;
+        if (data.emailLower || data.email) score += 10;
+        if (candidate.source === 'canonicalChannelId') score += 100;
+        return score;
+      };
+
+      candidates.sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+      const best = candidates[0];
+      const latestUserId = clean(best?.id);
+      if (!latestUserId) return video;
+
+      const latestData = best.data || {};
+      const latestName = latestData.name || latestData.channelName || latestData.username || displayName;
+      const latestAvatar = latestData.avatar || video.channelAvatar || video.creatorAvatar || video.authorAvatar || video.avatar || GUEST_AVATAR;
+      const currentVideoUserId = clean(video.userId || video.uid || video.ownerId || video.channelId);
+      const needsUpdate = videoDocId && latestUserId && latestUserId !== currentVideoUserId;
+
+      const fixedVideo = {
+        ...video,
+        userId: latestUserId,
+        channelId: latestUserId,
+        channel: latestName || video.channel,
+        author: latestName || video.author,
+        creatorName: latestName || video.creatorName,
+        channelName: latestName || video.channelName,
+        username: latestData.username || latestUserId,
+        avatar: latestAvatar,
+        creatorAvatar: latestAvatar,
+        channelAvatar: latestAvatar,
+        authorAvatar: latestAvatar,
+        subscriberCount: getSafeSubscriberCountValue(latestData.subscriberCount)
+      };
+
+      if (needsUpdate) {
+        const patch = {
+          userId: latestUserId,
+          channelId: latestUserId,
+          username: latestData.username || latestUserId,
+          channel: latestName || video.channel || '',
+          author: latestName || video.author || '',
+          creatorName: latestName || video.creatorName || '',
+          channelName: latestName || video.channelName || '',
+          avatar: latestAvatar,
+          creatorAvatar: latestAvatar,
+          channelAvatar: latestAvatar,
+          authorAvatar: latestAvatar,
+          updatedAt: new Date().toISOString()
+        };
+        let firebasePatchSucceeded = false;
+        try {
+          await setDoc(doc(db, 'Videos', videoDocId), patch, { merge: true });
+          firebasePatchSucceeded = true;
+        } catch (writeError) {
+          // Firestore rules 若還沒允許修正 Videos metadata，不能阻塞播放頁。
+          console.warn('修正影片 userId 寫回 Firebase 失敗，先套用本機修正資料:', writeError);
+        }
+
+        const patchLocalList = (list) => Array.isArray(list)
+          ? list.map(item => getVideoMenuKey(item) === getVideoMenuKey(video) ? { ...item, ...patch } : item)
+          : list;
+        setVideos(prev => patchLocalList(prev));
+        setRawFirebaseVideos(prev => patchLocalList(prev));
+        setSearchFirebaseVideos(prev => patchLocalList(prev));
+        setWatchHistory(prev => patchLocalList(prev));
+
+        console.info(firebasePatchSucceeded ? '已修正影片 userId 為最新頻道 ID:' : '已本機修正影片 userId，等待 Firestore rules 放行後才能寫回:', {
+          videoId: videoDocId,
+          oldUserId: currentVideoUserId,
+          latestUserId
+        });
+      }
+
+      return fixedVideo;
+    } catch (error) {
+      console.warn('檢查/修正影片 userId 失敗，先使用原影片資料:', error);
+      return video;
+    }
+  };
+
 const handleVideoClick = async (video) => {
     const ytId = getYoutubeIdFromVideo(video);
 
@@ -4948,11 +5094,9 @@ const handleVideoClick = async (video) => {
       return;
     }
 
+    // 先進播放頁，不等待 Firestore 檢查/修正，避免因 rules denied 需要點很多次才進得去。
     setIsVideoLoading(true);
-
-    // 先把播放頁訂閱數重設成這支影片自己的，避免沿用上一個頻道
     setLiveSubscriberCount(Number(video?.subscriberCount ?? 0));
-
     setSelectedVideo(video);
     setCurrentView('watch');
     navigate(`/watch/${ytId}`);
@@ -4960,19 +5104,40 @@ const handleVideoClick = async (video) => {
 
     setTimeout(() => {
       setIsVideoLoading(false);
-    }, 450);
+    }, 350);
 
-    setWatchHistory(prev => {
-      const videoKey = getVideoMenuKey(video);
-      const nextHistory = [
-        { ...video, watchedAt: new Date().toISOString() },
-        ...normalizeLibraryArray(prev).filter(item => getVideoMenuKey(item) !== videoKey)
-      ].slice(0, 300);
-      localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
-      return nextHistory;
-    });
+    const writeLocalHistory = (historyVideo) => {
+      setWatchHistory(prev => {
+        const videoKey = getVideoMenuKey(historyVideo);
+        const nextHistory = [
+          { ...historyVideo, watchedAt: new Date().toISOString() },
+          ...normalizeLibraryArray(prev).filter(item => getVideoMenuKey(item) !== videoKey)
+        ].slice(0, 300);
+        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
+        return nextHistory;
+      });
+    };
 
+    writeLocalHistory(video);
+
+    // Firebase 觀看紀錄權限不足時只記 console，不阻塞播放。
     syncWatchHistoryToFirebase(video);
+
+    // 背景檢查影片 userId 是否是舊頻道 ID；若能修正就更新 selectedVideo 與本機清單。
+    resolveLatestVideoChannelIdentity(video).then((fixedVideo) => {
+      if (!fixedVideo || getVideoMenuKey(fixedVideo) !== getVideoMenuKey(video)) return;
+      const oldRouteId = String(getVideoChannelRouteId(video) || '').trim();
+      const newRouteId = String(getVideoChannelRouteId(fixedVideo) || '').trim();
+      const changed = Boolean(newRouteId && oldRouteId !== newRouteId);
+      if (!changed) return;
+
+      setSelectedVideo(fixedVideo);
+      setLiveSubscriberCount(Number(fixedVideo?.subscriberCount ?? 0));
+      writeLocalHistory(fixedVideo);
+      syncWatchHistoryToFirebase(fixedVideo);
+    }).catch((error) => {
+      console.warn('背景檢查影片 userId 失敗，已不阻塞播放:', error);
+    });
 
     const isMockVideo = ['1','2','3','4','5','6','7','8','9','10','11','12','13'].includes(video.id);
     if (!isMockVideo) {
