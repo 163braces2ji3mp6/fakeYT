@@ -676,17 +676,9 @@ function LeafHubApp() {
         createdAt: idData.createdAt || legacyData.createdAt || new Date().toISOString()
       }, { merge: true });
 
-      // 🟡 先保留舊版 Channels/{username}，不刪除，只補上 canonicalChannelId 方便之後讀取
-      if (String(channelDoc.id) !== String(canonicalUserId)) {
-        await setDoc(doc(db, 'Channels', channelDoc.id), {
-          ...channelDoc.data(),
-          canonicalChannelId: canonicalUserId,
-          userId: channelDoc.data().userId || canonicalUserId,
-          avatar: legacyData.avatar || resolvedAvatar,
-          subscriberCount: pickSubscriberCount(legacyData.subscriberCount, preservedSubscriberCount),
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      }
+      // 舊版曾經用 username/displayName 當 Channels 文件 ID。
+      // 這裡不能再 setDoc(Channels/{username})，否則你手動刪掉舊頻道後，它會被 migration 又生回來。
+      // 現在只保留 Channels/{canonicalUserId}，舊文件請在 Firebase 手動刪除即可，不會再由前端重建。
 
       // 順手補同頻道舊影片的 userId / avatar，其他帳號之後就能讀到新版 userId
       for (const videoDoc of videosSnapshot.docs) {
@@ -2442,7 +2434,13 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       updatedAt: new Date().toISOString()
     };
 
-    await setDoc(doc(db, 'Channels', cleanChannelId), googleProfilePatch, { merge: true });
+    const googleChannelRef = doc(db, 'Channels', cleanChannelId);
+    const googleChannelSnap = await getDoc(googleChannelRef);
+    if (!googleChannelSnap.exists()) {
+      console.warn('Google profile 同步略過不存在的頻道，避免重建舊 ID:', cleanChannelId);
+      return channelData;
+    }
+    await setDoc(googleChannelRef, googleProfilePatch, { merge: true });
 
     if (firebaseUser.uid) {
       await setDoc(doc(db, 'Users', firebaseUser.uid), {
@@ -2725,24 +2723,11 @@ const findChannelByAuthUser = async (firebaseUser) => {
         if (indexedChannelId && !indexedChannelId.includes('/')) {
           const channelSnap = await getDoc(doc(db, 'Channels', indexedChannelId));
           if (channelSnap.exists()) return repairAndReturnChannel(channelSnap, 'users-index');
-          return {
-            id: indexedChannelId,
-            data: {
-              userId: indexedChannelId,
-              customId: indexedChannelId,
-              name: indexData.name || indexedChannelId,
-              username: indexData.username || indexData.name || indexedChannelId,
-              channelName: indexData.channelName || indexData.name || indexedChannelId,
-              avatar: indexData.avatar || GUEST_AVATAR,
-              ownerUid: uid,
-              email: indexData.email || email,
-              emailLower: indexData.emailLower || emailLower,
-              authProvider: indexData.provider || 'email',
-              linkedProviders: ['custom-id', 'email'],
-              idLocked: true,
-              subscriberCount: 0
-            }
-          };
+
+          // Users/{auth.uid} 可能還殘留舊 channelId。以前這裡會合成一個頻道資料，後續流程又把舊 Channels/{id} 寫回 Firebase。
+          // 現在如果 Channels/{indexedChannelId} 不存在，就視為舊索引失效，不再還原、不再重建舊頻道。
+          console.warn('Users 索引指向已刪除或不存在的頻道，已略過自動還原:', indexedChannelId);
+          return null;
         }
       }
     }
@@ -4190,7 +4175,51 @@ const handleLogoutId = async () => {
 
     const finalName = String(channelName || '').trim() || localUsername || '';
     const finalAvatar = channelAvatar || GUEST_AVATAR;
-    const routeKey = String(providedUserId || finalName || '').trim();
+
+    const resolveChannelRouteKey = async () => {
+      const directId = String(providedUserId || '').trim();
+      if (directId && !directId.includes('/') && directId !== finalName) return directId;
+
+      // 先從目前已知影片資料找：影片顯示名稱可能是藝名，但 userId/username 才是正確網址 key。
+      const knownVideosForChannel = [
+        ...(selectedVideo ? [selectedVideo] : []),
+        ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+        ...(Array.isArray(videos) ? videos : []),
+        ...(Array.isArray(searchFirebaseVideos) ? searchFirebaseVideos : []),
+        ...(Array.isArray(watchHistory) ? watchHistory : [])
+      ];
+
+      const matchedVideo = knownVideosForChannel.find(video => {
+        const videoDisplayName = String(getVideoDisplayName(video) || '').trim();
+        const rawNames = [video.channel, video.author, video.creatorName, video.channelName, video.name]
+          .map(value => String(value || '').trim())
+          .filter(Boolean);
+        return videoDisplayName === finalName || rawNames.includes(finalName);
+      });
+
+      const videoRouteId = getVideoChannelRouteId(matchedVideo || {});
+      if (videoRouteId && !videoRouteId.includes('/') && videoRouteId !== finalName) return videoRouteId;
+
+      // 再查 Channels：只要找到對應頻道，就用文件 id / userId，而不是用顯示名稱進 URL。
+      if (finalName) {
+        const fieldsToCheck = ['username', 'name', 'channelName'];
+        for (const fieldName of fieldsToCheck) {
+          const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', finalName), limit(1)));
+          if (!snap.empty) {
+            const foundDoc = snap.docs[0];
+            const data = foundDoc.data() || {};
+            return String(data.userId || data.customId || data.id || foundDoc.id || '').trim();
+          }
+        }
+      }
+
+      // 找不到穩定 ID 就不要用顯示名稱進 URL，避免 /channel/Playboi%20carti 這種假頻道路由。
+      if (directId && !directId.includes('/')) return directId;
+      console.warn('找不到頻道穩定 ID，已取消導覽，避免建立錯誤頻道:', finalName);
+      return '';
+    };
+
+    const routeKey = await resolveChannelRouteKey();
     if (!routeKey) return;
 
     const channelRequestId = channelNavigationRequestRef.current + 1;
@@ -4200,15 +4229,14 @@ const handleLogoutId = async () => {
     setIsVideoLoading(false);
     setCurrentView('channel');
     setChannelTab('videos');
-    // 點進頻道先直接顯示已知的頻道資料，真正讀取交給 /channel/:key route effect，避免連續 buffer。
-    setIsChannelLoading(false);
-    stopChannelContentBuffer();
+    setIsChannelLoading(true);
+    startChannelContentBuffer(420);
     forceScrollToTop();
 
-    // 只做本機暫存顯示，不在點進別人頻道時寫 Channels / Videos，避免權限錯誤與循環重載。
+    // 只做本機暫存顯示，不在點進別人頻道時寫 Channels / Videos，避免誤建立新頻道。
     setTargetChannel({
-      userId: providedUserId || '',
-      id: providedUserId || '',
+      userId: routeKey,
+      id: routeKey,
       name: finalName || routeKey,
       username: finalName || routeKey,
       channelName: finalName || routeKey,
@@ -4216,7 +4244,7 @@ const handleLogoutId = async () => {
       bio: '',
       subscriberCount: 0
     });
-    setTargetChannelUserId(providedUserId || '');
+    setTargetChannelUserId(routeKey);
 
     const nextPath = `/channel/${encodeURIComponent(routeKey)}`;
     if (location.pathname !== nextPath) {
@@ -4252,7 +4280,7 @@ const handleLogoutId = async () => {
       if (channelData) {
         const resolvedName = channelData.name || channelData.username || channelData.channelName || finalName || routeKey;
         const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || finalAvatar || GUEST_AVATAR);
-        const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
+        const resolvedSubscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
         setTargetChannel({
           ...channelData,
           userId: channelDocId,
@@ -4265,7 +4293,6 @@ const handleLogoutId = async () => {
           subscriberCount: resolvedSubscriberCount
         });
         setTargetChannelUserId(channelDocId);
-        setLiveSubscriberCount(resolvedSubscriberCount);
       }
     } catch (error) {
       console.warn('讀取頻道資料失敗:', error);
@@ -6482,6 +6509,22 @@ const canManageComment = (comment = {}) => {
     return video.channel || video.author || video.creatorName || video.username || video.channelName || localUsername || '小葉';
   };
 
+  // 頻道網址一定優先使用頻道的穩定 ID，不使用顯示名稱。
+  // 例如影片顯示名稱是「Playboi carti」，但真正頻道 ID 是 kingvamps，就要導到 /channel/kingvamps。
+  const getVideoChannelRouteId = (video = {}) => {
+    return String(
+      video.userId ||
+      video.uid ||
+      video.ownerId ||
+      video.channelId ||
+      video.customId ||
+      video.creatorId ||
+      video.authorId ||
+      video.username ||
+      ''
+    ).trim();
+  };
+
   const getVideoAvatarSrc = (video = {}) => {
     const displayName = getVideoDisplayName(video);
     const isOwnVideo =
@@ -6795,7 +6838,7 @@ const renderVideoQuickMenu = (video = {}, placement = 'inline') => {
             src={avatarSrc}
             alt={displayName}
             className="channel-avatar channel-avatar-clickable"
-            onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
+            onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, getVideoChannelRouteId(video))}
             style={{ cursor: 'pointer', flexShrink: 0 }}
             onError={(e) => {
               e.currentTarget.src = GUEST_AVATAR;
@@ -6819,7 +6862,7 @@ const renderVideoQuickMenu = (video = {}, placement = 'inline') => {
                 </h3>
                 <p
                   className="channel-name channel-name-clickable"
-                  onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
+                  onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, getVideoChannelRouteId(video))}
                   style={{ cursor: 'pointer', display: 'block', margin: '6px 0 3px 0', lineHeight: 1.25 }}
                 >
                   {displayName}
@@ -8368,7 +8411,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                                 {formatViews(video.views)} • {video.createdAt ? formatTimeAgo(video.createdAt) : (video.time || '剛剛')}
                               </p>
                               <div
-                                onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, video.userId)}
+                                onClick={(e) => handleChannelNavigation(displayName, avatarSrc, e, getVideoChannelRouteId(video))}
                                 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#aaa', fontSize: '13px' }}
                               >
                                 <img
