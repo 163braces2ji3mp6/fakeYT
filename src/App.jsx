@@ -1,7 +1,7 @@
 /* ==============================
   01. Imports / 樣式與 Firebase 依賴
 ============================== */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import './App.css'
 import { 
   subscribeToVideos, 
@@ -57,6 +57,7 @@ const YOUTUBE_VIDEOS_API_URL = 'https://www.googleapis.com/youtube/v3/videos';
 const YOUTUBE_STATUS_CHECK_INTERVAL_MS = 15 * 60 * 1000; // 前端開著時每 15 分鐘輔助檢查一次
 const YOUTUBE_STATUS_CHECK_COOLDOWN_MS = 60 * 60 * 1000; // 同一支影片 1 小時內不重複檢查
 const HOME_VIDEO_PAGE_SIZE = 24; // 首頁每次顯示 24 部影片
+const SUBSCRIPTION_VIDEO_PAGE_SIZE = 24; // 訂閱頁每次顯示 24 部影片
 const HOME_RECOMMENDATION_POOL_SIZE = 96; // 每次先抓較大的候選池，再做推薦與隨機洗牌，避免首頁永遠只看到最新 24 部
 
 // ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
@@ -421,13 +422,14 @@ const sortComments = (commentList, sortType = 'likes') => {
 ========================================================= */
 export default function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
       <Routes>
         <Route path="/" element={<LeafHubApp />} />
         <Route path="/subscriptions" element={<LeafHubApp />} />
         <Route path="/history" element={<LeafHubApp />} />
         <Route path="/liked" element={<LeafHubApp />} />
         <Route path="/account-security" element={<LeafHubApp />} />
+        <Route path="/search=:routeSearchQuery" element={<LeafHubApp />} /> {/* legacy fallback: redirects to /?search=... */}
         <Route path="/channel/:channelKey" element={<LeafHubApp />} />
         <Route path="/watch/:videoId" element={<LeafHubApp />} />
         <Route path="*" element={<NotFoundPage />} />
@@ -480,7 +482,52 @@ function NotFoundPage() {
 function LeafHubApp() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { videoId: routeVideoId, channelKey: routeChannelKey } = useParams();
+  const { videoId: routeVideoId, channelKey: routeChannelKey, routeSearchQuery } = useParams();
+
+  // /fakeYT/channel/user_xxxx 重新整理時，React Router basename 或舊快取偶爾會讓 routeChannelKey 還沒就緒。
+  // 這裡直接從實際網址再解析一次，確保頻道頁永遠以網址上的 channel key 為準。
+  const getChannelKeyFromBrowserPath = () => {
+    if (typeof window === 'undefined') return '';
+    const basePath = String(import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
+    let path = window.location.pathname || '';
+    if (basePath && basePath !== '/' && path.startsWith(basePath)) {
+      path = path.slice(basePath.length) || '/';
+    }
+    const match = path.match(/^\/channel\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  };
+
+  const effectiveRouteChannelKey = routeChannelKey || getChannelKeyFromBrowserPath();
+
+  // 搜尋網址只改 query string，不切換成新的頁面：/fakeYT/?search=bully+story。
+  const decodeSearchUrlValue = (value = '') => {
+    try {
+      return decodeURIComponent(String(value || '').replace(/\+/g, ' ')).trim();
+    } catch {
+      return String(value || '').replace(/\+/g, ' ').trim();
+    }
+  };
+
+  const encodeSearchUrlValue = (value = '') => encodeURIComponent(String(value || '').trim()).replace(/%20/g, '+');
+
+  const getLegacySearchQueryFromBrowserPath = () => {
+    if (typeof window === 'undefined') return '';
+    const basePath = String(import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
+    let path = window.location.pathname || '';
+    if (basePath && basePath !== '/' && path.startsWith(basePath)) {
+      path = path.slice(basePath.length) || '/';
+    }
+    const legacyMatch = path.match(/^\/search=(.+)$/);
+    return legacyMatch ? decodeSearchUrlValue(legacyMatch[1]) : '';
+  };
+
+  const getSearchQueryFromUrl = () => {
+    const params = new URLSearchParams(location.search || '');
+    return decodeSearchUrlValue(params.get('search') || params.get('q') || '');
+  };
+
+  const legacyRouteSearchQuery = decodeSearchUrlValue(routeSearchQuery || '') || getLegacySearchQueryFromBrowserPath();
+  const effectiveRouteSearchQuery = getSearchQueryFromUrl() || legacyRouteSearchQuery;
 
 
   /* ------------------------------
@@ -717,10 +764,12 @@ const toastTimeoutRef = useRef(null);
   const youtubeCleanupRunningRef = useRef(false);
   const hasRunInitialYoutubeCleanupRef = useRef(false);
   const lastYoutubeCleanupSignatureRef = useRef('');
-  const activeChannelSubscriptionKeyRef = useRef(''); 
+  const activeChannelSubscriptionKeyRef = useRef('');
+  const subscriptionVideosRequestRef = useRef(0); 
   const [currentView, setCurrentView] = useState(() => {
     if (routeVideoId) return 'watch';
-    if (routeChannelKey) return 'channel';
+    if (effectiveRouteChannelKey) return 'channel';
+    if (effectiveRouteSearchQuery) return 'home';
     if (location.pathname === '/subscriptions') return 'subscriptions';
     if (location.pathname === '/history') return 'history';
     if (location.pathname === '/liked') return 'liked';
@@ -735,8 +784,8 @@ const toastTimeoutRef = useRef(null);
   }, [currentView]); 
 
   const [activeCategory, setActiveCategory] = useState('全部');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchInputStr, setSearchInputStr] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => effectiveRouteSearchQuery || '');
+  const [searchInputStr, setSearchInputStr] = useState(() => effectiveRouteSearchQuery || '');
   const [suggestions, setSuggestions] = useState([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [searchHistory, setSearchHistory] = useState(() => {
@@ -758,12 +807,18 @@ const toastTimeoutRef = useRef(null);
 const [homeLastVideoDoc, setHomeLastVideoDoc] = useState(null);
 const [hasMoreHomeVideos, setHasMoreHomeVideos] = useState(true);
 const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
+const [subscriptionVideos, setSubscriptionVideos] = useState([]);
+const [subscriptionVideoPage, setSubscriptionVideoPage] = useState(1);
+const [hasMoreSubscriptionVideos, setHasMoreSubscriptionVideos] = useState(true);
+const [isSubscriptionVideosLoading, setIsSubscriptionVideosLoading] = useState(false);
+const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = useState(false);
 
   // 搜尋模式專用：搜尋時才從 Firebase 抓完整 Videos，避免首頁一次讀全部影片
   const [searchFirebaseVideos, setSearchFirebaseVideos] = useState([]);
   const [hasLoadedAllSearchVideos, setHasLoadedAllSearchVideos] = useState(false);
   const [isSearchFirebaseLoading, setIsSearchFirebaseLoading] = useState(false);
   const [isSearchResultsBuffering, setIsSearchResultsBuffering] = useState(false);
+  const [searchChannelProfiles, setSearchChannelProfiles] = useState({});
   
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [isFirstInit, setIsFirstInit] = useState(true);
@@ -776,10 +831,10 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   const [watchRecommendedVideos, setWatchRecommendedVideos] = useState([]);
   const [isWatchRecommendationsLoading, setIsWatchRecommendationsLoading] = useState(false);
-  const [isChannelLoading, setIsChannelLoading] = useState(false);
-  const [isChannelContentBuffering, setIsChannelContentBuffering] = useState(false);
+  const [isChannelLoading, setIsChannelLoading] = useState(() => Boolean(effectiveRouteChannelKey));
+  const [isChannelContentBuffering, setIsChannelContentBuffering] = useState(() => Boolean(effectiveRouteChannelKey));
   const [channelVideos, setChannelVideos] = useState([]);
-  const [isChannelVideosLoading, setIsChannelVideosLoading] = useState(false);
+  const [isChannelVideosLoading, setIsChannelVideosLoading] = useState(() => Boolean(effectiveRouteChannelKey));
 
 
   /* ------------------------------
@@ -794,7 +849,7 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   // 🟢 新增狀態：用來動態儲存「正在瀏覽的頻道主」的真實 Firebase 資料
   const [targetChannelUserId, setTargetChannelUserId] = useState('');
 
-  // 🟢 核心功能：初始化使用者身份，並同步寫入 Firebase 資料庫
+  // 🟢 核心功能：初始化本機使用者身份。注意：這會比 route 的 Channels 讀取更早跑，所以頻道頁必須靠 channel loading 避免先顯示本機 user/半套資料。
   // 🟢 找到這個 useEffect 並替換它
   useEffect(() => {
     const initUserIdentity = async () => {
@@ -867,6 +922,22 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   const [liveSubscriberCount, setLiveSubscriberCount] = useState(0);
 
   const [targetChannel, setTargetChannel] = useState(() => {
+    // 直接開 /channel/:key 或重新整理時，不要先吃 localStorage 裡上一個「自己的頻道」，避免畫面先跳自己再跳回正確頻道。
+    if (effectiveRouteChannelKey) {
+      const decodedKey = decodeURIComponent(effectiveRouteChannelKey);
+      const looksLikeUserId = decodedKey.startsWith('user_') || decodedKey === 'shiauye_official';
+      return {
+        name: decodedKey,
+        username: decodedKey,
+        channelName: decodedKey,
+        avatar: GUEST_AVATAR,
+        bio: '',
+        id: looksLikeUserId ? decodedKey : '',
+        userId: looksLikeUserId ? decodedKey : '',
+        subscriberCount: 0
+      };
+    }
+
     const savedTarget = localStorage.getItem('leafhub_targetChannel');
     return savedTarget ? JSON.parse(savedTarget) : {
       name: '',
@@ -928,25 +999,59 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
   }, [currentView, selectedVideo, routeVideoId, location.pathname]);
 
   useEffect(() => {
+    // 頻道頁以網址為準，不把 targetChannel 寫進 localStorage，避免重新整理先吃到自己的舊頻道。
+    if (effectiveRouteChannelKey) return;
+
     if (targetChannel) {
       localStorage.setItem('leafhub_targetChannel', JSON.stringify(targetChannel));
     } else {
       localStorage.removeItem('leafhub_targetChannel');
     }
-  }, [targetChannel]);
+  }, [targetChannel, effectiveRouteChannelKey]);
+
+  // 頻道頁保護：只要網址是 /channel/:key，畫面永遠先鎖在網址指定的頻道，避免 0.x 秒跳成自己的頻道。
+  useLayoutEffect(() => {
+    if (!effectiveRouteChannelKey) return;
+
+    const decodedKey = decodeURIComponent(effectiveRouteChannelKey);
+    const looksLikeUserId = decodedKey.startsWith('user_') || decodedKey === 'shiauye_official';
+    const ownId = String(currentUserId || '').trim();
+    const currentTargetId = String(targetChannel?.userId || targetChannel?.id || targetChannelUserId || '').trim();
+    const currentTargetName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const currentLooksOwn = ownId && ownId !== 'loading...' && currentTargetId === ownId && decodedKey !== ownId;
+    const currentLooksWrongRoute = currentTargetId && currentTargetId !== decodedKey && looksLikeUserId;
+    const currentEmpty = !currentTargetId && !currentTargetName;
+
+    if (currentLooksOwn || currentLooksWrongRoute || currentEmpty) {
+      setTargetChannel({
+        userId: looksLikeUserId ? decodedKey : '',
+        id: looksLikeUserId ? decodedKey : '',
+        name: decodedKey,
+        username: decodedKey,
+        channelName: decodedKey,
+        avatar: GUEST_AVATAR,
+        bio: '',
+        subscriberCount: 0
+      });
+      setTargetChannelUserId(looksLikeUserId ? decodedKey : '');
+      setIsChannelLoading(true);
+      setIsChannelVideosLoading(true);
+      startChannelContentBuffer(420);
+    }
+  }, [effectiveRouteChannelKey, currentUserId, targetChannel?.userId, targetChannel?.id, targetChannel?.name, targetChannelUserId]);
+
 
   useEffect(() => {
     if (localUsername === '載入中...') return;
 
+    const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
     const targetId = String(targetChannel?.userId || targetChannelUserId || '').trim();
-    const targetName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
     const ownId = String(currentUserId || '').trim();
-    const isOwnTarget = Boolean(
-      (targetId && ownId && targetId === ownId) ||
-      (targetName && targetName === localUsername)
-    );
 
-    // 只同步「自己的頻道」。不要因為 targetChannel 暫時是空的，就把別人的頻道蓋成自己。
+    // 在 /channel/別人ID 時，絕對不要把 targetChannel 同步成自己的資料。
+    if (routeKey && ownId && ownId !== 'loading...' && routeKey !== ownId) return;
+
+    const isOwnTarget = Boolean(targetId && ownId && ownId !== 'loading...' && targetId === ownId);
     if (currentView === 'channel' && isOwnTarget) {
       setTargetChannel(prev => ({
         ...prev,
@@ -957,21 +1062,17 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
         avatar: unifiedAvatar
       }));
     }
-  }, [localUsername, currentUserAvatar, currentUserId, currentView, targetChannel?.userId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName, targetChannelUserId]);
+  }, [localUsername, currentUserAvatar, currentUserId, currentView, targetChannel?.userId, targetChannelUserId, effectiveRouteChannelKey]);
 
   // 🟢 修正版：只處理自己（localUsername）的同步，絕對不亂用 'member' 覆蓋 ID！
   useEffect(() => {
-    if (currentView === 'channel' && targetChannel?.name) {
-      // 如果點擊的是自己，同步用當前的 currentUserId
-      if (targetChannel.name === localUsername) {
-        setTargetChannelUserId(currentUserId);
-        return;
-      }
-      
-      // 💡 重點：如果是別人，handleChannelNavigation 已經在點擊時處理完 Firebase 的寫入與讀取了，
-      // 這裡絕對不要再去 fetch 覆蓋它！直接保持原樣即可。
+    if (currentView !== 'channel') return;
+    const targetId = String(targetChannel?.userId || targetChannelUserId || '').trim();
+    const ownId = String(currentUserId || '').trim();
+    if (targetId && ownId && ownId !== 'loading...' && targetId === ownId) {
+      setTargetChannelUserId(ownId);
     }
-  }, [currentView, targetChannel?.name, localUsername, currentUserId]);
+  }, [currentView, targetChannel?.userId, targetChannelUserId, currentUserId]);
 
 
   /* ------------------------------
@@ -1108,14 +1209,49 @@ const [isLoadingMoreHomeVideos, setIsLoadingMoreHomeVideos] = useState(false);
 
   const normalizeLibraryArray = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
 
-  const normalizeLibraryData = (data = {}) => ({
-    likedVideoIds: normalizeLibraryArray(data.likedVideoIds).map(item => String(item)).filter(Boolean),
-    subscribedChannels: normalizeLibraryArray(data.subscribedChannels)
+  const normalizeLibraryData = (data = {}) => {
+    const detailList = normalizeLibraryArray(data.subscribedChannelDetails)
+      .filter(Boolean)
+      .map(detail => ({
+        ...detail,
+        userId: String(detail.userId || detail.id || '').trim(),
+        name: detail.name || detail.username || detail.channelName || detail.channel || detail.author || ''
+      }));
+
+    const nameToUserId = new Map();
+    detailList.forEach(detail => {
+      const uid = String(detail.userId || '').trim();
+      const names = [detail.name, detail.username, detail.channelName, detail.channel, detail.author, detail.creatorName]
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+      if (uid) names.forEach(name => nameToUserId.set(name, uid));
+    });
+
+    const subscribedIds = normalizeLibraryArray(data.subscribedChannels)
       .map(item => String(item).trim())
-      .filter(item => item && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(item)),
-    subscribedChannelDetails: normalizeLibraryArray(data.subscribedChannelDetails),
-    watchHistory: normalizeLibraryArray(data.watchHistory).slice(0, 300)
-  });
+      .filter(item => item && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(item))
+      .map(item => nameToUserId.get(item) || item)
+      .filter(Boolean);
+
+    detailList.forEach(detail => {
+      if (detail.userId) subscribedIds.push(detail.userId);
+    });
+
+    const uniqueSubscribedIds = Array.from(new Set(subscribedIds));
+    const detailMap = new Map();
+    detailList.forEach(detail => {
+      const key = detail.userId || detail.name || detail.username || detail.channelName;
+      if (!key) return;
+      detailMap.set(key, detail);
+    });
+
+    return {
+      likedVideoIds: normalizeLibraryArray(data.likedVideoIds).map(item => String(item)).filter(Boolean),
+      subscribedChannels: uniqueSubscribedIds,
+      subscribedChannelDetails: Array.from(detailMap.values()),
+      watchHistory: normalizeLibraryArray(data.watchHistory).slice(0, 300)
+    };
+  };
 
   const getLegacyLocalLibraryData = () => normalizeLibraryData({
     likedVideoIds: safeParseArrayFromStorage('leafhub_likedVideos'),
@@ -1515,14 +1651,18 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       setIsPageLoading(false);
       setIsSearchResultsBuffering(false);
 
-      if (location.pathname !== '/') navigate('/');
+      if (location.pathname !== '/' || location.search) navigate('/');
       setCurrentView('home');
       setActiveCategory('全部');
       forceScrollToTop();
       return;
     }
 
-    if (location.pathname !== '/') navigate('/');
+    const nextSearch = `?search=${encodeSearchUrlValue(cleanQuery)}`;
+    // 搜尋結果網址固定使用 /?search=xxx；打字本身不會跳頁，只有按 Enter 或搜尋按鈕才會切到搜尋結果。
+    if (location.pathname !== '/' || location.search !== nextSearch) {
+      navigate({ pathname: '/', search: nextSearch });
+    }
     setCurrentView('home');
     setActiveCategory('全部');
     setSearchInputStr(cleanQuery);
@@ -1532,12 +1672,37 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     saveSearchHistory(cleanQuery);
     forceScrollToTop();
 
-    // 搜尋時才讀取 Firebase 全部影片；第一次搜尋期間顯示 skeleton buffer，直到完整資料抓回來並 render 完成。
-    if (!hasLoadedAllSearchVideos) {
-      setIsSearchResultsBuffering(true);
+    // 搜尋時先顯示搜尋結果頁骨架；第一次搜尋等 Firebase 完整資料，之後搜尋也短暫顯示骨架避免畫面閃空白或先顯示 0 筆。
+    setIsSearchResultsBuffering(true);
+    if (hasLoadedAllSearchVideos) {
+      setTimeout(() => setIsSearchResultsBuffering(false), 180);
     }
     loadAllVideosForSearch();
   };
+
+  // 直接開 /?search=bully+story 或上一頁/下一頁切換搜尋網址時，同步搜尋狀態。
+  // 舊版 /search=bully+story 會被 replace 成 /?search=bully+story，避免掉進 404 或變成另一個頁面。
+  useEffect(() => {
+    if (legacyRouteSearchQuery && location.pathname !== '/') {
+      // 舊網址 /search=xxx 只做相容轉址，轉成 /?search=xxx。
+      navigate({ pathname: '/', search: `?search=${encodeSearchUrlValue(legacyRouteSearchQuery)}` }, { replace: true });
+      return;
+    }
+
+    if (!effectiveRouteSearchQuery) return;
+    setCurrentView('home');
+    setActiveCategory('全部');
+    setSearchInputStr(effectiveRouteSearchQuery);
+    setSearchQuery(effectiveRouteSearchQuery);
+    setShowSearchDropdown(false);
+    setIsPageLoading(false);
+    setIsSearchResultsBuffering(true);
+    if (hasLoadedAllSearchVideos) {
+      setTimeout(() => setIsSearchResultsBuffering(false), 180);
+    }
+    saveSearchHistory(effectiveRouteSearchQuery);
+    loadAllVideosForSearch();
+  }, [effectiveRouteSearchQuery, legacyRouteSearchQuery, location.pathname, location.search]);
 
   useEffect(() => {
     let activeChannelInfo = null;
@@ -2694,7 +2859,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
       try {
         const found = await findChannelByAuthUser(firebaseUser);
         if (found && String(found.id || '') !== String(currentUserId || '')) {
-          const routeKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+          const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
           const foundCandidates = getChannelIdentityCandidates({
             ...found.data,
             userId: found.id,
@@ -2703,7 +2868,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
           const isViewingFoundOwnChannel = currentView === 'channel' && routeKey && foundCandidates.some(candidate => sameChannelValue(candidate, routeKey));
           applyChannelLoginData(found.id, found.data, firebaseUser, {
             preferGoogleProfile: Boolean((found.data?.linkedProviders || []).includes('google') || found.data?.authProvider === 'google'),
-            updateTargetChannel: currentView !== 'channel' || isViewingFoundOwnChannel
+            updateTargetChannel: !effectiveRouteChannelKey || isViewingFoundOwnChannel
           });
         }
       } catch (error) {
@@ -3781,8 +3946,13 @@ const handleLogoutId = async () => {
       return;
     }
 
-    if (routeChannelKey) {
+    if (effectiveRouteChannelKey) {
       setCurrentView(prev => prev === 'channel' ? prev : 'channel');
+      return;
+    }
+
+    if (effectiveRouteSearchQuery) {
+      setCurrentView(prev => prev === 'home' ? prev : 'home');
       return;
     }
 
@@ -3796,7 +3966,7 @@ const handleLogoutId = async () => {
 
     const nextView = pathToView[location.pathname] || 'home';
     setCurrentView(prev => prev === nextView ? prev : nextView);
-  }, [location.pathname, routeVideoId, routeChannelKey]);
+  }, [location.pathname, location.search, routeVideoId, effectiveRouteChannelKey, effectiveRouteSearchQuery]);
 
   // 🟢 直接開啟 /watch/YouTube影片ID 時，從影片清單找出正確影片並進入播放頁。
   useEffect(() => {
@@ -3824,42 +3994,81 @@ const handleLogoutId = async () => {
     }
   }, [routeVideoId, videos, rawFirebaseVideos, selectedVideo]);
 
-  // 🟢 直接開啟 /channel/頻道ID 時，盡量從影片資料還原頻道頁。
+  // 🟢 直接開啟 /channel/頻道ID 時，只在網址 channelKey 改變時執行；避免登入狀態/訂閱數更新造成頻道頁跳回自己。
   useEffect(() => {
-    if (!routeChannelKey) return;
+    if (!effectiveRouteChannelKey) return;
 
-    const decodedKey = decodeURIComponent(routeChannelKey);
-    let routeRequestId = channelNavigationRequestRef.current;
+    const decodedKey = decodeURIComponent(effectiveRouteChannelKey);
+    const shouldStartRouteBuffer = lastChannelBufferKeyRef.current !== decodedKey;
+    const routeRequestId = channelNavigationRequestRef.current + 1;
+    channelNavigationRequestRef.current = routeRequestId;
+    lastChannelBufferKeyRef.current = decodedKey;
 
-    if (lastChannelBufferKeyRef.current !== decodedKey) {
-      lastChannelBufferKeyRef.current = decodedKey;
-      routeRequestId = channelNavigationRequestRef.current + 1;
-      channelNavigationRequestRef.current = routeRequestId;
+    setCurrentView(prev => prev === 'channel' ? prev : 'channel');
+    if (shouldStartRouteBuffer) {
       setIsChannelLoading(true);
-      startChannelContentBuffer(650);
-      setTargetChannel({
-        userId: decodedKey,
-        name: '',
-        username: '',
-        channelName: '',
+      setIsChannelVideosLoading(true);
+      startChannelContentBuffer(420);
+    }
+    setTargetChannel(prev => {
+      const prevKey = String(prev?.userId || prev?.id || prev?.name || '').trim();
+      if (prevKey === decodedKey) return prev;
+      const looksLikeUserId = decodedKey.startsWith('user_') || decodedKey === 'shiauye_official';
+      return {
+        userId: looksLikeUserId ? decodedKey : '',
+        id: looksLikeUserId ? decodedKey : '',
+        name: decodedKey,
+        username: decodedKey,
+        channelName: decodedKey,
         avatar: GUEST_AVATAR,
         bio: '',
         subscriberCount: 0
-      });
-      setTargetChannelUserId('');
-    }
+      };
+    });
+    setTargetChannelUserId(decodedKey.startsWith('user_') || decodedKey === 'shiauye_official' ? decodedKey : '');
 
-    // 重新整理 /channel/:key 時直接讀 Channels，避免影片清單還沒載入時退回自己的頻道。
-    (async () => {
+    let cancelled = false;
+
+    const applyResolvedChannel = (channelDocId, channelData = {}, fallbackName = decodedKey, fallbackAvatar = GUEST_AVATAR) => {
+      if (cancelled || channelNavigationRequestRef.current !== routeRequestId) return;
+
+      const resolvedId = String(channelData.userId || channelDocId || '').trim();
+      const resolvedName = channelData.name || channelData.username || channelData.channelName || fallbackName || decodedKey;
+      const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || fallbackAvatar || GUEST_AVATAR);
+      const resolvedBio = getChannelBioValue(channelData);
+      const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
+
+      setTargetChannel({
+        ...channelData,
+        userId: resolvedId,
+        id: resolvedId,
+        name: resolvedName,
+        username: channelData.username || resolvedName,
+        channelName: channelData.channelName || resolvedName,
+        avatar: resolvedAvatar,
+        bio: resolvedBio,
+        BIO: channelData.BIO || resolvedBio,
+        channelBio: channelData.channelBio || resolvedBio,
+        subscriberCount: resolvedSubscriberCount
+      });
+      setTargetChannelUserId(resolvedId);
+      setLiveSubscriberCount(resolvedSubscriberCount);
+      setIsChannelLoading(false);
+      stopChannelContentBuffer();
+    };
+
+    const resolveChannelFromRoute = async () => {
       try {
         let channelDocId = decodedKey;
-        let channelData = {};
-        const directSnap = await getDoc(doc(db, 'Channels', decodedKey));
+        let channelData = null;
 
+        const directSnap = await getDoc(doc(db, 'Channels', decodedKey));
         if (directSnap.exists()) {
           channelData = directSnap.data() || {};
           channelDocId = channelData.userId || directSnap.id;
-        } else {
+        }
+
+        if (!channelData) {
           const fieldsToCheck = ['username', 'name', 'channelName'];
           for (const fieldName of fieldsToCheck) {
             const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', decodedKey), limit(1)));
@@ -3872,92 +4081,31 @@ const handleLogoutId = async () => {
           }
         }
 
-        if (!channelData || Object.keys(channelData).length === 0) return;
-        if (channelNavigationRequestRef.current !== routeRequestId) return;
-
-        const resolvedName = channelData.name || channelData.username || channelData.channelName || decodedKey;
-        const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || GUEST_AVATAR);
-        const resolvedBio = getChannelBioValue(channelData);
-        const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
-
-        setTargetChannel({
-          ...channelData,
-          userId: channelDocId,
-          id: channelDocId,
-          name: resolvedName,
-          username: channelData.username || resolvedName,
-          channelName: channelData.channelName || resolvedName,
-          avatar: resolvedAvatar,
-          bio: resolvedBio,
-          BIO: channelData.BIO || resolvedBio,
-          channelBio: channelData.channelBio || resolvedBio,
-          subscriberCount: resolvedSubscriberCount
-        });
-        setTargetChannelUserId(channelDocId);
-        if (String(channelDocId) !== String(currentUserId || '')) {
-          setLiveSubscriberCount(resolvedSubscriberCount);
+        if (channelData) {
+          applyResolvedChannel(channelDocId, channelData);
+          return;
         }
-        setIsChannelLoading(false);
-        stopChannelContentBuffer();
+
+        // 查不到公開 Channels 時保留網址上的頻道，不要 fallback 成自己的頻道。
+        if (!cancelled && channelNavigationRequestRef.current === routeRequestId) {
+          setIsChannelLoading(false);
+          stopChannelContentBuffer();
+        }
       } catch (error) {
         console.error('路由還原頻道資料失敗:', error);
+        if (!cancelled && channelNavigationRequestRef.current === routeRequestId) {
+          setIsChannelLoading(false);
+          stopChannelContentBuffer();
+        }
       }
-    })();
+    };
 
-    const allVideos = [
-      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
-      ...(Array.isArray(videos) ? videos : []),
-      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
-    ];
+    resolveChannelFromRoute();
 
-    const matchedByUserId = allVideos.find(video => String(video.userId || '') === decodedKey);
-    const matchedByDisplayName = allVideos.find(video => {
-      const displayName = video.channel || video.author || video.creatorName || video.username || '';
-      return String(displayName) === decodedKey;
-    });
-    const matchedVideo = matchedByUserId || matchedByDisplayName;
-
-    if (matchedVideo) {
-      const channelName = matchedVideo.channel || matchedVideo.author || matchedVideo.creatorName || matchedVideo.username || decodedKey;
-      const channelAvatar = channelName === '小葉' ? avatarImage : (matchedVideo.avatar || matchedVideo.creatorAvatar || matchedVideo.channelAvatar || GUEST_AVATAR);
-      const channelUserId = matchedVideo.userId || decodedKey;
-
-      setTargetChannel({
-        userId: channelUserId,
-        name: channelName,
-        username: channelName,
-        channelName,
-        avatar: channelAvatar,
-        bio: '',
-        subscriberCount: Number(matchedVideo?.subscriberCount ?? 0)
-      });
-      setTargetChannelUserId(channelUserId);
-      setTimeout(() => {
-        if (channelNavigationRequestRef.current !== routeRequestId) return;
-        setIsChannelLoading(false);
-        stopChannelContentBuffer();
-      }, 650);
-      return;
-    }
-
-    if (decodedKey === currentUserId || decodedKey === localUsername) {
-      setTargetChannel({
-        userId: currentUserId,
-        name: localUsername,
-        username: localUsername,
-        channelName: localUsername,
-        avatar: unifiedAvatar,
-        bio: '',
-        subscriberCount: liveSubscriberCount
-      });
-      setTargetChannelUserId(currentUserId);
-      setTimeout(() => {
-        if (channelNavigationRequestRef.current !== routeRequestId) return;
-        setIsChannelLoading(false);
-        stopChannelContentBuffer();
-      }, 650);
-    }
-  }, [routeChannelKey, videos, rawFirebaseVideos, currentUserId, localUsername, unifiedAvatar, liveSubscriberCount]);
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveRouteChannelKey]);
 
   const handleHomeNavigation = () => {
     if (bufferTimeoutRef.current) {
@@ -3965,7 +4113,7 @@ const handleLogoutId = async () => {
       bufferTimeoutRef.current = null;
     }
     stopChannelContentBuffer();
-    if (location.pathname !== '/') navigate('/');
+    if (location.pathname !== '/' || location.search) navigate('/');
     setIsPageLoading(true);
     setSearchInputStr('');
     setSearchQuery('');
@@ -4043,328 +4191,96 @@ const handleLogoutId = async () => {
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
   // 第 4 個參數 providedUserId 很重要：其他帳號從影片卡片點進頻道時，可以直接讀到正確 userId
   const handleChannelNavigation = async (channelName, channelAvatar, e, providedUserId = '') => {
-    if (e) e.stopPropagation();
+    if (e?.preventDefault) e.preventDefault();
+    if (e?.stopPropagation) e.stopPropagation();
+
+    const finalName = String(channelName || '').trim() || localUsername || '';
+    const finalAvatar = channelAvatar || GUEST_AVATAR;
+    const routeKey = String(providedUserId || finalName || '').trim();
+    if (!routeKey) return;
 
     const channelRequestId = channelNavigationRequestRef.current + 1;
     channelNavigationRequestRef.current = channelRequestId;
+    lastChannelBufferKeyRef.current = routeKey;
 
-    startPageBuffer(260);
-    startChannelContentBuffer(500);
-    setIsChannelLoading(true);
+    setIsVideoLoading(false);
     setCurrentView('channel');
     setChannelTab('videos');
+    // 點進頻道先直接顯示已知的頻道資料，真正讀取交給 /channel/:key route effect，避免連續 buffer。
+    setIsChannelLoading(false);
+    stopChannelContentBuffer();
     forceScrollToTop();
 
-    const startTime = Date.now();
-    const finalName = channelName || localUsername;
-    const routeKey = providedUserId || finalName;
-    const finalAvatar = channelAvatar || GUEST_AVATAR;
-    const initialBio = getRandomBio();
-
-    // 修正：點頻道時會先 setCurrentView 再 navigate，/channel 路由的 useEffect 也會被觸發。
-    // 先把這次要前往的 routeKey 記起來，避免 route effect 又建立新的 requestId，
-    // 導致下面這個點擊流程被當成「舊請求」而中斷，出現第一次跳錯、第二次才正常。
-    if (routeKey) {
-      lastChannelBufferKeyRef.current = String(routeKey);
-      navigate(`/channel/${encodeURIComponent(routeKey)}`);
-    }
-
-    // 每次點進頻道都重新載入一次；這裡只放暫存資料，避免名稱短暫空白。
+    // 只做本機暫存顯示，不在點進別人頻道時寫 Channels / Videos，避免權限錯誤與循環重載。
     setTargetChannel({
       userId: providedUserId || '',
-      name: finalName || routeKey || '',
-      username: finalName || routeKey || '',
-      channelName: finalName || routeKey || '',
+      id: providedUserId || '',
+      name: finalName || routeKey,
+      username: finalName || routeKey,
+      channelName: finalName || routeKey,
       avatar: finalAvatar,
       bio: '',
       subscriberCount: 0
     });
     setTargetChannelUserId(providedUserId || '');
 
-    if (finalName === '小葉') {
-      const shiauyeChannel = {
-        name: '小葉',
-        username: '小葉',
-        channelName: '小葉',
-        avatar: avatarImage,
-        bio: '這是小葉的官方頻道 ✨ 歡迎訂閱！',
-        userId: 'shiauye_official'
-      };
-      setTimeout(() => {
-        if (channelNavigationRequestRef.current !== channelRequestId) return;
-        setTargetChannel(shiauyeChannel);
-        setTargetChannelUserId('shiauye_official');
-        localStorage.setItem('leafhub_targetChannel', JSON.stringify(shiauyeChannel));
-        setIsChannelLoading(false);
-        stopChannelContentBuffer();
-        stopPageBuffer();
-      }, 650);
+    const nextPath = `/channel/${encodeURIComponent(routeKey)}`;
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
       return;
     }
 
-    const toNumber = (value) => {
-      const num = Number(value ?? 0);
-      return Number.isNaN(num) ? 0 : num;
-    };
-
-    const pickSubscriberCount = (...values) => {
-      return Math.max(...values.map(toNumber), 0);
-    };
-
-    const matchedLocalVideo = (Array.isArray(videos) ? videos : []).find(video => {
-      return (
-        String(video.userId ?? '') === String(providedUserId ?? '') ||
-        String(video.channel ?? '') === String(finalName) ||
-        String(video.author ?? '') === String(finalName) ||
-        String(video.creatorName ?? '') === String(finalName) ||
-        String(video.username ?? '') === String(finalName)
-      );
-    });
-
-    const hintedUserId =
-      providedUserId ||
-      matchedLocalVideo?.userId ||
-      (finalName === localUsername ? currentUserId : '');
-
-    const initialChannelData = {
-      name: finalName,
-      username: finalName,
-      channelName: finalName,
-      avatar: finalAvatar,
-      bio: initialBio,
-      userId: hintedUserId,
-      subscriberCount: matchedLocalVideo?.subscriberCount ?? 0
-    };
-
-    const isInitialOwnChannel =
-      String(hintedUserId || '') === String(currentUserId || '') ||
-      String(finalName || '') === String(localUsername || '');
-
-    if (!isInitialOwnChannel) {
-      setLiveSubscriberCount(Number(matchedLocalVideo?.subscriberCount ?? 0));
-    }
-
-    // 不在這裡顯示 initialChannelData，避免 Firebase 完整資料回來前閃出半成品或上一個頻道。
-    let finalId = hintedUserId;
-    let resolvedAvatar =
-      finalAvatar ||
-      matchedLocalVideo?.avatar ||
-      matchedLocalVideo?.creatorAvatar ||
-      matchedLocalVideo?.channelAvatar ||
-      GUEST_AVATAR;
-    let resolvedSubscriberCount = 0;
-    let idData = {};
-    let legacyData = {};
-    let legacyDocId = finalName;
-
+    // 如果已經在同一個 URL，手動讀一次 Channels，避免點同頻道沒有反應。
     try {
-      // 1) 有 userId 時，永遠先讀 Channels/{userId}
-      if (finalId) {
-        const idSnap = await getDoc(doc(db, 'Channels', finalId));
-        if (idSnap.exists()) {
-          idData = idSnap.data();
-          finalId = idData.userId || finalId;
-        }
+      let channelDocId = routeKey;
+      let channelData = null;
+      const directSnap = await getDoc(doc(db, 'Channels', routeKey));
+      if (directSnap.exists()) {
+        channelData = directSnap.data() || {};
+        channelDocId = channelData.userId || directSnap.id;
       }
 
-      // 2) 先用新版欄位查詢 name / username / channelName，優先找到真正的 userId 文件
-      if (!finalId) {
+      if (!channelData && finalName) {
         const fieldsToCheck = ['username', 'name', 'channelName'];
         for (const fieldName of fieldsToCheck) {
-          const q = query(collection(db, 'Channels'), where(fieldName, '==', finalName));
-          const snap = await getDocs(q);
-
+          const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', finalName), limit(1)));
           if (!snap.empty) {
-            const idFirstDoc = snap.docs.find(channelDoc => {
-              const data = channelDoc.data();
-              return Boolean(
-                data.userId ||
-                data.canonicalChannelId ||
-                String(channelDoc.id).startsWith('user_') ||
-                String(channelDoc.id) === 'shiauye_official'
-              );
-            }) || snap.docs[0];
-
-            const data = idFirstDoc.data();
-            finalId = data.userId || data.canonicalChannelId || (String(idFirstDoc.id).startsWith('user_') ? idFirstDoc.id : '');
-            idData = data;
+            const foundDoc = snap.docs[0];
+            channelData = foundDoc.data() || {};
+            channelDocId = channelData.userId || foundDoc.id;
             break;
           }
         }
       }
 
-      // 3) 讀舊版 Channels/{username}，用來補 avatar / subscriberCount
-      const legacySnap = await getDoc(doc(db, 'Channels', finalName));
-      if (legacySnap.exists()) {
-        legacyData = legacySnap.data();
-        legacyDocId = legacySnap.id;
+      if (channelNavigationRequestRef.current !== channelRequestId) return;
 
-        if (!finalId) {
-          finalId = legacyData.userId || legacyData.canonicalChannelId || matchedLocalVideo?.userId || '';
-        }
+      if (channelData) {
+        const resolvedName = channelData.name || channelData.username || channelData.channelName || finalName || routeKey;
+        const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || finalAvatar || GUEST_AVATAR);
+        const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
+        setTargetChannel({
+          ...channelData,
+          userId: channelDocId,
+          id: channelDocId,
+          name: resolvedName,
+          username: channelData.username || resolvedName,
+          channelName: channelData.channelName || resolvedName,
+          avatar: resolvedAvatar,
+          bio: getChannelBioValue(channelData),
+          subscriberCount: resolvedSubscriberCount
+        });
+        setTargetChannelUserId(channelDocId);
+        setLiveSubscriberCount(resolvedSubscriberCount);
       }
-
-      // 4) 如果影片資料內有 userId，但上面都沒解出來，就用影片的 userId
-      if (!finalId && matchedLocalVideo?.userId) {
-        finalId = matchedLocalVideo.userId;
-      }
-
-      // 5) 都找不到才建立新 ID 文件。這通常只會發生在完全沒有 userId 的舊資料。
-      if (!finalId) {
-        finalId = finalName === localUsername
-          ? currentUserId
-          : finalName;
-      }
-
-      // 如果前面解出 finalId 後，補讀 Channels/{userId}
-      if (finalId && Object.keys(idData).length === 0) {
-        const idSnap = await getDoc(doc(db, 'Channels', finalId));
-        if (idSnap.exists()) idData = idSnap.data();
-      }
-
-      resolvedAvatar =
-        idData.avatar ||
-        legacyData.avatar ||
-        matchedLocalVideo?.avatar ||
-        matchedLocalVideo?.creatorAvatar ||
-        matchedLocalVideo?.channelAvatar ||
-        resolvedAvatar ||
-        GUEST_AVATAR;
-
-      const isViewingOwnChannel =
-        String(finalId || '') === String(currentUserId || '') ||
-        String(finalName || '') === String(localUsername || '');
-
-      // 重要：點進別人頻道時，不能把自己的 liveSubscriberCount 當 fallback。
-      // 否則流程會變成：先點自己頻道 → liveSubscriberCount 是自己的 → 再點別人頻道 → 別人頻道顯示/寫入自己的訂閱數。
-      resolvedSubscriberCount = isViewingOwnChannel
-        ? pickSubscriberCount(
-            idData.subscriberCount,
-            idData.subscribers,
-            idData.subsCount,
-            legacyData.subscriberCount,
-            legacyData.subscribers,
-            legacyData.subsCount,
-            matchedLocalVideo?.subscriberCount,
-            liveSubscriberCount
-          )
-        : pickSubscriberCount(
-            idData.subscriberCount,
-            idData.subscribers,
-            idData.subsCount,
-            legacyData.subscriberCount,
-            legacyData.subscribers,
-            legacyData.subsCount,
-            matchedLocalVideo?.subscriberCount
-          );
-
-      // 6) 只同步頻道基本資料。重要：瀏覽別人的頻道時，不寫 subscriberCount，避免把目前頻道/小葉的訂閱數污染到其他人。
-      await setDoc(doc(db, 'Channels', finalId), {
-        ...idData,
-        name: idData.name || legacyData.name || finalName,
-        username: idData.username || legacyData.username || legacyData.name || finalName,
-        channelName: idData.channelName || legacyData.channelName || legacyData.name || finalName,
-        avatar: resolvedAvatar,
-        userId: finalId,
-        ...(isViewingOwnChannel ? { subscriberCount: resolvedSubscriberCount } : {}),
-        subscribers: deleteField(),
-        subsCount: deleteField(),
-        updatedAt: new Date().toISOString(),
-        createdAt: idData.createdAt || legacyData.createdAt || new Date().toISOString()
-      }, { merge: true });
-
-      // 🟡 先保留舊版 Channels/{username}，但瀏覽別人頻道時不回寫 subscriberCount，避免訂閱數污染。
-      if (legacyDocId && String(legacyDocId) !== String(finalId)) {
-        await setDoc(doc(db, 'Channels', legacyDocId), {
-          ...legacyData,
-          canonicalChannelId: finalId,
-          userId: legacyData.userId || finalId,
-          avatar: legacyData.avatar || resolvedAvatar,
-          ...(isViewingOwnChannel ? { subscriberCount: pickSubscriberCount(legacyData.subscriberCount, resolvedSubscriberCount) } : {}),
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-      }
-
-      // 7) 舊影片補 userId / avatar，讓其他帳號以後點同頻道可以直接讀到正確 userId
-      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
-      for (const videoDoc of videosSnapshot.docs) {
-        const videoData = videoDoc.data();
-        const isSameChannel =
-          String(videoData.userId ?? '') === String(finalId) ||
-          String(videoData.channel ?? '') === String(finalName) ||
-          String(videoData.author ?? '') === String(finalName) ||
-          String(videoData.creatorName ?? '') === String(finalName) ||
-          String(videoData.username ?? '') === String(finalName);
-
-        const needsUpdate =
-          isSameChannel &&
-          (
-            videoData.userId !== finalId ||
-            videoData.avatar !== resolvedAvatar ||
-            videoData.creatorAvatar !== resolvedAvatar ||
-            videoData.channelAvatar !== resolvedAvatar
-          );
-
-        if (needsUpdate) {
-          await setDoc(doc(db, 'Videos', videoDoc.id), {
-            ...videoData,
-            userId: finalId,
-            avatar: resolvedAvatar,
-            creatorAvatar: resolvedAvatar,
-            channelAvatar: resolvedAvatar
-          }, { merge: true });
-        }
-      }
-
-    } catch (err) {
-      console.error('Firebase Channels 舊帳號訂閱數同步失敗:', err);
-      const suffix = finalName.split('_')[1] || 'temp';
-      finalId = finalId || `user_${suffix}`;
-    }
-
-    if (channelNavigationRequestRef.current !== channelRequestId) return;
-
-    setTargetChannelUserId(finalId);
-    const displaySubscriberCount = isViewingOwnChannel
-      ? resolvedSubscriberCount
-      : pickSubscriberCount(
-          idData.subscriberCount,
-          idData.subscribers,
-          idData.subsCount,
-          legacyData.subscriberCount,
-          legacyData.subscribers,
-          legacyData.subsCount,
-          matchedLocalVideo?.subscriberCount
-        );
-
-    const updatedChannelData = {
-      name: finalName,
-      username: finalName,
-      channelName: finalName,
-      avatar: resolvedAvatar,
-      bio: initialBio,
-      userId: finalId,
-      subscriberCount: displaySubscriberCount
-    };
-    setTargetChannel(updatedChannelData);
-    localStorage.setItem('leafhub_targetChannel', JSON.stringify(updatedChannelData));
-
-    const minimumDelay = 500;
-    const elapsedTime = Date.now() - startTime;
-    const remainingTime = minimumDelay - elapsedTime;
-
-    if (remainingTime > 0) {
-      setTimeout(() => {
-        if (channelNavigationRequestRef.current !== channelRequestId) return;
+    } catch (error) {
+      console.warn('讀取頻道資料失敗:', error);
+    } finally {
+      if (channelNavigationRequestRef.current === channelRequestId) {
         setIsChannelLoading(false);
         stopChannelContentBuffer();
         stopPageBuffer();
-      }, remainingTime);
-    } else {
-      if (channelNavigationRequestRef.current !== channelRequestId) return;
-      setIsChannelLoading(false);
-      stopChannelContentBuffer();
-      stopPageBuffer();
+      }
     }
   };
 
@@ -4425,12 +4341,12 @@ const handleLogoutId = async () => {
 
     // Firebase Videos 第一包 snapshot 回來後，才允許頻道內容 buffer 收掉。
     stopChannelContentBuffer();
-  }, [hasFirebaseVideosSnapshot, currentView, isChannelLoading, routeChannelKey, rawFirebaseVideos.length, videos.length]);
+  }, [hasFirebaseVideosSnapshot, currentView, isChannelLoading, effectiveRouteChannelKey, rawFirebaseVideos.length, videos.length]);
 
   useEffect(() => {
     if (currentView !== 'channel') return;
 
-    const routeKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+    const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
     const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
     const requestId = channelNavigationRequestRef.current;
@@ -4537,7 +4453,7 @@ const handleLogoutId = async () => {
     return () => {
       cancelled = true;
     };
-  }, [currentView, routeChannelKey, targetChannel?.userId, targetChannelUserId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName]);
+  }, [currentView, effectiveRouteChannelKey, targetChannel?.userId, targetChannelUserId, targetChannel?.name, targetChannel?.username, targetChannel?.channelName]);
 
   const mergeUniqueVideosById = (baseList = [], nextList = []) => {
     const mergedMap = new Map();
@@ -5165,14 +5081,29 @@ const handleVideoClick = async (video) => {
     }
   };
 
-  const toggleSubscribe = async (channelName) => {
+  const toggleSubscribe = async (channelName, event = null) => {
+    if (event?.preventDefault) event.preventDefault();
+    if (event?.stopPropagation) event.stopPropagation();
+
     const cleanChannelName = String(channelName || '').trim();
     if (!cleanChannelName || INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(cleanChannelName)) return;
+
+    const subscriptionLockKey = `subscribe:${cleanChannelName}`;
+    if (activeChannelSubscriptionKeyRef.current === subscriptionLockKey) return;
+    activeChannelSubscriptionKeyRef.current = subscriptionLockKey;
 
     const sameText = (a, b) => String(a ?? '').trim() !== '' && String(a ?? '').trim() === String(b ?? '').trim();
     const getVideoChannelName = (video = {}) => video.channel || video.author || video.creatorName || video.username || video.channelName || '';
     const currentId = String(currentUserId || '').trim();
     const currentName = String(localUsername || '').trim();
+
+    const ensureFirebaseUser = async () => {
+      if (auth.currentUser) return auth.currentUser;
+      if (authUser) return authUser;
+      const credential = await signInAnonymously(auth);
+      setAuthUser(credential.user);
+      return credential.user;
+    };
 
     const allKnownVideos = [
       ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
@@ -5181,241 +5112,176 @@ const handleVideoClick = async (video) => {
       ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
     ];
 
-    const safeTargetUserIdFromTarget = (() => {
-      const candidate = String(targetChannel?.userId || '').trim();
-      const targetName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
-      if (!candidate) return '';
-      // 如果目前要訂閱的名稱不是自己，但 targetChannel.userId 卻等於自己，代表 targetChannelUserId/targetChannel 殘留，不能用。
-      if (candidate === currentId && cleanChannelName !== currentName && targetName !== currentName) return '';
-      return candidate;
-    })();
-
     const matchedVideo = allKnownVideos.find(video => {
       const displayName = getVideoChannelName(video);
-      const videoUserId = String(video?.userId || '').trim();
-      return (
-        sameText(displayName, cleanChannelName) ||
-        sameText(video?.channel, cleanChannelName) ||
-        sameText(video?.author, cleanChannelName) ||
-        sameText(video?.creatorName, cleanChannelName) ||
-        sameText(video?.username, cleanChannelName) ||
-        (safeTargetUserIdFromTarget && sameText(videoUserId, safeTargetUserIdFromTarget))
-      );
+      return sameText(displayName, cleanChannelName)
+        || sameText(video?.userId, targetChannel?.userId)
+        || sameText(video?.channel, cleanChannelName)
+        || sameText(video?.author, cleanChannelName)
+        || sameText(video?.creatorName, cleanChannelName)
+        || sameText(video?.username, cleanChannelName)
+        || sameText(video?.channelName, cleanChannelName);
     });
 
-    const matchedVideoUserId = String(matchedVideo?.userId || '').trim();
-    const safeMatchedVideoUserId =
-      matchedVideoUserId && !(matchedVideoUserId === currentId && cleanChannelName !== currentName)
-        ? matchedVideoUserId
-        : '';
-
-    const isTargetChannelNameMatch =
+    const targetNameMatchesCurrentPage =
       sameText(targetChannel?.name, cleanChannelName) ||
       sameText(targetChannel?.username, cleanChannelName) ||
       sameText(targetChannel?.channelName, cleanChannelName);
 
-    const baseChannelInfo = isTargetChannelNameMatch
-      ? {
-          userId: safeTargetUserIdFromTarget,
-          name: targetChannel?.name || cleanChannelName,
-          username: targetChannel?.username || targetChannel?.name || cleanChannelName,
-          channelName: targetChannel?.channelName || targetChannel?.name || cleanChannelName,
-          avatar: targetChannel?.avatar || getTargetChannelAvatarSrc?.() || matchedVideo?.avatar || matchedVideo?.creatorAvatar || GUEST_AVATAR,
-          subscriberCount: targetChannel?.subscriberCount
-        }
+    let resolvedChannel = targetNameMatchesCurrentPage
+      ? { ...targetChannel }
       : selectedVideo && sameText(getVideoChannelName(selectedVideo), cleanChannelName)
-        ? {
-            userId: String(selectedVideo?.userId || '').trim() === currentId && cleanChannelName !== currentName ? '' : selectedVideo?.userId,
-            name: getVideoChannelName(selectedVideo) || cleanChannelName,
-            username: selectedVideo?.username || getVideoChannelName(selectedVideo) || cleanChannelName,
-            channelName: selectedVideo?.channel || getVideoChannelName(selectedVideo) || cleanChannelName,
-            avatar: selectedVideo?.avatar || selectedVideo?.creatorAvatar || selectedVideo?.channelAvatar || GUEST_AVATAR,
-            subscriberCount: selectedVideo?.subscriberCount
-          }
-        : {
-            userId: safeMatchedVideoUserId || safeTargetUserIdFromTarget || '',
-            name: cleanChannelName,
-            username: cleanChannelName,
-            channelName: cleanChannelName,
-            avatar: matchedVideo?.avatar || matchedVideo?.creatorAvatar || targetChannel?.avatar || selectedVideo?.avatar || selectedVideo?.creatorAvatar || GUEST_AVATAR,
-            subscriberCount: matchedVideo?.subscriberCount
-          };
+        ? { ...selectedVideo }
+        : matchedVideo
+          ? { ...matchedVideo }
+          : { name: cleanChannelName, username: cleanChannelName, channelName: cleanChannelName };
 
-    const normalizedChannelInfo = cleanChannelName === '小葉'
-      ? {
-          ...baseChannelInfo,
-          userId: 'shiauye_official',
-          name: '小葉',
-          username: '小葉',
-          channelName: '小葉',
-          avatar: avatarImage
+    let resolvedId = String(
+      resolvedChannel.userId ||
+      resolvedChannel.id ||
+      (targetNameMatchesCurrentPage ? targetChannelUserId : '') ||
+      ''
+    ).trim();
+
+    const resolveChannelDoc = async () => {
+      if (resolvedId && !resolvedId.includes('/')) {
+        const directSnap = await getDoc(doc(db, 'Channels', resolvedId));
+        if (directSnap.exists()) {
+          return { id: directSnap.id, data: directSnap.data() || {} };
         }
-      : baseChannelInfo;
-
-    const isCurrentlySubbed = isSubscribedToChannel(normalizedChannelInfo) || subscribedChannels.includes(cleanChannelName);
-    const subscribeDelta = isCurrentlySubbed ? -1 : 1;
-
-    const findExistingChannelDocId = async () => {
-      const directId = String(normalizedChannelInfo.userId || '').trim();
-      if (directId) {
-        const directSnap = await getDoc(doc(db, 'Channels', directId));
-        if (directSnap.exists()) return directId;
       }
 
-      const candidateFields = ['name', 'username', 'channelName'];
-      for (const fieldName of candidateFields) {
-        const q = query(collection(db, 'Channels'), where(fieldName, '==', cleanChannelName));
-        const snap = await getDocs(q);
+      const fieldsToCheck = ['username', 'name', 'channelName'];
+      for (const fieldName of fieldsToCheck) {
+        const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', cleanChannelName), limit(1)));
         if (!snap.empty) {
-          const bestDoc = snap.docs
-            .map(channelDoc => ({ id: channelDoc.id, data: channelDoc.data() || {} }))
-            .filter(item => String(item.id || '').trim() !== currentId || cleanChannelName === currentName)
-            .sort((a, b) => preserveSubscriberCount(b.data.subscriberCount, b.data.subscribers, b.data.subsCount) - preserveSubscriberCount(a.data.subscriberCount, a.data.subscribers, a.data.subsCount))[0];
-          if (bestDoc) return bestDoc.id;
+          const foundDoc = snap.docs[0];
+          return { id: foundDoc.id, data: foundDoc.data() || {} };
         }
       }
 
-      return directId || cleanChannelName;
+      return null;
     };
 
-    const patchVideoSubscriberCount = (subscriberCount, channelDocId = normalizedChannelInfo.userId || '') => (video) => {
-      const videoDisplayName = getVideoChannelName(video);
-      const isSameChannel =
-        sameText(video?.userId, channelDocId) ||
-        sameText(video?.userId, normalizedChannelInfo.userId) ||
-        sameText(videoDisplayName, cleanChannelName) ||
-        sameText(video?.channel, cleanChannelName) ||
-        sameText(video?.author, cleanChannelName) ||
-        sameText(video?.creatorName, cleanChannelName) ||
-        sameText(video?.username, cleanChannelName);
+    const previousSubscribedChannels = Array.isArray(subscribedChannels) ? subscribedChannels : [];
+    const previousSubscribedDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
+    const previousTargetChannel = targetChannel;
+    const previousLiveSubscriberCount = liveSubscriberCount;
 
-      return isSameChannel ? { ...video, subscriberCount, userId: video?.userId || normalizedChannelInfo.userId || channelDocId } : video;
-    };
+    try {
+      const firebaseUser = await ensureFirebaseUser();
+      const channelDoc = await resolveChannelDoc();
 
-    const applyLocalSubscriptionState = (nextSubscriberCount, channelDocId = normalizedChannelInfo.userId || '') => {
+      if (!channelDoc) {
+        showToast('找不到這個頻道資料，無法訂閱', 'warning');
+        return;
+      }
+
+      resolvedChannel = { ...resolvedChannel, ...channelDoc.data };
+      resolvedId = String(resolvedChannel.userId || channelDoc.id || '').trim();
+
+      const resolvedName = resolvedChannel.name || resolvedChannel.username || resolvedChannel.channelName || cleanChannelName;
+      const resolvedAvatar = resolvedName === '小葉'
+        ? avatarImage
+        : (resolvedChannel.avatar || matchedVideo?.avatar || matchedVideo?.creatorAvatar || GUEST_AVATAR);
+
+      if (!resolvedId || resolvedId.includes('/')) {
+        showToast('頻道 ID 格式不正確，無法訂閱', 'warning');
+        return;
+      }
+
+      if (sameText(resolvedId, currentId) || sameText(resolvedName, currentName)) {
+        showToast('不能訂閱自己的頻道', 'warning');
+        return;
+      }
+
+      const targetInfo = {
+        ...resolvedChannel,
+        userId: resolvedId,
+        id: resolvedId,
+        name: resolvedName,
+        username: resolvedChannel.username || resolvedName,
+        channelName: resolvedChannel.channelName || resolvedName,
+        avatar: resolvedAvatar,
+        subscriberCount: preserveSubscriberCount(resolvedChannel.subscriberCount, resolvedChannel.subscribers, resolvedChannel.subsCount, 0)
+      };
+
+      const wasSubscribed = isSubscribedToChannel(targetInfo);
+      const nextSubscriberCount = Math.max(0, Number(targetInfo.subscriberCount || 0) + (wasSubscribed ? -1 : 1));
+      const identityValues = getChannelIdentityCandidates(targetInfo);
+
+      // 先樂觀更新 UI，按下去立刻有反應，不等 Firestore 回來。
       setSubscribedChannels(prev => {
         const safePrev = Array.isArray(prev) ? prev : [];
-        const nextSubs = isCurrentlySubbed
-          ? safePrev.filter(item => !sameText(item, cleanChannelName))
-          : Array.from(new Set([...safePrev, cleanChannelName]));
-        localStorage.setItem('leafhub_subscriptions', JSON.stringify(nextSubs));
-        return nextSubs;
+        const filtered = safePrev.filter(item => !identityValues.some(value => sameChannelValue(item, value)));
+        // 訂閱主鍵只存 userId，名稱只放 subscribedChannelDetails；避免「風俊」和「user_387a」同一頻道出現兩筆。
+        const next = wasSubscribed ? filtered : Array.from(new Set([resolvedId, ...filtered].filter(Boolean)));
+        localStorage.setItem('leafhub_subscriptions', JSON.stringify(next));
+        return next;
       });
 
       setSubscribedChannelDetails(prev => {
         const safePrev = Array.isArray(prev) ? prev : [];
-        const detailPayload = {
-          ...normalizedChannelInfo,
-          userId: normalizedChannelInfo.userId || channelDocId,
-          name: normalizedChannelInfo.name || cleanChannelName,
-          username: normalizedChannelInfo.username || cleanChannelName,
-          channelName: normalizedChannelInfo.channelName || cleanChannelName,
-          avatar: normalizedChannelInfo.avatar || GUEST_AVATAR,
-          subscriberCount: nextSubscriberCount,
-          subscribedAt: Date.now()
-        };
-        const detailCandidatesToRemove = getChannelIdentityCandidates(detailPayload);
-
-        const nextDetails = isCurrentlySubbed
-          ? safePrev.filter(item => {
-              const detailCandidates = getChannelIdentityCandidates(item);
-              return !detailCandidates.some(detailValue => detailCandidatesToRemove.some(removeValue => sameChannelValue(detailValue, removeValue)));
-            })
-          : [
-              detailPayload,
-              ...safePrev.filter(item => {
-                const detailCandidates = getChannelIdentityCandidates(item);
-                return !detailCandidates.some(detailValue => detailCandidatesToRemove.some(addValue => sameChannelValue(detailValue, addValue)));
-              })
-            ];
-
-        localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(nextDetails));
-        return nextDetails;
+        const filtered = safePrev.filter(detail => {
+          const detailCandidates = getChannelIdentityCandidates(detail);
+          return !detailCandidates.some(detailValue => identityValues.some(value => sameChannelValue(detailValue, value)));
+        });
+        const next = wasSubscribed
+          ? filtered
+          : [{ ...targetInfo, subscriberCount: nextSubscriberCount, subscribedAt: new Date().toISOString() }, ...filtered];
+        localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(next));
+        return next;
       });
 
-      setTargetChannel(prev => {
-        if (!prev) return prev;
-        const isSameChannel =
-          sameText(prev.userId, channelDocId) ||
-          sameText(prev.userId, normalizedChannelInfo.userId) ||
-          sameText(prev.name, cleanChannelName) ||
-          sameText(prev.username, cleanChannelName) ||
-          sameText(prev.channelName, cleanChannelName);
-
-        return isSameChannel ? { ...prev, userId: prev.userId || normalizedChannelInfo.userId || channelDocId, subscriberCount: nextSubscriberCount } : prev;
-      });
-
-      const patcher = patchVideoSubscriberCount(nextSubscriberCount, channelDocId);
-      setSelectedVideo(prev => prev ? patcher(prev) : prev);
-      setRawFirebaseVideos(prev => Array.isArray(prev) ? prev.map(patcher) : prev);
-      setVideos(prev => Array.isArray(prev) ? prev.map(patcher) : prev);
-      setWatchHistory(prev => {
-        const nextHistory = Array.isArray(prev) ? prev.map(patcher) : [];
-        localStorage.setItem('leafhub_watchHistory', JSON.stringify(nextHistory));
-        return nextHistory;
-      });
-
-      // 只有自己頻道才更新 liveSubscriberCount，避免把別人頻道數字寫成自己的顯示數。
-      if ((normalizedChannelInfo.userId || channelDocId) === currentId || cleanChannelName === currentName) {
+      if (targetNameMatchesCurrentPage || sameText(targetChannel?.userId, resolvedId) || sameText(targetChannelUserId, resolvedId)) {
+        setTargetChannel(prev => ({
+          ...prev,
+          ...targetInfo,
+          subscriberCount: nextSubscriberCount
+        }));
+        setTargetChannelUserId(resolvedId);
         setLiveSubscriberCount(nextSubscriberCount);
       }
-    };
 
-    try {
-      const channelDocId = await findExistingChannelDocId();
-      const channelRef = doc(db, 'Channels', channelDocId);
-      const nowIso = new Date().toISOString();
+      const channelRef = doc(db, 'Channels', resolvedId);
+      const subscriberRef = doc(db, 'Channels', resolvedId, 'subscribers', firebaseUser.uid);
 
-      const nextSubscriberCount = await runTransaction(db, async (transaction) => {
-        const channelSnap = await transaction.get(channelRef);
-        const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
-        const currentSubscriberCount = preserveSubscriberCount(
-          oldChannelData.subscriberCount,
-          oldChannelData.subscribers,
-          oldChannelData.subsCount,
-          normalizedChannelInfo.subscriberCount,
-          matchedVideo?.subscriberCount
-        );
-
-        const nextCount = Math.max(0, currentSubscriberCount + subscribeDelta);
-
-        transaction.set(channelRef, {
-          name: oldChannelData.name || normalizedChannelInfo.name || cleanChannelName,
-          username: oldChannelData.username || normalizedChannelInfo.username || cleanChannelName,
-          channelName: oldChannelData.channelName || normalizedChannelInfo.channelName || cleanChannelName,
-          avatar: oldChannelData.avatar || normalizedChannelInfo.avatar || GUEST_AVATAR,
-          userId: oldChannelData.userId || normalizedChannelInfo.userId || channelDocId,
-          subscriberCount: nextCount,
-          subscribers: deleteField(),
-          subsCount: deleteField(),
-          updatedAt: nowIso,
-          createdAt: oldChannelData.createdAt || nowIso
-        }, { merge: true });
-
-        return nextCount;
-      });
-
-      applyLocalSubscriptionState(nextSubscriberCount, channelDocId);
-
-      // 同步該頻道影片上的 subscriberCount。重點：查 target channel，不查 currentUserId。
-      const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', channelDocId), limit(200)));
-      const batch = writeBatch(db);
-      let batchUpdates = 0;
-
-      videosSnapshot.docs.forEach(videoDoc => {
-        batch.set(doc(db, 'Videos', videoDoc.id), {
-          subscriberCount: nextSubscriberCount,
-          updatedAt: nowIso
-        }, { merge: true });
-        batchUpdates += 1;
-      });
-
-      if (batchUpdates > 0) await batch.commit();
-
-      showToast(isCurrentlySubbed ? '已取消訂閱' : '已訂閱', 'success');
+      if (wasSubscribed) {
+        await deleteDoc(subscriberRef).catch(error => {
+          console.warn('刪除訂閱紀錄失敗，仍會嘗試更新訂閱數:', error);
+        });
+        await updateDoc(channelRef, {
+          subscriberCount: increment(-1),
+          updatedAt: new Date().toISOString()
+        });
+        showToast('已取消訂閱', 'success');
+      } else {
+        await setDoc(subscriberRef, {
+          uid: firebaseUser.uid,
+          userId: currentId,
+          channelId: resolvedId,
+          channelName: resolvedName,
+          createdAt: new Date().toISOString()
+        }, { merge: true }).catch(error => {
+          console.warn('建立訂閱紀錄失敗，仍會嘗試更新訂閱數:', error);
+        });
+        await updateDoc(channelRef, {
+          subscriberCount: increment(1),
+          updatedAt: new Date().toISOString()
+        });
+        showToast('訂閱成功', 'success');
+      }
     } catch (error) {
       console.error('訂閱操作失敗:', error);
-      showToast('訂閱操作失敗，請稍後再試', 'error');
+      setSubscribedChannels(previousSubscribedChannels);
+      setSubscribedChannelDetails(previousSubscribedDetails);
+      setTargetChannel(previousTargetChannel);
+      setLiveSubscriberCount(previousLiveSubscriberCount);
+      localStorage.setItem('leafhub_subscriptions', JSON.stringify(previousSubscribedChannels));
+      localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(previousSubscribedDetails));
+      showToast('訂閱操作失敗，請確認 Firestore Rules 與頻道資料', 'error');
+    } finally {
+      activeChannelSubscriptionKeyRef.current = '';
     }
   };
 
@@ -6133,8 +5999,13 @@ const canManageComment = (comment = {}) => {
   const cleanupUnavailableYoutubeVideosFromClient = async (videoList = [], forceCheck = false) => {
     if (youtubeCleanupRunningRef.current || !YOUTUBE_API_KEY) return;
 
+    const currentId = String(currentUserId || '').trim();
+    if (!currentId || currentId === 'loading...') return;
+
+    // 前端只能更新/刪除自己的影片；別人的影片交給後端或擁有者處理，避免 Missing permissions 洗版。
     const candidates = (Array.isArray(videoList) ? videoList : [])
       .filter(video => video?.youtubeId && video?.id)
+      .filter(video => String(video.userId || video.channelId || video.ownerId || '').trim() === currentId)
       .filter(video => {
         if (forceCheck) return true;
         const lastCheckedAt = parseYoutubeApiDate(video.youtubeCheckedAt);
@@ -6176,10 +6047,11 @@ const canManageComment = (comment = {}) => {
             message.includes('referer') ||
             message.includes('blocked') ||
             message.includes('403') ||
-            message.includes('Forbidden');
+            message.includes('Forbidden') ||
+            message.includes('Missing or insufficient permissions');
 
           if (shouldStopThisRound) {
-            console.warn('YouTube API Key 被網站限制擋住，已停止本輪檢查。請先修正 Google Cloud 網站限制。');
+            console.warn('YouTube 檢查本輪停止：API Key 或 Firestore 權限不允許前端更新這些影片。');
             break;
           }
         }
@@ -6592,13 +6464,15 @@ const canManageComment = (comment = {}) => {
 
     const candidates = [
       targetChannel,
-      ...(Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [])
+      selectedVideo,
+      ...(Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : []),
+      ...(Array.isArray(watchHistory) ? watchHistory : [])
     ];
 
     return candidates.find(channel => {
       if (!channel) return false;
-      const channelUserId = String(channel.userId || channel.id || '').trim();
-      const channelName = String(channel.name || channel.username || channel.channelName || '').trim();
+      const channelUserId = String(channel.userId || channel.id || channel.channelId || '').trim();
+      const channelName = String(channel.name || channel.username || channel.channelName || channel.channel || channel.author || channel.creatorName || '').trim();
       return Boolean(
         (videoUserId && channelUserId && videoUserId === channelUserId) ||
         (videoName && channelName && videoName === channelName)
@@ -6632,8 +6506,94 @@ const canManageComment = (comment = {}) => {
     const knownChannel = getKnownChannelProfileForVideo(video);
     if (knownChannel?.avatar && knownChannel.avatar !== GUEST_AVATAR) return knownChannel.avatar;
 
-    return video.avatar || video.creatorAvatar || video.channelAvatar || video.authorAvatar || video.userAvatar || GUEST_AVATAR;
+    return video.channelAvatar || video.creatorAvatar || video.authorAvatar || video.userAvatar || video.avatar || GUEST_AVATAR;
   };
+
+
+  useEffect(() => {
+    const cleanQuery = searchQuery.trim().toLowerCase();
+    if (!cleanQuery) return;
+
+    let cancelled = false;
+
+    const getVideoChannelNameForSearch = (video = {}) => String(
+      video.channel || video.author || video.creatorName || video.username || video.channelName || ''
+    ).trim();
+
+    const hydrateSearchChannelProfiles = async () => {
+      try {
+        const candidates = [];
+        const seen = new Set();
+
+        (Array.isArray(searchSourceVideos) ? searchSourceVideos : [])
+          .filter(isVideoVisible)
+          .forEach(video => {
+            const name = getVideoChannelNameForSearch(video);
+            const userId = String(video.userId || video.channelId || '').trim();
+            const key = userId || name;
+            if (!key || seen.has(key)) return;
+            if (!name.toLowerCase().includes(cleanQuery) && !userId.toLowerCase().includes(cleanQuery)) return;
+            seen.add(key);
+            candidates.push({ key, name, userId });
+          });
+
+        const nextProfiles = {};
+        for (const candidate of candidates.slice(0, 12)) {
+          let resolvedDoc = null;
+
+          if (candidate.userId && !candidate.userId.includes('/')) {
+            const directSnap = await getDoc(doc(db, 'Channels', candidate.userId));
+            if (directSnap.exists()) {
+              resolvedDoc = { id: directSnap.id, data: directSnap.data() || {} };
+            }
+          }
+
+          if (!resolvedDoc && candidate.name) {
+            for (const fieldName of ['username', 'name', 'channelName']) {
+              const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', candidate.name), limit(1)));
+              if (!snap.empty) {
+                const foundDoc = snap.docs[0];
+                resolvedDoc = { id: foundDoc.id, data: foundDoc.data() || {} };
+                break;
+              }
+            }
+          }
+
+          if (!resolvedDoc) continue;
+
+          const data = resolvedDoc.data;
+          const resolvedUserId = String(data.userId || resolvedDoc.id || candidate.userId || '').trim();
+          const resolvedName = data.name || data.username || data.channelName || candidate.name || resolvedUserId;
+          const profile = {
+            ...data,
+            id: resolvedUserId || resolvedDoc.id,
+            userId: resolvedUserId || resolvedDoc.id,
+            name: resolvedName,
+            username: data.username || resolvedName,
+            channelName: data.channelName || resolvedName,
+            avatar: data.avatar || GUEST_AVATAR,
+            subscriberCount: preserveSubscriberCount(data.subscriberCount, data.subscribers, data.subsCount, 0)
+          };
+
+          nextProfiles[candidate.key] = profile;
+          if (candidate.userId) nextProfiles[candidate.userId] = profile;
+          if (candidate.name) nextProfiles[candidate.name] = profile;
+        }
+
+        if (!cancelled && Object.keys(nextProfiles).length > 0) {
+          setSearchChannelProfiles(prev => ({ ...prev, ...nextProfiles }));
+        }
+      } catch (error) {
+        console.warn('搜尋頻道資料補齊失敗:', error);
+      }
+    };
+
+    hydrateSearchChannelProfiles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchQuery, searchSourceVideos.length]);
 
 
   const matchedSearchChannels = (() => {
@@ -6641,27 +6601,47 @@ const canManageComment = (comment = {}) => {
     if (!cleanQuery) return [];
 
     const channelMap = new Map();
+    const getVideoChannelNameForSearch = (video = {}) => String(
+      video.channel || video.author || video.creatorName || video.username || video.channelName || ''
+    ).trim();
+
     (Array.isArray(searchSourceVideos) ? searchSourceVideos : [])
       .filter(isVideoVisible)
       .forEach(video => {
-        const channelName = getVideoDisplayName(video);
-        if (!String(channelName).toLowerCase().includes(cleanQuery)) return;
-
-        const key = String(video.userId || channelName).trim();
+        const videoUserId = String(video.userId || video.channelId || '').trim();
+        const rawChannelName = getVideoChannelNameForSearch(video);
+        const profile = searchChannelProfiles[videoUserId] || searchChannelProfiles[rawChannelName] || null;
+        const channelName = profile?.name || profile?.username || profile?.channelName || getVideoDisplayName(video);
+        const key = String(profile?.userId || videoUserId || channelName).trim();
         if (!key) return;
 
+        const queryMatches =
+          String(channelName || '').toLowerCase().includes(cleanQuery) ||
+          String(videoUserId || '').toLowerCase().includes(cleanQuery) ||
+          String(rawChannelName || '').toLowerCase().includes(cleanQuery);
+        if (!queryMatches) return;
+
         const current = channelMap.get(key) || {
+          ...profile,
           name: channelName,
-          userId: video.userId || '',
-          avatar: getVideoAvatarSrc(video),
-          subscriberCount: preserveSubscriberCount(video.channelSubscriberCount, video.subscriberCount, video.subscribers, video.subsCount),
-          videoCount: Number(video.channelVideoCount ?? video.videoCount ?? 0) || 0
+          username: profile?.username || channelName,
+          channelName: profile?.channelName || channelName,
+          userId: profile?.userId || videoUserId || '',
+          avatar: profile?.avatar || getVideoAvatarSrc(video),
+          subscriberCount: preserveSubscriberCount(profile?.subscriberCount, profile?.subscribers, profile?.subsCount, video.channelSubscriberCount, video.subscriberCount, video.subscribers, video.subsCount),
+          videoCount: 0
         };
+
+        current.videoCount = Number(current.videoCount || 0) + 1;
+        current.subscriberCount = preserveSubscriberCount(current.subscriberCount, profile?.subscriberCount, video.channelSubscriberCount, video.subscriberCount, video.subscribers, video.subsCount);
+        if ((!current.avatar || current.avatar === GUEST_AVATAR) && (profile?.avatar || getVideoAvatarSrc(video))) {
+          current.avatar = profile?.avatar || getVideoAvatarSrc(video);
+        }
 
         channelMap.set(key, current);
       });
 
-    return Array.from(channelMap.values()).slice(0, 5);
+    return Array.from(channelMap.values()).slice(0, 8);
   })();
 
   const sortedSearchVideos = (() => {
@@ -6673,7 +6653,7 @@ const canManageComment = (comment = {}) => {
 
   const visibleSearchVideos = searchResultType === 'channels' ? [] : sortedSearchVideos;
   const visibleSearchChannels = searchResultType === 'videos' ? [] : matchedSearchChannels;
-  const shouldShowSearchSkeleton = Boolean(searchQuery.trim()) && !hasLoadedAllSearchVideos && (isSearchFirebaseLoading || isSearchResultsBuffering);
+  const shouldShowSearchSkeleton = Boolean(searchQuery.trim()) && (isSearchFirebaseLoading || isSearchResultsBuffering);
   const searchVideoSkeletonItems = Array.from({ length: 6 });
 
   
@@ -6915,58 +6895,96 @@ return [];
 };
 
   const getSubscribedChannelAvatar = (channel = {}) => {
-    const channelName = channel.name || channel.username || channel.channelName || '';
-    const channelUserId = channel.userId || '';
+    const channelName = channel.name || channel.username || channel.channelName || channel.channel || channel.author || '';
+    const channelUserId = channel.userId || channel.id || '';
 
     if (channelName === '小葉' || channelUserId === 'shiauye_official') return avatarImage;
 
-    const matchedVideo = (Array.isArray(videos) ? videos : []).find(video => {
+    const allKnownVideosForAvatar = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(watchHistory) ? watchHistory : []),
+      ...(selectedVideo ? [selectedVideo] : [])
+    ];
+
+    const matchedVideo = allKnownVideosForAvatar.find(video => {
       return (
-        (channelUserId && String(video.userId ?? '') === String(channelUserId)) ||
+        (channelUserId && String(video.userId ?? video.channelId ?? '') === String(channelUserId)) ||
         String(video.channel ?? '') === String(channelName) ||
         String(video.author ?? '') === String(channelName) ||
         String(video.creatorName ?? '') === String(channelName) ||
-        String(video.username ?? '') === String(channelName)
+        String(video.username ?? '') === String(channelName) ||
+        String(video.channelName ?? '') === String(channelName)
       );
     });
 
-    return channel.avatar || matchedVideo?.avatar || matchedVideo?.creatorAvatar || matchedVideo?.channelAvatar || GUEST_AVATAR;
+    return channel.avatar || channel.channelAvatar || matchedVideo?.channelAvatar || matchedVideo?.creatorAvatar || matchedVideo?.authorAvatar || matchedVideo?.userAvatar || matchedVideo?.avatar || GUEST_AVATAR;
   };
 
   const getSortedSubscribedChannelDetails = () => {
     const detailMap = new Map();
+    const safeSubs = Array.isArray(subscribedChannels)
+      ? subscribedChannels.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+    const safeDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
+    const allKnownVideosForSubs = [
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(watchHistory) ? watchHistory : []),
+      ...(selectedVideo ? [selectedVideo] : [])
+    ];
 
-    (Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : []).forEach((channel, index) => {
-      const channelName = channel.name || channel.username || channel.channelName;
-      if (!channelName) return;
-      detailMap.set(channelName, {
+    const getDisplayNameFromVideo = (video = {}) => video.channel || video.author || video.creatorName || video.username || video.channelName || '';
+
+    const upsertDetail = (key, channel = {}, index = 0) => {
+      const cleanKey = String(key || channel.userId || channel.id || channel.name || channel.username || channel.channelName || '').trim();
+      if (!cleanKey || INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(cleanKey)) return;
+
+      const matchedVideo = allKnownVideosForSubs.find(video => {
+        const videoUserId = String(video.userId || video.channelId || '').trim();
+        const videoName = String(getDisplayNameFromVideo(video) || '').trim();
+        return Boolean(
+          (cleanKey && videoUserId && cleanKey === videoUserId) ||
+          (channel.userId && videoUserId && String(channel.userId) === videoUserId) ||
+          (channel.name && videoName && String(channel.name) === videoName) ||
+          (cleanKey && videoName && cleanKey === videoName)
+        );
+      });
+
+      const resolvedUserId = String(channel.userId || channel.id || matchedVideo?.userId || (cleanKey.startsWith('user_') ? cleanKey : '') || '').trim();
+      const resolvedName = String(channel.name || channel.username || channel.channelName || getDisplayNameFromVideo(matchedVideo) || cleanKey).trim();
+      const mapKey = resolvedUserId || resolvedName || cleanKey;
+
+      detailMap.set(mapKey, {
         ...channel,
-        name: channelName,
+        userId: resolvedUserId,
+        id: resolvedUserId || channel.id || '',
+        name: resolvedName,
+        username: channel.username || resolvedName,
+        channelName: channel.channelName || resolvedName,
+        avatar: channel.avatar || channel.channelAvatar || matchedVideo?.channelAvatar || matchedVideo?.creatorAvatar || matchedVideo?.avatar || GUEST_AVATAR,
         subscribedAt: Number(channel.subscribedAt || 0) || (Date.now() - ((index + 1) * 1000))
       });
+    };
+
+    safeDetails.forEach((channel, index) => {
+      const keys = getChannelIdentityCandidates(channel);
+      upsertDetail(keys[0], channel, index);
     });
 
-    (Array.isArray(subscribedChannels) ? subscribedChannels : []).forEach((channelName, index) => {
-      if (!channelName || detailMap.has(channelName)) return;
-      detailMap.set(channelName, {
-        name: channelName,
-        username: channelName,
-        channelName,
-        userId: channelName === '小葉' ? 'shiauye_official' : '',
-        avatar: channelName === '小葉' ? avatarImage : GUEST_AVATAR,
-        subscribedAt: Date.now() - (100000 + index)
-      });
+    safeSubs.forEach((subscriptionKey, index) => {
+      const matchedDetail = safeDetails.find(detail => getChannelIdentityCandidates(detail).some(value => sameChannelValue(value, subscriptionKey)));
+      upsertDetail(subscriptionKey, matchedDetail || { userId: subscriptionKey }, index + safeDetails.length);
     });
 
     return Array.from(detailMap.values())
       .filter(channel => {
-        const name = channel.name || channel.username || channel.channelName;
-        return name && subscribedChannels.includes(name) && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(name);
+        const candidates = getChannelIdentityCandidates(channel);
+        return candidates.length > 0 && safeSubs.some(item => candidates.some(candidate => sameChannelValue(item, candidate))) && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(channel.name);
       })
       .sort((a, b) => Number(b.subscribedAt || 0) - Number(a.subscribedAt || 0))
       .slice(0, 6);
   };
-
 
   const normalizeChannelValue = (value) => String(value ?? '').trim();
 
@@ -7002,6 +7020,253 @@ return [];
       })
     );
   };
+
+  const getSubscriptionLookupValues = () => {
+    const values = new Set();
+    const safeSubs = Array.isArray(subscribedChannels) ? subscribedChannels : [];
+    const safeDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
+
+    safeSubs.forEach(item => {
+      const clean = normalizeChannelValue(item);
+      if (clean && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(clean)) values.add(clean);
+    });
+
+    safeDetails.forEach(detail => {
+      getChannelIdentityCandidates(detail).forEach(candidate => {
+        if (candidate && !INVALID_LEGACY_SUBSCRIPTION_CHANNELS.includes(candidate)) values.add(candidate);
+      });
+    });
+
+    return Array.from(values);
+  };
+
+  const getVideoChannelIdentityCandidates = (video = {}) => [
+    video.userId,
+    video.uid,
+    video.ownerId,
+    video.channelId,
+    video.channel,
+    video.author,
+    video.creatorName,
+    video.username,
+    video.channelName,
+    getVideoDisplayName(video)
+  ].map(normalizeChannelValue).filter(Boolean);
+
+  const isVideoFromSubscribedChannel = (video = {}) => {
+    const subscriptionValues = getSubscriptionLookupValues();
+    if (subscriptionValues.length === 0) return false;
+    const videoCandidates = getVideoChannelIdentityCandidates(video);
+    return videoCandidates.some(candidate => subscriptionValues.some(subValue => sameChannelValue(candidate, subValue)));
+  };
+
+  const mergeSubscriptionVideos = (videoList = []) => {
+    const mergedMap = new Map();
+    (Array.isArray(videoList) ? videoList : []).forEach((video, index) => {
+      if (!video || !isVideoVisible(video) || !isVideoFromSubscribedChannel(video)) return;
+      const key = String(video.id || getYoutubeIdFromVideo(video) || video.videoUrl || `${video.title || 'video'}-${index}`);
+      mergedMap.set(key, { ...(mergedMap.get(key) || {}), ...video });
+    });
+    return sortVideos(Array.from(mergedMap.values()), 'latest');
+  };
+
+  const fetchSubscriptionVideosFromFirebase = async (subscriptionValues = [], page = 1) => {
+    const cleanValues = Array.from(new Set(subscriptionValues.map(normalizeChannelValue).filter(Boolean)));
+    if (cleanValues.length === 0) return [];
+
+    const maxPerField = Math.max(SUBSCRIPTION_VIDEO_PAGE_SIZE, page * SUBSCRIPTION_VIDEO_PAGE_SIZE);
+    const fieldsToTry = ['userId', 'channelId', 'channel', 'author', 'creatorName', 'username', 'channelName'];
+    const allVideos = [];
+
+    for (const fieldName of fieldsToTry) {
+      for (let i = 0; i < cleanValues.length; i += 10) {
+        const chunk = cleanValues.slice(i, i + 10);
+        if (chunk.length === 0) continue;
+        try {
+          // 優先抓最新影片；如果 Firestore 缺少複合索引，再 fallback 成不排序查詢避免整個訂閱頁空白。
+          let videosSnap;
+          try {
+            videosSnap = await getDocs(query(
+              collection(db, 'Videos'),
+              where(fieldName, 'in', chunk),
+              orderBy('createdAt', 'desc'),
+              limit(maxPerField)
+            ));
+          } catch (orderedError) {
+            console.warn(`訂閱頁最新排序查詢 ${fieldName} 失敗，改用未排序查詢:`, orderedError);
+            videosSnap = await getDocs(query(
+              collection(db, 'Videos'),
+              where(fieldName, 'in', chunk),
+              limit(maxPerField)
+            ));
+          }
+          videosSnap.docs.forEach(docSnap => allVideos.push({ id: docSnap.id, ...docSnap.data() }));
+        } catch (error) {
+          console.warn(`訂閱頁讀取 ${fieldName} 影片失敗，略過此欄位:`, error);
+        }
+      }
+    }
+
+    return allVideos;
+  };
+
+  const loadSubscriptionVideosPage = async ({ reset = false } = {}) => {
+    const subscriptionValues = getSubscriptionLookupValues();
+    if (subscriptionValues.length === 0) {
+      setSubscriptionVideos([]);
+      setSubscriptionVideoPage(1);
+      setHasMoreSubscriptionVideos(false);
+      setIsSubscriptionVideosLoading(false);
+      setIsLoadingMoreSubscriptionVideos(false);
+      return;
+    }
+
+    const nextPage = reset ? 1 : subscriptionVideoPage + 1;
+    const requestId = subscriptionVideosRequestRef.current + 1;
+    subscriptionVideosRequestRef.current = requestId;
+
+    if (reset) {
+      setIsSubscriptionVideosLoading(true);
+      setHasMoreSubscriptionVideos(true);
+    } else {
+      if (isLoadingMoreSubscriptionVideos || !hasMoreSubscriptionVideos) return;
+      setIsLoadingMoreSubscriptionVideos(true);
+    }
+
+    try {
+      const firebaseVideos = await fetchSubscriptionVideosFromFirebase(subscriptionValues, nextPage);
+      const knownVideos = [
+        ...(Array.isArray(firebaseVideos) ? firebaseVideos : []),
+        ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+        ...(Array.isArray(videos) ? videos : []),
+        ...(Array.isArray(watchHistory) ? watchHistory : [])
+      ];
+      const mergedVideos = mergeSubscriptionVideos(knownVideos);
+      const nextVisibleCount = nextPage * SUBSCRIPTION_VIDEO_PAGE_SIZE;
+
+      if (subscriptionVideosRequestRef.current !== requestId) return;
+
+      setSubscriptionVideos(mergedVideos.slice(0, nextVisibleCount));
+      setSubscriptionVideoPage(nextPage);
+      setHasMoreSubscriptionVideos(mergedVideos.length > nextVisibleCount || firebaseVideos.length >= SUBSCRIPTION_VIDEO_PAGE_SIZE);
+    } catch (error) {
+      console.error('讀取訂閱頻道影片失敗:', error);
+      if (reset) setSubscriptionVideos([]);
+      setHasMoreSubscriptionVideos(false);
+    } finally {
+      if (subscriptionVideosRequestRef.current === requestId) {
+        setIsSubscriptionVideosLoading(false);
+        setIsLoadingMoreSubscriptionVideos(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (currentView !== 'subscriptions') return;
+    loadSubscriptionVideosPage({ reset: true });
+  }, [currentView, JSON.stringify(subscribedChannels), JSON.stringify(subscribedChannelDetails)]);
+
+  useEffect(() => {
+    if (currentView !== 'subscriptions') return;
+    const scrollNode = contentAreaRef.current;
+    const getRemainingScroll = () => {
+      if (scrollNode) {
+        return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight;
+      }
+      const doc = document.documentElement;
+      return doc.scrollHeight - window.scrollY - window.innerHeight;
+    };
+
+    const handleSubscriptionScroll = () => {
+      if (isSubscriptionVideosLoading || isLoadingMoreSubscriptionVideos || !hasMoreSubscriptionVideos) return;
+      if (getRemainingScroll() < 520) {
+        loadSubscriptionVideosPage({ reset: false });
+      }
+    };
+
+    const target = scrollNode || window;
+    target.addEventListener('scroll', handleSubscriptionScroll, { passive: true });
+    window.addEventListener('resize', handleSubscriptionScroll);
+    handleSubscriptionScroll();
+
+    return () => {
+      target.removeEventListener('scroll', handleSubscriptionScroll);
+      window.removeEventListener('resize', handleSubscriptionScroll);
+    };
+  }, [currentView, isSubscriptionVideosLoading, isLoadingMoreSubscriptionVideos, hasMoreSubscriptionVideos, subscriptionVideoPage, subscriptionVideos.length]);
+
+  useEffect(() => {
+    const safeSubs = Array.isArray(subscribedChannels)
+      ? subscribedChannels.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+    if (safeSubs.length === 0) return;
+
+    let cancelled = false;
+    const hydrateSubscribedChannelDetails = async () => {
+      try {
+        const existingDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
+        const nextMap = new Map();
+
+        existingDetails.forEach(detail => {
+          const key = String(detail.userId || detail.id || detail.name || detail.username || detail.channelName || '').trim();
+          if (key) nextMap.set(key, detail);
+        });
+
+        for (const subKey of safeSubs) {
+          const alreadyHydrated = Array.from(nextMap.values()).some(detail => {
+            const candidates = getChannelIdentityCandidates(detail);
+            const displayName = String(detail.name || detail.username || detail.channelName || '').trim();
+            const hasRealDisplay = displayName && displayName !== subKey && detail.avatar && detail.avatar !== GUEST_AVATAR;
+            return candidates.some(candidate => sameChannelValue(candidate, subKey)) && hasRealDisplay;
+          });
+          if (alreadyHydrated) continue;
+
+          let resolvedDoc = null;
+          if (!subKey.includes('/')) {
+            const directSnap = await getDoc(doc(db, 'Channels', subKey));
+            if (directSnap.exists()) resolvedDoc = { id: directSnap.id, data: directSnap.data() || {} };
+          }
+          if (!resolvedDoc) {
+            for (const fieldName of ['username', 'name', 'channelName']) {
+              const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', subKey), limit(1)));
+              if (!snap.empty) {
+                const foundDoc = snap.docs[0];
+                resolvedDoc = { id: foundDoc.id, data: foundDoc.data() || {} };
+                break;
+              }
+            }
+          }
+          if (!resolvedDoc) continue;
+
+          const channelData = resolvedDoc.data;
+          const resolvedUserId = String(channelData.userId || resolvedDoc.id || '').trim();
+          const resolvedName = channelData.name || channelData.username || channelData.channelName || subKey;
+          nextMap.set(resolvedUserId || subKey, {
+            ...channelData,
+            id: resolvedUserId || resolvedDoc.id,
+            userId: resolvedUserId || resolvedDoc.id,
+            name: resolvedName,
+            username: channelData.username || resolvedName,
+            channelName: channelData.channelName || resolvedName,
+            avatar: channelData.avatar || GUEST_AVATAR,
+            subscribedAt: channelData.subscribedAt || Date.now()
+          });
+        }
+
+        if (cancelled) return;
+        const nextDetails = Array.from(nextMap.values());
+        setSubscribedChannelDetails(nextDetails);
+        localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify(nextDetails));
+      } catch (error) {
+        console.warn('補齊訂閱頻道名稱/頭貼失敗:', error);
+      }
+    };
+
+    hydrateSubscribedChannelDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [JSON.stringify(subscribedChannels)]);
 
   const isViewingOwnTargetChannel = () => {
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
@@ -7492,7 +7757,7 @@ const shareOptions = [
   { id: 'email', label: '透過電子郵件', icon: '✉', action: () => openShareTarget('email') }
 ];
 const allDisplayedComments = sortComments([...optimisticComments, ...comments], commentSort);
-  const currentRouteChannelKey = routeChannelKey ? decodeURIComponent(routeChannelKey) : '';
+  const currentRouteChannelKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
   const visibleTargetChannelCandidates = getChannelIdentityCandidates({
     ...targetChannel,
     userId: targetChannel?.userId || targetChannelUserId
@@ -7513,7 +7778,7 @@ const currentChannelTotalViews = currentChannelVideosForReadyCheck.reduce((sum, 
 const currentChannelJoinedText = getChannelJoinedText(targetChannel || {}, currentChannelVideosForReadyCheck);
 const isChannelWaitingForFirebaseVideos = currentView === 'channel' && Boolean(currentRouteChannelKey) && isChannelVideosLoading;
 const isChannelWaitingForVisibleVideos = currentView === 'channel' && isChannelVideosLoading && currentChannelVideosForReadyCheck.length === 0;
-const shouldShowChannelSkeleton = currentView === 'channel' && (isChannelLoading || isChannelContentBuffering || isChannelRouteMismatched || isChannelWaitingForFirebaseVideos || isChannelWaitingForVisibleVideos);
+const shouldShowChannelSkeleton = currentView === 'channel' && Boolean(currentRouteChannelKey) && (isChannelLoading || isChannelContentBuffering || (isChannelVideosLoading && currentChannelVideosForReadyCheck.length === 0) || isChannelRouteMismatched);
   const channelVideoSkeletonItems = Array.from({ length: 8 });
 const isAccountActuallyLoggedIn = Boolean(isIdLoggedIn || authUser?.uid || targetChannel?.ownerUid || targetChannel?.idLocked);
 const accountEmailDisplay = isAccountActuallyLoggedIn
@@ -7660,7 +7925,6 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
             onChange={(e) => {
               setSearchInputStr(e.target.value);
               setShowSearchDropdown(true);
-              if (currentView !== 'watch') setCurrentView('home');
             }}
             onFocus={() => {
               setShowSearchDropdown(true);
@@ -8066,7 +8330,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         {visibleSearchChannels.map(channel => (
                           <div
-                            key={`search-channel-${channel.userId || channel.name}`}
+                            key={`search-channel-${channel.userId || channel.id || channel.name}`}
                             className="search-channel-result"
                             style={{ display: 'grid', gridTemplateColumns: '170px 1fr auto', alignItems: 'center', gap: '26px', padding: '12px 0 20px', borderBottom: '1px solid #2a2a2a' }}
                           >
@@ -8075,25 +8339,25 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                                 src={channel.avatar || GUEST_AVATAR}
                                 alt={channel.name}
                                 onError={(e) => { e.currentTarget.src = GUEST_AVATAR; }}
-                                onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId)}
+                                onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId || channel.id)}
                                 style={{ width: '132px', height: '132px', borderRadius: '50%', objectFit: 'cover', cursor: 'pointer' }}
                               />
                             </div>
                             <div
-                              onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId)}
+                              onClick={(e) => handleChannelNavigation(channel.name, channel.avatar, e, channel.userId || channel.id)}
                               style={{ minWidth: 0, cursor: 'pointer' }}
                             >
                               <h2 style={{ margin: '0 0 8px', color: '#f1f1f1', fontSize: '20px', fontWeight: 700 }}>{channel.name}</h2>
                               <p style={{ margin: 0, color: '#aaa', fontSize: '13px' }}>
-                                @{channel.userId || channel.name} • {formatSubscribers(channel.subscriberCount)}位訂閱者 • {channel.videoCount}部影片
+                                @{channel.userId || channel.id || channel.name} • {formatSubscribers(channel.subscriberCount || 0)}位訂閱者 • {Number(channel.videoCount || 0)}部影片
                               </p>
                             </div>
                             <button
                               type="button"
-                              onClick={() => toggleSubscribe(channel.name)}
-                              style={{ border: 0, borderRadius: '999px', padding: '10px 18px', background: subscribedChannels.includes(channel.name) ? '#272727' : '#f1f1f1', color: subscribedChannels.includes(channel.name) ? '#f1f1f1' : '#0f0f0f', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              onClick={(e) => toggleSubscribe(channel.name, e)}
+                              style={{ border: 0, borderRadius: '999px', padding: '10px 18px', background: isSubscribedToChannel(channel) ? '#272727' : '#f1f1f1', color: isSubscribedToChannel(channel) ? '#f1f1f1' : '#0f0f0f', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
                             >
-                              {subscribedChannels.includes(channel.name) ? '已訂閱' : '訂閱'}
+                              {isSubscribedToChannel(channel) ? '已訂閱' : '訂閱'}
                             </button>
                           </div>
                         ))}
@@ -8102,9 +8366,9 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
 
                     {shouldShowSearchSkeleton ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                        {searchVideoSkeletonItems.map((num) => (
+                        {searchVideoSkeletonItems.map((_, index) => (
                           <div
-                            key={`search-skeleton-${num}`}
+                            key={`search-skeleton-${index}`}
                             className="search-video-result"
                             style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 520px) minmax(0, 1fr)', gap: '18px', alignItems: 'start', pointerEvents: 'none' }}
                           >
@@ -8220,13 +8484,35 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                 {currentView === 'subscriptions' && (
                   <div>
                     <h2 className="view-page-title">📺 已訂閱頻道內容</h2>
-                    <div className="video-grid">
-                      {videos.filter(v => subscribedChannels.includes(v.channel)).length > 0 ? (
-                        videos.filter(v => subscribedChannels.includes(v.channel)).map((video) => renderVideoCard(video))
-                      ) : (
-                        <div className="empty-state">目前訂閱的頻道還沒有發布影片。</div>
-                      )}
-                    </div>
+                    {isSubscriptionVideosLoading && subscriptionVideos.length === 0 ? (
+                      <div className="video-grid">
+                        {Array.from({ length: 8 }).map((_, index) => (
+                          <VideoCardSkeleton key={`subscription-skeleton-${index}`} />
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="video-grid">
+                          {subscriptionVideos.length > 0 ? (
+                            subscriptionVideos.map((video) => renderVideoCard(video))
+                          ) : (
+                            <div className="empty-state">目前訂閱的頻道還沒有發布影片。</div>
+                          )}
+                        </div>
+
+                        {isLoadingMoreSubscriptionVideos && (
+                          <div className="video-grid" style={{ marginTop: '22px' }}>
+                            {Array.from({ length: 3 }).map((_, index) => (
+                              <VideoCardSkeleton key={`subscription-load-more-${index}`} />
+                            ))}
+                          </div>
+                        )}
+
+                        {hasMoreSubscriptionVideos && subscriptionVideos.length > 0 && (
+                          <div aria-hidden="true" style={{ width: '100%', height: '24px', pointerEvents: 'none' }}></div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -8453,7 +8739,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                               {!isViewingOwnTargetChannel() && (
                                 <button
                                   className={`sub-action-btn ${isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? 'is-subbed' : ''}`}
-                                  onClick={() => toggleSubscribe(visibleTargetChannelName)}
+                                  onClick={(e) => toggleSubscribe(visibleTargetChannelName, e)}
                                   style={{ padding: '8px 20px', fontSize: '14px' }}
                                 >
                                   {isSubscribedToChannel({ ...targetChannel, userId: targetChannel?.userId || targetChannelUserId }) ? '✓ 已訂閱' : '訂閱'}
@@ -8595,7 +8881,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                             </div>
                           </div>
                           {selectedVideo.channel !== localUsername && (
-                            <button className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={() => toggleSubscribe(selectedVideo.channel)}>
+                            <button type="button" className={`sub-action-btn ${subscribedChannels.includes(selectedVideo.channel) ? 'is-subbed' : ''}`} onClick={(e) => toggleSubscribe(selectedVideo.channel, e)}>
                               {subscribedChannels.includes(selectedVideo.channel) ? '✓ 已訂閱' : '訂閱'}
                             </button>
                           )}
