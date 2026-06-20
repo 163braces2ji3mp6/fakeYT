@@ -2530,13 +2530,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
       : (channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR);
     const bioValue = getChannelBioValue(channelData);
-    const subscriberCount = preserveSubscriberCount(
-      channelData.subscriberCount,
-      channelData.subscribers,
-      channelData.subsCount,
-      liveSubscriberCount,
-      0
-    );
+    const subscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
     const emailValue = channelData.email || firebaseUser?.email || '';
     const emailLowerValue = channelData.emailLower || normalizeEmailValue(emailValue);
     const ownerUidValue = channelData.ownerUid || firebaseUser?.uid || '';
@@ -4036,7 +4030,7 @@ const handleLogoutId = async () => {
       const resolvedName = channelData.name || channelData.username || channelData.channelName || fallbackName || decodedKey;
       const resolvedAvatar = resolvedName === '小葉' ? avatarImage : (channelData.avatar || fallbackAvatar || GUEST_AVATAR);
       const resolvedBio = getChannelBioValue(channelData);
-      const resolvedSubscriberCount = preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, 0);
+      const resolvedSubscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
 
       setTargetChannel({
         ...channelData,
@@ -7284,46 +7278,9 @@ return [];
   };
 
   const getTargetChannelSubscriberCount = () => {
-    const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
-    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
-    const isOwnTarget = isViewingOwnTargetChannel();
-
-    const targetCandidates = getChannelIdentityCandidates({
-      ...targetChannel,
-      userId: channelUserId,
-      name: channelName,
-      username: targetChannel?.username,
-      channelName: targetChannel?.channelName
-    });
-
-    const allKnownVideos = [
-      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
-      ...(Array.isArray(videos) ? videos : []),
-      ...(Array.isArray(watchHistory) ? watchHistory : []),
-      ...(selectedVideo ? [selectedVideo] : []),
-      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
-    ];
-
-    const matchedVideoCounts = allKnownVideos
-      .filter(video => {
-        const videoCandidates = getChannelIdentityCandidates(video);
-        return videoCandidates.some(videoValue => targetCandidates.some(targetValue => sameChannelValue(videoValue, targetValue)));
-      })
-      .map(video => video?.subscriberCount);
-
-    const matchedSubscriptionDetail = (Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : []).find(detail => {
-      const detailCandidates = getChannelIdentityCandidates(detail);
-      return detailCandidates.some(detailValue => targetCandidates.some(targetValue => sameChannelValue(detailValue, targetValue)));
-    });
-
-    // 重點：只有「自己頻道」才允許使用 liveSubscriberCount。
-    // 別人頻道一律只吃 targetChannel / 訂閱明細 / 影片中的該頻道資料，避免顯示成自己的訂閱數。
-    return preserveSubscriberCount(
-      targetChannel?.subscriberCount,
-      matchedSubscriptionDetail?.subscriberCount,
-      ...matchedVideoCounts,
-      isOwnTarget ? liveSubscriberCount : 0
-    );
+    // 頻道頁顯示的訂閱者數必須以 Channels 文件的 subscriberCount 欄位為準。
+    // 不再混用影片上的 subscriberCount、subscribedChannelDetails 或 liveSubscriberCount，避免顯示成舊資料或別人的數字。
+    return getSafeSubscriberCountValue(targetChannel?.subscriberCount);
   };
 
   const formatDateForDisplay = (value) => {
