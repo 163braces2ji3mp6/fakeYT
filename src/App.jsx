@@ -10942,7 +10942,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       onClick={handleConfirmDeleteVideo}
                       style={{ height: '36px', background: '#d93025', opacity: isDeletingVideo ? 0.65 : 1 }}
                     >
-                      {isDeletingVideo ? '刪除中....' : '確認刪除'}
+                      {isDeletingVideo ? '刪除中...' : '確認刪除'}
                     </button>
                   </div>
                 </div>
