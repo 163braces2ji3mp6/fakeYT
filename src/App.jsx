@@ -1355,7 +1355,6 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
 
     return () => {
       cancelled = true;
-      clearTimeout(routeResolveFallbackTimer);
     };
   }, [currentUserId]);
 
