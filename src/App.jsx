@@ -2,6 +2,7 @@
   01. Imports / 樣式與 Firebase 依賴
 ============================== */
 import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { flushSync } from 'react-dom';
 import './App.css'
 import { 
   subscribeToVideos, 
@@ -830,6 +831,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   const [channelVideos, setChannelVideos] = useState([]);
   const [isChannelVideosLoading, setIsChannelVideosLoading] = useState(() => Boolean(effectiveRouteChannelKey));
   const [channelLoadingKey, setChannelLoadingKey] = useState(() => effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : ''); // 單一頻道載入鎖：只由 loadChannelVideos 完成後解除
+  const [isChannelRouteResolving, setIsChannelRouteResolving] = useState(() => Boolean(effectiveRouteChannelKey)); // 路由 /channel/:key 正在解析頻道 Header，避免 refresh 或跨頻道切換時半套資料閃出來
 
 
   /* ------------------------------
@@ -1029,6 +1031,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
         subscriberCount: 0
       });
       setTargetChannelUserId(looksLikeUserId ? decodedKey : '');
+      setIsChannelRouteResolving(true);
       beginChannelLoading(decodedKey);
     }
   }, [effectiveRouteChannelKey, currentUserId, targetChannel?.userId, targetChannel?.id, targetChannel?.name, targetChannelUserId]);
@@ -1351,6 +1354,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
 
     return () => {
       cancelled = true;
+      clearTimeout(routeResolveFallbackTimer);
     };
   }, [currentUserId]);
 
@@ -3926,15 +3930,28 @@ const handleLogoutId = async () => {
 
   const beginChannelLoading = (key = '') => {
     const loadingKey = String(key || getActiveChannelLoadingKey('channel')).trim() || 'channel';
+    // 統一頻道導覽鎖：任何進頻道入口都先進入同一個 skeleton 狀態，
+    // 並清掉上一個頻道的影片，避免舊 Header / 舊影片在 buffer 前閃一下。
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
+    }
+    setIsPageLoading(false);
     setChannelLoadingKey(loadingKey);
     setIsChannelLoading(true);
     setIsChannelVideosLoading(true);
+    setIsChannelContentBuffering(true);
+    setChannelVideos([]);
     startChannelContentBuffer(0);
   };
 
   const finishChannelLoading = (key = '') => {
     const loadingKey = String(key || getActiveChannelLoadingKey('channel')).trim() || 'channel';
-    setChannelLoadingKey(prev => (!prev || prev === loadingKey ? '' : prev));
+    setChannelLoadingKey(prev => {
+      if (!prev || prev === loadingKey) return '';
+      // 防止 username -> userId、或 routeKey -> resolvedId 的載入鍵不一致造成永久 loading。
+      return '';
+    });
     setIsChannelVideosLoading(false);
     setIsChannelLoading(false);
     stopChannelContentBuffer();
@@ -4012,14 +4029,15 @@ const handleLogoutId = async () => {
 
     const decodedKey = decodeURIComponent(effectiveRouteChannelKey);
     const shouldStartRouteBuffer = lastChannelBufferKeyRef.current !== decodedKey;
+    setIsChannelRouteResolving(true);
     const routeRequestId = channelNavigationRequestRef.current + 1;
     channelNavigationRequestRef.current = routeRequestId;
     lastChannelBufferKeyRef.current = decodedKey;
 
-    setCurrentView(prev => prev === 'channel' ? prev : 'channel');
     if (shouldStartRouteBuffer) {
       beginChannelLoading(decodedKey);
     }
+    setCurrentView(prev => prev === 'channel' ? prev : 'channel');
     setTargetChannel(prev => {
       const prevKey = String(prev?.userId || prev?.id || prev?.name || '').trim();
       if (prevKey === decodedKey) return prev;
@@ -4038,6 +4056,12 @@ const handleLogoutId = async () => {
     setTargetChannelUserId(decodedKey.startsWith('user_') || decodedKey === 'shiauye_official' ? decodedKey : '');
 
     let cancelled = false;
+    const routeResolveFallbackTimer = setTimeout(() => {
+      if (!cancelled && channelNavigationRequestRef.current === routeRequestId) {
+        console.warn('頻道路由解析逾時，已自動解除 route resolving，避免畫面永久載入。');
+        setIsChannelRouteResolving(false);
+      }
+    }, 4500);
 
     const applyResolvedChannel = (channelDocId, channelData = {}, fallbackName = decodedKey, fallbackAvatar = GUEST_AVATAR) => {
       if (cancelled || channelNavigationRequestRef.current !== routeRequestId) return;
@@ -4063,6 +4087,8 @@ const handleLogoutId = async () => {
       });
       setTargetChannelUserId(resolvedId);
       setLiveSubscriberCount(resolvedSubscriberCount);
+      // 不在這裡重新 beginChannelLoading。
+      // 真正的頻道影片載入 useEffect 會用最新 targetChannelUserId 統一 begin/finish，避免 loadingKey 不一致卡住。
       // 不在這裡關閉 channel buffer；只解析到頻道 Header 還不代表影片列表載完。
       // 等 loadChannelVideos finally 一次性關閉，避免畫面閃一下又進 buffer。
     };
@@ -4101,6 +4127,12 @@ const handleLogoutId = async () => {
       } catch (error) {
         console.error('路由還原頻道資料失敗:', error);
         // 發生錯誤也不要在 Header 階段關閉 buffer，避免半套頻道閃出來。
+      } finally {
+        clearTimeout(routeResolveFallbackTimer);
+        if (!cancelled && channelNavigationRequestRef.current === routeRequestId) {
+          // Header 解析結束後才允許頻道內容顯示；影片列表 loading 仍由 loadChannelVideos() 控制。
+          setIsChannelRouteResolving(false);
+        }
       }
     };
 
@@ -4119,6 +4151,7 @@ const handleLogoutId = async () => {
     stopChannelContentBuffer();
     if (location.pathname !== '/' || location.search) navigate('/');
     setIsPageLoading(true);
+    setIsChannelRouteResolving(false);
     setSearchInputStr('');
     setSearchQuery('');
     setActiveCategory('全部');
@@ -4132,6 +4165,7 @@ const handleLogoutId = async () => {
     setIsVideoLoading(false);
     if (view !== 'channel') {
       setIsChannelLoading(false);
+      setIsChannelRouteResolving(false);
       stopChannelContentBuffer();
     }
     setCurrentView(view);
@@ -4161,35 +4195,48 @@ const handleLogoutId = async () => {
   };
 
   const handleMyChannelClick = () => {
+    const routeKey = String(currentUserId || localUsername || 'me').trim();
     const channelRequestId = channelNavigationRequestRef.current + 1;
     channelNavigationRequestRef.current = channelRequestId;
-
-    startPageBuffer(260);
-    beginChannelLoading(currentUserId || localUsername || 'me');
-    setCurrentView('channel');
-    setChannelTab('videos');
-    setIsProfileOpen(false);
-    forceScrollToTop();
+    lastChannelBufferKeyRef.current = routeKey;
 
     const myChannelData = {
       userId: currentUserId,
+      id: currentUserId,
       name: localUsername,
       username: localUsername,
       channelName: localUsername,
-      avatar: unifiedAvatar, // 💡 確保這裡是用目前最新的 currentUserAvatar
+      avatar: unifiedAvatar,
       bio: '',
       subscriberCount: liveSubscriberCount
     };
 
-    navigate(`/channel/${encodeURIComponent(currentUserId || localUsername || 'me')}`);
+    // 我的頻道也走跟所有頻道入口一樣的 loading 流程。
+    // 這裡必須用 flushSync 先把 skeleton commit 到畫面，再更新 targetChannel，
+    // 否則從別的頻道切到自己頻道時，React 會把「切換到自己頻道」和「開 loading」批次合併，造成自己頻道 Header 閃一下。
+    flushSync(() => {
+      setIsChannelRouteResolving(true);
+      beginChannelLoading(routeKey);
+      setIsVideoLoading(false);
+      setCurrentView('channel');
+      setChannelTab('videos');
+      setIsProfileOpen(false);
+    });
+    setTargetChannel(myChannelData);
+    setTargetChannelUserId(currentUserId);
+    putChannelProfileIntoCache(myChannelData);
+    forceScrollToTop();
 
-    setTimeout(() => {
-      if (channelNavigationRequestRef.current !== channelRequestId) return;
-      setTargetChannel(myChannelData);
-      setTargetChannelUserId(currentUserId);
-      // 不在這裡關頻道 loading / buffer；等 loadChannelVideos() 完成後再一次顯示完整頻道。
-      stopPageBuffer();
-    }, 650);
+    const nextPath = `/channel/${encodeURIComponent(routeKey)}`;
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
+    } else {
+      // 已經在自己的頻道頁時不會觸發 route effect，這裡直接解除路由解析鎖，
+      // 但 channel loading 仍會等 loadChannelVideos() 完成後才關。
+      setIsChannelRouteResolving(false);
+    }
+    stopPageBuffer();
+    // 不在這裡關頻道 loading / buffer；等 loadChannelVideos() 完成後再一次顯示完整頻道。
   };
 
   // 🟢 雙軌版：頻道導覽優先用 userId，找不到才 fallback 到舊版 username 文件
@@ -4279,23 +4326,42 @@ const handleLogoutId = async () => {
       return '';
     };
 
+    // 點擊當下先鎖住頻道 skeleton，不等 Firestore / 名稱反查完成。
+    // 這是避免「原頁面或上一個頻道先閃一下」的關鍵。
+    const provisionalRouteKey = directId || safeName || 'channel';
+    const channelRequestId = channelNavigationRequestRef.current + 1;
+    channelNavigationRequestRef.current = channelRequestId;
+    lastChannelBufferKeyRef.current = provisionalRouteKey;
+
+    // 所有頻道點擊都先同步 commit skeleton，再做任何頻道資料解析 / targetChannel 更新。
+    // 這能消除「上一個頻道或自己頻道資料先露出一幀」的閃爍。
+    flushSync(() => {
+      setIsChannelRouteResolving(true);
+      beginChannelLoading(provisionalRouteKey);
+      setIsVideoLoading(false);
+      setCurrentView('channel');
+      setChannelTab('videos');
+    });
+    forceScrollToTop();
+
     const routeKey = await resolveRouteKeyFast();
+    if (channelNavigationRequestRef.current !== channelRequestId) return;
+
     if (!routeKey) {
       console.warn('找不到頻道穩定 ID，已取消導覽:', safeName);
+      finishChannelLoading(provisionalRouteKey);
       return;
     }
 
-    const channelRequestId = channelNavigationRequestRef.current + 1;
-    channelNavigationRequestRef.current = channelRequestId;
-    lastChannelBufferKeyRef.current = routeKey;
+    if (routeKey !== provisionalRouteKey) {
+      lastChannelBufferKeyRef.current = routeKey;
+      flushSync(() => {
+        setIsChannelRouteResolving(true);
+        beginChannelLoading(routeKey);
+      });
+    }
 
     const immediateProfile = buildImmediateProfile(routeKey);
-
-    setIsVideoLoading(false);
-    setCurrentView('channel');
-    setChannelTab('videos');
-    beginChannelLoading(routeKey);
-    forceScrollToTop();
 
     // 直接套用目前按鈕/影片卡已知的頻道名稱與頭貼，不等 Firestore，所以不會先卡一下。
     setTargetChannel(immediateProfile);
@@ -4306,6 +4372,8 @@ const handleLogoutId = async () => {
     if (location.pathname !== nextPath) {
       navigate(nextPath);
     } else {
+      // 同一路徑點同一個頻道時不會觸發 route effect，避免解析鎖永久不關。
+      setIsChannelRouteResolving(false);
       beginChannelLoading(routeKey);
     }
 
@@ -4393,7 +4461,9 @@ const handleLogoutId = async () => {
     const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
     const requestId = channelNavigationRequestRef.current;
-    const activeChannelLoadKey = String(routeKey || channelUserId || channelName || 'channel').trim();
+    // loading key 必須跟 beginChannelLoading 使用同一個穩定值；
+    // 已解析出 userId 時優先用 userId，避免 /channel/username 解析成 userId 後 key 不一致而卡住。
+    const activeChannelLoadKey = String(channelUserId || routeKey || channelName || 'channel').trim();
 
     const primaryUserId = channelUserId || routeKey;
     const fallbackKeys = Array.from(new Set([channelName, routeKey]
@@ -4483,6 +4553,7 @@ const handleLogoutId = async () => {
         }
       } finally {
         if (!cancelled && channelNavigationRequestRef.current === requestId) {
+          setIsChannelRouteResolving(false);
           finishChannelLoading(activeChannelLoadKey);
         }
       }
@@ -6158,7 +6229,7 @@ const canManageComment = (comment = {}) => {
     const durationIso = item.contentDetails?.duration || 'PT0S';
 
     const playable =
-      privacyStatus === 'public' &&
+      privacyStatus === 'public' || privacyStatus === 'unlisted' &&
       embeddable !== false &&
       regionBlocked === false;
 
@@ -8343,12 +8414,11 @@ const visibleTargetChannelName = String(
   targetChannel?.name ||
   targetChannel?.username ||
   targetChannel?.channelName ||
-  currentRouteChannelKey ||
   targetChannel?.userId ||
   targetChannelUserId ||
   ''
 ).trim();
-  const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && !visibleTargetChannelName && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
+  const isChannelRouteMismatched = currentView === 'channel' && Boolean(currentRouteChannelKey) && visibleTargetChannelCandidates.length > 0 && !visibleTargetChannelCandidates.some(candidate => sameChannelValue(candidate, currentRouteChannelKey));
   const currentChannelVideosForReadyCheck = currentView === 'channel' ? getChannelVideos(targetChannel?.name || targetChannel?.channelName || targetChannel?.username || '') : [];
   const currentChannelVideoCount = currentChannelVideosForReadyCheck.length;
 const currentChannelTotalViews = currentChannelVideosForReadyCheck.reduce((sum, video) => sum + getViewCount(video), 0);
@@ -8360,6 +8430,7 @@ const shouldShowChannelSkeleton = currentView === 'channel' && Boolean(
   isChannelLoading ||
   isChannelContentBuffering ||
   isChannelVideosLoading ||
+  isChannelRouteResolving ||
   isChannelRouteMismatched
 );
   const channelVideoSkeletonItems = Array.from({ length: 8 });
