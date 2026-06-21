@@ -2414,8 +2414,19 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const cleanChannelId = String(channelId || '').trim();
     if (!cleanChannelId || cleanChannelId.includes('/') || !firebaseUser) return channelData;
 
+    // 每次 Google 登入 / 還原登入時都先 reload Firebase user，避免第二次登入繼續吃舊的 displayName/photoURL。
+    let freshFirebaseUser = firebaseUser;
+    try {
+      if (typeof firebaseUser.reload === 'function') {
+        await firebaseUser.reload();
+        freshFirebaseUser = auth.currentUser || firebaseUser;
+      }
+    } catch (reloadError) {
+      console.warn('重新讀取 Google 使用者資料失敗，改用目前登入資料同步:', reloadError);
+    }
+
     const { displayName, avatarUrl } = getGoogleProfileFromFirebaseUser(
-      firebaseUser,
+      freshFirebaseUser,
       channelData.name || channelData.username || channelData.channelName || cleanChannelId,
       channelData.avatar
     );
@@ -2424,15 +2435,15 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       'custom-id',
       'google'
     ]));
-    const email = String(firebaseUser.email || channelData.email || '').trim();
+    const email = String(freshFirebaseUser.email || channelData.email || '').trim();
     const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
     const googleProfilePatch = {
       userId: channelData.userId || cleanChannelId,
       customId: channelData.customId || cleanChannelId,
-      ownerUid: firebaseUser.uid || channelData.ownerUid || '',
+      ownerUid: freshFirebaseUser.uid || channelData.ownerUid || '',
       email,
       emailLower,
-      emailVerified: Boolean(firebaseUser.emailVerified),
+      emailVerified: Boolean(freshFirebaseUser.emailVerified),
       authProvider: 'google',
       linkedProviders: providerList,
       idLocked: true,
@@ -2440,6 +2451,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       username: displayName || cleanChannelId,
       channelName: displayName || cleanChannelId,
       avatar: avatarUrl || GUEST_AVATAR,
+      googleSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
@@ -2451,9 +2463,9 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     }
     await setDoc(googleChannelRef, googleProfilePatch, { merge: true });
 
-    if (firebaseUser.uid) {
-      await setDoc(doc(db, 'Users', firebaseUser.uid), {
-        uid: firebaseUser.uid,
+    if (freshFirebaseUser.uid) {
+      await setDoc(doc(db, 'Users', freshFirebaseUser.uid), {
+        uid: freshFirebaseUser.uid,
         userId: cleanChannelId,
         channelId: cleanChannelId,
         email,
@@ -2463,6 +2475,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
         username: googleProfilePatch.username,
         channelName: googleProfilePatch.channelName,
         avatar: googleProfilePatch.avatar,
+        googleSyncedAt: googleProfilePatch.googleSyncedAt,
         updatedAt: new Date().toISOString()
       }, { merge: true });
     }
@@ -2846,16 +2859,27 @@ const findChannelByAuthUser = async (firebaseUser) => {
       if (!firebaseUser?.uid || firebaseUser?.isAnonymous || !firebaseUser?.email) return;
       try {
         const found = await findChannelByAuthUser(firebaseUser);
-        if (found && String(found.id || '') !== String(currentUserId || '')) {
+        if (found) {
+          const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
+          const hasGoogleProvider = authProviders.some(provider => provider?.providerId === 'google.com');
+          const hasGoogleLinked = Boolean(
+            hasGoogleProvider ||
+            (found.data?.linkedProviders || []).includes('google') ||
+            (found.data?.linkedProviders || []).includes('google.com') ||
+            found.data?.authProvider === 'google'
+          );
+          const latestChannelData = hasGoogleLinked
+            ? await syncGoogleProfileToChannel(found.id, found.data, firebaseUser)
+            : found.data;
           const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
           const foundCandidates = getChannelIdentityCandidates({
-            ...found.data,
+            ...latestChannelData,
             userId: found.id,
             id: found.id
           });
           const isViewingFoundOwnChannel = currentView === 'channel' && routeKey && foundCandidates.some(candidate => sameChannelValue(candidate, routeKey));
-          applyChannelLoginData(found.id, found.data, firebaseUser, {
-            preferGoogleProfile: Boolean((found.data?.linkedProviders || []).includes('google') || found.data?.authProvider === 'google'),
+          applyChannelLoginData(found.id, latestChannelData, auth.currentUser || firebaseUser, {
+            preferGoogleProfile: hasGoogleLinked,
             updateTargetChannel: !effectiveRouteChannelKey || isViewingFoundOwnChannel
           });
         }
@@ -3057,10 +3081,19 @@ const findChannelByAuthUser = async (firebaseUser) => {
       if (bindOnly) {
         const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
         if (ok) {
+          const bindChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
+          if (bindChannelId && !bindChannelId.includes('/')) {
+            const bindSnap = await getDoc(doc(db, 'Channels', bindChannelId));
+            const syncedGoogleData = await syncGoogleProfileToChannel(bindChannelId, bindSnap.exists() ? bindSnap.data() : {}, result.user);
+            applyChannelLoginData(bindChannelId, syncedGoogleData, auth.currentUser || result.user, {
+              preferGoogleProfile: true,
+              updateTargetChannel: true
+            });
+          }
           setIsIdLoginModalOpen(false);
           setLoginIdInput('');
           setLoginPasswordInput('');
-          showToast('Google 已綁定到目前 USER ID', 'success');
+          showToast('Google 已綁定並同步名稱與頭貼', 'success');
         }
         return;
       }
@@ -3068,7 +3101,10 @@ const findChannelByAuthUser = async (firebaseUser) => {
       const found = await findChannelByAuthUser(result.user);
       if (found) {
         const syncedGoogleData = await syncGoogleProfileToChannel(found.id, found.data, result.user);
-        applyChannelLoginData(found.id, syncedGoogleData, result.user, { preferGoogleProfile: true });
+        applyChannelLoginData(found.id, syncedGoogleData, auth.currentUser || result.user, {
+          preferGoogleProfile: true,
+          updateTargetChannel: true
+        });
         setIsIdLoginModalOpen(false);
         setLoginIdInput('');
         setLoginPasswordInput('');
@@ -3080,10 +3116,17 @@ const findChannelByAuthUser = async (firebaseUser) => {
       if (hasLocalChannel) {
         const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
         if (ok) {
+          const localChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
+          const localSnap = await getDoc(doc(db, 'Channels', localChannelId));
+          const syncedGoogleData = await syncGoogleProfileToChannel(localChannelId, localSnap.exists() ? localSnap.data() : {}, result.user);
+          applyChannelLoginData(localChannelId, syncedGoogleData, auth.currentUser || result.user, {
+            preferGoogleProfile: true,
+            updateTargetChannel: true
+          });
           setIsIdLoginModalOpen(false);
           setLoginIdInput('');
           setLoginPasswordInput('');
-          showToast('Google 已登入，並已綁定目前訪客帳號', 'success');
+          showToast('Google 已登入，並已同步目前頻道名稱與頭貼', 'success');
         }
         return;
       }
