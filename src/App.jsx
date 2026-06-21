@@ -757,7 +757,8 @@ const toastTimeoutRef = useRef(null);
   const hasRunInitialYoutubeCleanupRef = useRef(false);
   const lastYoutubeCleanupSignatureRef = useRef('');
   const activeChannelSubscriptionKeyRef = useRef('');
-  const subscriptionVideosRequestRef = useRef(0); 
+  const subscriptionVideosRequestRef = useRef(0);
+  const subscriptionProfileRefreshSignatureRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
     if (routeVideoId) return 'watch';
     if (effectiveRouteChannelKey) return 'channel';
@@ -6693,6 +6694,29 @@ const canManageComment = (comment = {}) => {
 
   const resolveFreshChannelProfile = async (source = {}) => {
     const clean = (value) => String(value || '').trim();
+
+    // 先吃本機快取，避免訂閱頁每次進入都重新打 Channels 查詢。
+    const cachedKeys = Array.from(new Set([
+      source.userId,
+      source.id,
+      source.customId,
+      source.channelId,
+      source.ownerId,
+      source.uid,
+      source.creatorId,
+      source.authorId,
+      source.username,
+      source.name,
+      source.channelName,
+      source.channel,
+      source.author,
+      source.creatorName
+    ].map(clean).filter(Boolean)));
+    for (const cacheKey of cachedKeys) {
+      const cachedProfile = channelProfileCache?.[cacheKey] || searchChannelProfiles?.[cacheKey];
+      if (cachedProfile?.userId || cachedProfile?.name || cachedProfile?.avatar) return cachedProfile;
+    }
+
     const idCandidates = Array.from(new Set([
       source.userId,
       source.id,
@@ -7369,35 +7393,56 @@ return [];
   };
 
   useEffect(() => {
-    const safeSubs = Array.isArray(subscribedChannels) ? subscribedChannels.map(item => String(item || '').trim()).filter(Boolean) : [];
+    const safeSubs = Array.isArray(subscribedChannels)
+      ? subscribedChannels.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
     const safeDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
     if (safeSubs.length === 0 && safeDetails.length === 0) return;
 
+    const signature = safeSubs.slice().sort().join('|');
+    if (subscriptionProfileRefreshSignatureRef.current === signature) return;
+    subscriptionProfileRefreshSignatureRef.current = signature;
+
     let cancelled = false;
+
+    const hasEnoughLocalProfile = (source = {}) => {
+      const keys = getChannelIdentityCandidates(source);
+      const cached = keys.map(key => channelProfileCache?.[key] || searchChannelProfiles?.[key]).find(Boolean);
+      const profile = cached || source;
+      const hasName = Boolean(String(profile?.name || profile?.username || profile?.channelName || '').trim());
+      const hasAvatar = Boolean(String(profile?.avatar || '').trim()) && profile.avatar !== GUEST_AVATAR;
+      return hasName && hasAvatar;
+    };
 
     const refreshSubscribedChannelProfiles = async () => {
       try {
-        const sources = [];
-        const seen = new Set();
+        const sourceMap = new Map();
+        const addSource = (source = {}) => {
+          const keys = getChannelIdentityCandidates(source);
+          const key = String(source.userId || source.id || keys[0] || '').trim();
+          if (!key || sourceMap.has(key)) return;
+          if (hasEnoughLocalProfile(source)) return;
+          sourceMap.set(key, source);
+        };
 
-        safeDetails.forEach(detail => {
-          const keys = getChannelIdentityCandidates(detail);
-          const key = keys[0] || JSON.stringify(detail);
-          if (!key || seen.has(key)) return;
-          seen.add(key);
-          sources.push(detail);
-        });
+        safeDetails.forEach(addSource);
+        safeSubs.forEach(item => addSource({ userId: item, id: item, name: item, username: item, channelName: item }));
 
-        safeSubs.forEach(item => {
-          if (!item || seen.has(item)) return;
-          seen.add(item);
-          sources.push({ userId: item, id: item, name: item, username: item, channelName: item });
-        });
+        const sources = Array.from(sourceMap.values()).slice(0, 40);
+        if (sources.length === 0 || cancelled) return;
 
         const freshProfiles = [];
-        for (const source of sources.slice(0, 80)) {
-          const fresh = await resolveFreshChannelProfile(source);
-          if (fresh) freshProfiles.push(fresh);
+        const batchSize = 5;
+        for (let i = 0; i < sources.length; i += batchSize) {
+          if (cancelled) return;
+          const batch = sources.slice(i, i + batchSize);
+          const results = await Promise.all(batch.map(source =>
+            resolveFreshChannelProfile(source).catch(error => {
+              console.warn('訂閱頻道資料補抓失敗:', source, error);
+              return null;
+            })
+          ));
+          results.filter(Boolean).forEach(profile => freshProfiles.push(profile));
         }
 
         if (cancelled || freshProfiles.length === 0) return;
@@ -7410,10 +7455,10 @@ return [];
           return next;
         });
 
+        // 背景更新訂閱詳細資料；不要讓訂閱影片 feed 重新載入。
         setSubscribedChannelDetails(prev => {
           const detailMap = new Map();
           const addDetail = (detail = {}) => {
-            if (!detail) return;
             const keys = getChannelIdentityCandidates(detail);
             const primaryKey = String(detail.userId || detail.id || keys[0] || detail.name || '').trim();
             if (!primaryKey) return;
@@ -7421,22 +7466,20 @@ return [];
           };
 
           (Array.isArray(prev) ? prev : []).forEach(addDetail);
-          freshProfiles.forEach(profile => {
-            const primaryKey = String(profile.userId || profile.id || profile.username || profile.name || '').trim();
-            detailMap.set(primaryKey, { ...(detailMap.get(primaryKey) || {}), ...profile });
-          });
+          freshProfiles.forEach(addDetail);
 
           const nextDetails = Array.from(detailMap.values()).filter(Boolean);
           return JSON.stringify(prev || []) === JSON.stringify(nextDetails) ? prev : nextDetails;
         });
       } catch (error) {
-        console.warn('訂閱清單更新最新頻道名稱/頭貼失敗:', error);
+        console.warn('訂閱清單背景更新最新頻道名稱/頭貼失敗:', error);
       }
     };
 
-    refreshSubscribedChannelProfiles();
+    // 不阻塞訂閱頁顯示，先 render 目前快取，再背景補資料。
+    setTimeout(refreshSubscribedChannelProfiles, 0);
     return () => { cancelled = true; };
-  }, [JSON.stringify(subscribedChannels), JSON.stringify(subscribedChannelDetails.map(detail => ({ id: detail?.id, userId: detail?.userId, name: detail?.name, username: detail?.username, channelName: detail?.channelName, avatar: detail?.avatar })))]);
+  }, [JSON.stringify(subscribedChannels), isUserLibraryLoaded]);
 
   const getSubscriptionLookupValues = () => {
     const values = new Set();
@@ -7488,41 +7531,103 @@ return [];
   };
 
   const fetchSubscriptionVideosFromFirebase = async (subscriptionValues = [], page = 1) => {
-    const cleanValues = Array.from(new Set(subscriptionValues.map(normalizeChannelValue).filter(Boolean)));
-    if (cleanValues.length === 0) return [];
+    const clean = (value) => normalizeChannelValue(value);
+    const safeSubs = Array.isArray(subscribedChannels)
+      ? subscribedChannels.map(clean).filter(Boolean)
+      : [];
+    const safeDetails = Array.isArray(subscribedChannelDetails) ? subscribedChannelDetails : [];
 
-    const maxPerField = Math.max(SUBSCRIPTION_VIDEO_PAGE_SIZE, page * SUBSCRIPTION_VIDEO_PAGE_SIZE);
-    const fieldsToTry = ['userId', 'channelId', 'channel', 'author', 'creatorName', 'username', 'channelName'];
+    // 像頻道頁一樣：主要只用穩定頻道 ID 查 Videos.userId / Videos.channelId。
+    // 不再把 userId/channel/author/creatorName/username/channelName 全部輪流查，避免讀取太多與噴 index 提示。
+    const idValues = new Set();
+    const legacyNameValues = new Set();
+
+    const addTarget = (source = {}) => {
+      if (!source) return;
+      const keys = getChannelIdentityCandidates(source);
+      const cachedProfile = keys
+        .map(key => channelProfileCache?.[key] || searchChannelProfiles?.[key])
+        .find(Boolean) || {};
+
+      [
+        cachedProfile.userId,
+        cachedProfile.id,
+        cachedProfile.customId,
+        cachedProfile.channelId,
+        source.userId,
+        source.id,
+        source.customId,
+        source.channelId
+      ].map(clean).filter(Boolean).forEach(value => idValues.add(value));
+
+      [
+        cachedProfile.name,
+        cachedProfile.username,
+        cachedProfile.channelName,
+        source.name,
+        source.username,
+        source.channelName,
+        source.channel,
+        source.author,
+        source.creatorName
+      ].map(clean).filter(Boolean).forEach(value => legacyNameValues.add(value));
+    };
+
+    safeDetails.forEach(addTarget);
+    safeSubs.forEach(value => {
+      idValues.add(value);
+      legacyNameValues.add(value);
+      addTarget({ userId: value, id: value, name: value, username: value, channelName: value });
+    });
+
+    // 保留外部傳進來的 lookup values，但只當成穩定 ID / 舊名稱候選，不再拿去對 7 個欄位全量查。
+    (Array.isArray(subscriptionValues) ? subscriptionValues : [])
+      .map(clean)
+      .filter(Boolean)
+      .slice(0, 30)
+      .forEach(value => {
+        idValues.add(value);
+        legacyNameValues.add(value);
+      });
+
+    const maxPerQuery = Math.max(SUBSCRIPTION_VIDEO_PAGE_SIZE, page * SUBSCRIPTION_VIDEO_PAGE_SIZE);
     const allVideos = [];
+    const seenVideoKeys = new Set();
 
-    for (const fieldName of fieldsToTry) {
+    const pushDoc = (docSnap) => {
+      const video = { id: docSnap.id, ...docSnap.data() };
+      const key = String(video.id || getYoutubeIdFromVideo(video) || video.videoUrl || '').trim();
+      if (key && seenVideoKeys.has(key)) return;
+      if (key) seenVideoKeys.add(key);
+      allVideos.push(video);
+    };
+
+    const queryVideosByField = async (fieldName, values) => {
+      const cleanValues = Array.from(new Set(values.map(clean).filter(Boolean))).slice(0, 30);
       for (let i = 0; i < cleanValues.length; i += 10) {
         const chunk = cleanValues.slice(i, i + 10);
         if (chunk.length === 0) continue;
+
         try {
-          // 優先抓最新影片；如果 Firestore 缺少複合索引，再 fallback 成不排序查詢避免整個訂閱頁空白。
-          let videosSnap;
-          try {
-            videosSnap = await getDocs(query(
-              collection(db, 'Videos'),
-              where(fieldName, 'in', chunk),
-              orderBy('createdAt', 'desc'),
-              limit(maxPerField)
-            ));
-          } catch (orderedError) {
-            console.warn(`訂閱頁最新排序查詢 ${fieldName} 失敗，改用未排序查詢:`, orderedError);
-            videosSnap = await getDocs(query(
-              collection(db, 'Videos'),
-              where(fieldName, 'in', chunk),
-              limit(maxPerField)
-            ));
-          }
-          videosSnap.docs.forEach(docSnap => allVideos.push({ id: docSnap.id, ...docSnap.data() }));
+          const videosSnap = await getDocs(query(
+            collection(db, 'Videos'),
+            where(fieldName, 'in', chunk),
+            limit(maxPerQuery)
+          ));
+          videosSnap.docs.forEach(pushDoc);
         } catch (error) {
           console.warn(`訂閱頁讀取 ${fieldName} 影片失敗，略過此欄位:`, error);
         }
       }
-    }
+    };
+
+    // 主查詢：只查「訂閱頻道 ID」對應的影片，跟頻道頁邏輯一致。
+    await queryVideosByField('userId', Array.from(idValues));
+    await queryVideosByField('channelId', Array.from(idValues));
+
+    // 舊資料補救：只有舊影片沒有 userId/channelId 時，才用 channel 名稱補查一次。
+    // 不再查 author/creatorName/username/channelName，避免每次訂閱頁都爆量查詢。
+    await queryVideosByField('channel', Array.from(legacyNameValues));
 
     return allVideos;
   };
@@ -7581,7 +7686,7 @@ return [];
   useEffect(() => {
     if (currentView !== 'subscriptions') return;
     loadSubscriptionVideosPage({ reset: true });
-  }, [currentView, JSON.stringify(subscribedChannels), JSON.stringify(subscribedChannelDetails)]);
+  }, [currentView, JSON.stringify(subscribedChannels)]);
 
   useEffect(() => {
     if (currentView !== 'subscriptions') return;
@@ -8855,11 +8960,6 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
           )}
 
           {currentView !== 'home' && (
-            (isPageLoading && ['subscriptions', 'history', 'liked'].includes(currentView)) ? (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: '70vh' }}>
-                <div className="yt-buffering-spinner"></div>
-              </div>
-            ) : (
               <>
                 {currentView === 'subscriptions' && (
                   <div>
@@ -9210,7 +9310,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                           zIndex: 10,
                           transition: 'background 0.3s ease'
                         }}>
-                          <div className="yt-buffering-spinner"></div>
+                          <div className="skeleton-thumb" style={{ width: '72%', maxWidth: '620px', aspectRatio: '16 / 9', borderRadius: '18px' }}></div>
                         </div>
                       ) : null}
                         <iframe
@@ -9531,7 +9631,6 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                   </div>
                 )}
               </>
-            )
           )}
           {toast.show && (
             <div className={`toast-notification ${toast.type}`}>
