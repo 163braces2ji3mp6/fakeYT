@@ -2452,6 +2452,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       username: displayName || cleanChannelId,
       channelName: displayName || cleanChannelId,
       avatar: avatarUrl || GUEST_AVATAR,
+      googleProfileSyncedOnce: true,
       googleSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -2535,13 +2536,9 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
     const googleProviderProfile = authProviders.find(provider => provider?.providerId === 'google.com') || null;
     const linkedProviders = Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [];
-    const shouldPreferGoogleProfile = Boolean(
-      options.preferGoogleProfile ||
-      googleProviderProfile ||
-      channelData.authProvider === 'google' ||
-      linkedProviders.includes('google') ||
-      linkedProviders.includes('google.com')
-    );
+    // 只有「第一次 Google 綁定 / 第一次用 Google 建立頻道」才使用 Google 名稱與頭貼。
+    // 已經綁定過的帳號再次 Google 登入時，要保留 LeafHub 頻道自己設定的名稱與頭貼。
+    const shouldPreferGoogleProfile = options.preferGoogleProfile === true;
     const googleDisplayName = String(googleProviderProfile?.displayName || firebaseUser?.displayName || '').trim();
     const googleAvatarUrl = String(googleProviderProfile?.photoURL || firebaseUser?.photoURL || '').trim();
     const displayName = shouldPreferGoogleProfile
@@ -2861,20 +2858,12 @@ const findChannelByAuthUser = async (firebaseUser) => {
       try {
         const found = await findChannelByAuthUser(firebaseUser);
         if (found) {
-          const restoreSignature = `${firebaseUser.uid || ''}:${found.id || ''}:${firebaseUser.displayName || ''}:${firebaseUser.photoURL || ''}:${currentUserId || ''}`;
+          const restoreSignature = `${firebaseUser.uid || ''}:${found.id || ''}:${currentUserId || ''}`;
           if (authRestoreSignatureRef.current === restoreSignature) return;
           authRestoreSignatureRef.current = restoreSignature;
-          const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
-          const hasGoogleProvider = authProviders.some(provider => provider?.providerId === 'google.com');
-          const hasGoogleLinked = Boolean(
-            hasGoogleProvider ||
-            (found.data?.linkedProviders || []).includes('google') ||
-            (found.data?.linkedProviders || []).includes('google.com') ||
-            found.data?.authProvider === 'google'
-          );
-          const latestChannelData = hasGoogleLinked
-            ? await syncGoogleProfileToChannel(found.id, found.data, firebaseUser, { reloadUser: false })
-            : found.data;
+
+          // 背景還原登入只吃 Channels 裡已保存的 LeafHub 頻道資料，不再同步 Google 名稱/頭貼。
+          const latestChannelData = found.data;
           const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
           const foundCandidates = getChannelIdentityCandidates({
             ...latestChannelData,
@@ -2883,7 +2872,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
           });
           const isViewingFoundOwnChannel = currentView === 'channel' && routeKey && foundCandidates.some(candidate => sameChannelValue(candidate, routeKey));
           applyChannelLoginData(found.id, latestChannelData, auth.currentUser || firebaseUser, {
-            preferGoogleProfile: hasGoogleLinked,
+            preferGoogleProfile: false,
             updateTargetChannel: !effectiveRouteChannelKey || isViewingFoundOwnChannel
           });
         }
@@ -3107,18 +3096,18 @@ const findChannelByAuthUser = async (firebaseUser) => {
 
       const found = await findChannelByAuthUser(result.user);
       if (found) {
-        const syncedGoogleData = await syncGoogleProfileToChannel(found.id, found.data, result.user, { reloadUser: true });
-        applyChannelLoginData(found.id, syncedGoogleData, auth.currentUser || result.user, {
-          preferGoogleProfile: true,
+        // 已經綁定過 Google 的帳號再次登入時，不再用 Google 覆蓋 LeafHub 頻道名稱與頭貼。
+        applyChannelLoginData(found.id, found.data, auth.currentUser || result.user, {
+          preferGoogleProfile: false,
           updateTargetChannel: true
         });
         setIsIdLoginModalOpen(false);
         setLoginIdInput('');
         setLoginPasswordInput('');
         setIsPageLoading(false);
-          setIsFirstInit(false);
-          setIsChannelRouteResolving(false);
-          showToast('Google 登入成功', 'success');
+        setIsFirstInit(false);
+        setIsChannelRouteResolving(false);
+        showToast('Google 登入成功', 'success');
         return;
       }
 
