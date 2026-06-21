@@ -759,7 +759,8 @@ const toastTimeoutRef = useRef(null);
   const lastYoutubeCleanupSignatureRef = useRef('');
   const activeChannelSubscriptionKeyRef = useRef('');
   const subscriptionVideosRequestRef = useRef(0);
-  const subscriptionProfileRefreshSignatureRef = useRef(''); 
+  const subscriptionProfileRefreshSignatureRef = useRef('');
+const authRestoreSignatureRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
     if (routeVideoId) return 'watch';
     if (effectiveRouteChannelKey) return 'channel';
@@ -2410,14 +2411,14 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     return { displayName, avatarUrl };
   };
 
-  const syncGoogleProfileToChannel = async (channelId, channelData = {}, firebaseUser) => {
+  const syncGoogleProfileToChannel = async (channelId, channelData = {}, firebaseUser, options = {}) => {
     const cleanChannelId = String(channelId || '').trim();
     if (!cleanChannelId || cleanChannelId.includes('/') || !firebaseUser) return channelData;
 
-    // 每次 Google 登入 / 還原登入時都先 reload Firebase user，避免第二次登入繼續吃舊的 displayName/photoURL。
+    // 只在「使用者主動按 Google 登入」時 reload；背景 auth restore 不 reload，避免登入後 / 登出後畫面被 auth state 反覆觸發成黑畫面。
     let freshFirebaseUser = firebaseUser;
     try {
-      if (typeof firebaseUser.reload === 'function') {
+      if (options.reloadUser === true && typeof firebaseUser.reload === 'function') {
         await firebaseUser.reload();
         freshFirebaseUser = auth.currentUser || firebaseUser;
       }
@@ -2860,6 +2861,9 @@ const findChannelByAuthUser = async (firebaseUser) => {
       try {
         const found = await findChannelByAuthUser(firebaseUser);
         if (found) {
+          const restoreSignature = `${firebaseUser.uid || ''}:${found.id || ''}:${firebaseUser.displayName || ''}:${firebaseUser.photoURL || ''}:${currentUserId || ''}`;
+          if (authRestoreSignatureRef.current === restoreSignature) return;
+          authRestoreSignatureRef.current = restoreSignature;
           const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
           const hasGoogleProvider = authProviders.some(provider => provider?.providerId === 'google.com');
           const hasGoogleLinked = Boolean(
@@ -2869,7 +2873,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
             found.data?.authProvider === 'google'
           );
           const latestChannelData = hasGoogleLinked
-            ? await syncGoogleProfileToChannel(found.id, found.data, firebaseUser)
+            ? await syncGoogleProfileToChannel(found.id, found.data, firebaseUser, { reloadUser: false })
             : found.data;
           const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
           const foundCandidates = getChannelIdentityCandidates({
@@ -3084,7 +3088,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
           const bindChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
           if (bindChannelId && !bindChannelId.includes('/')) {
             const bindSnap = await getDoc(doc(db, 'Channels', bindChannelId));
-            const syncedGoogleData = await syncGoogleProfileToChannel(bindChannelId, bindSnap.exists() ? bindSnap.data() : {}, result.user);
+            const syncedGoogleData = await syncGoogleProfileToChannel(bindChannelId, bindSnap.exists() ? bindSnap.data() : {}, result.user, { reloadUser: true });
             applyChannelLoginData(bindChannelId, syncedGoogleData, auth.currentUser || result.user, {
               preferGoogleProfile: true,
               updateTargetChannel: true
@@ -3093,6 +3097,9 @@ const findChannelByAuthUser = async (firebaseUser) => {
           setIsIdLoginModalOpen(false);
           setLoginIdInput('');
           setLoginPasswordInput('');
+          setIsPageLoading(false);
+          setIsFirstInit(false);
+          setIsChannelRouteResolving(false);
           showToast('Google 已綁定並同步名稱與頭貼', 'success');
         }
         return;
@@ -3100,7 +3107,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
 
       const found = await findChannelByAuthUser(result.user);
       if (found) {
-        const syncedGoogleData = await syncGoogleProfileToChannel(found.id, found.data, result.user);
+        const syncedGoogleData = await syncGoogleProfileToChannel(found.id, found.data, result.user, { reloadUser: true });
         applyChannelLoginData(found.id, syncedGoogleData, auth.currentUser || result.user, {
           preferGoogleProfile: true,
           updateTargetChannel: true
@@ -3108,7 +3115,10 @@ const findChannelByAuthUser = async (firebaseUser) => {
         setIsIdLoginModalOpen(false);
         setLoginIdInput('');
         setLoginPasswordInput('');
-        showToast('Google 登入成功', 'success');
+        setIsPageLoading(false);
+          setIsFirstInit(false);
+          setIsChannelRouteResolving(false);
+          showToast('Google 登入成功', 'success');
         return;
       }
 
@@ -3118,7 +3128,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
         if (ok) {
           const localChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
           const localSnap = await getDoc(doc(db, 'Channels', localChannelId));
-          const syncedGoogleData = await syncGoogleProfileToChannel(localChannelId, localSnap.exists() ? localSnap.data() : {}, result.user);
+          const syncedGoogleData = await syncGoogleProfileToChannel(localChannelId, localSnap.exists() ? localSnap.data() : {}, result.user, { reloadUser: true });
           applyChannelLoginData(localChannelId, syncedGoogleData, auth.currentUser || result.user, {
             preferGoogleProfile: true,
             updateTargetChannel: true
@@ -3126,6 +3136,9 @@ const findChannelByAuthUser = async (firebaseUser) => {
           setIsIdLoginModalOpen(false);
           setLoginIdInput('');
           setLoginPasswordInput('');
+          setIsPageLoading(false);
+          setIsFirstInit(false);
+          setIsChannelRouteResolving(false);
           showToast('Google 已登入，並已同步目前頻道名稱與頭貼', 'success');
         }
         return;
@@ -3164,7 +3177,10 @@ const findChannelByAuthUser = async (firebaseUser) => {
       }, { merge: true });
       const newSnap = await getDoc(doc(db, 'Channels', fallbackId));
       applyChannelLoginData(fallbackId, newSnap.data() || {}, result.user, { preferGoogleProfile: true });
-      showToast('已用 Google 建立新頻道', 'success');
+      setIsPageLoading(false);
+          setIsFirstInit(false);
+          setIsChannelRouteResolving(false);
+          showToast('已用 Google 建立新頻道', 'success');
     } catch (error) {
       console.error('Google Auth 失敗:', error);
       showToast('Google 登入失敗，請確認 Firebase Auth 已啟用 Google Provider', 'error');
@@ -3268,6 +3284,21 @@ const handleLogoutId = async () => {
     setLiveSubscriberCount(0);
     setTargetChannel(blankTargetChannel);
     setTargetChannelUserId(randomUser.id);
+    authRestoreSignatureRef.current = '';
+    setCurrentView('home');
+    setSearchQuery('');
+    setSearchInputStr('');
+    setIsPageLoading(false);
+    setIsFirstInit(false);
+    setIsVideoLoading(false);
+    setIsChannelLoading(false);
+    setIsChannelVideosLoading(false);
+    setIsChannelContentBuffering(false);
+    setIsChannelRouteResolving(false);
+    setChannelLoadingKey('');
+    setChannelVideos([]);
+    stopChannelContentBuffer();
+    if (location.pathname !== '/' || location.search) navigate('/');
 
     // 清空帳號安全中心/Email modal 的輸入與狀態，避免畫面殘留上一個 Email。
     setEmailInput('');
