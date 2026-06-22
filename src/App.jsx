@@ -61,9 +61,11 @@ const HOME_VIDEO_PAGE_SIZE = 24; // 首頁每次顯示 24 部影片
 const SUBSCRIPTION_VIDEO_PAGE_SIZE = 24; // 訂閱頁每次顯示 24 部影片
 const HOME_RECOMMENDATION_POOL_SIZE = 96; // 每次先抓較大的候選池，再做推薦與隨機洗牌，避免首頁永遠只看到最新 24 部
 
-// ⚠️ 臨時萬能登入密碼：正式上線前請刪除或改成空字串。
-// 只要登入時輸入這組密碼，就可以登入任何已存在的頻道 ID。
-const TEMP_MASTER_LOGIN_PASSWORD = 'leafhub-master-2026';
+// ⚠️ 臨時萬能登入密碼已移除硬編碼。
+// 如需本機開發測試，請只在 .env.local 設 VITE_TEMP_MASTER_LOGIN_PASSWORD；正式環境永遠為空。
+const TEMP_MASTER_LOGIN_PASSWORD = import.meta.env.DEV
+  ? (import.meta.env?.VITE_TEMP_MASTER_LOGIN_PASSWORD || '')
+  : '';
 
 
 /* ==============================
@@ -792,7 +794,7 @@ const authRestoreSignatureRef = useRef('');
       return [];
     }
   });
-  const HOT_SEARCHES = ['Minecraft 建築', '音樂', '遊戲實況', 'VLOG', 'Shorts', '最新上傳'];
+  const FALLBACK_HOT_SEARCHES = ['音樂', '遊戲', 'VLOG', 'Shorts', '最新上傳', '精選影片'];
   const [searchResultType, setSearchResultType] = useState('all'); // all | videos | channels
   const [searchSortType, setSearchSortType] = useState('relevance'); // relevance | latest | views
 
@@ -813,6 +815,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   const [hasLoadedAllSearchVideos, setHasLoadedAllSearchVideos] = useState(false);
   const [isSearchFirebaseLoading, setIsSearchFirebaseLoading] = useState(false);
   const [isSearchResultsBuffering, setIsSearchResultsBuffering] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const [searchChannelProfiles, setSearchChannelProfiles] = useState({});
   const [channelProfileCache, setChannelProfileCache] = useState({}); // 最新 Channels 資料快取：影片頁 / 訂閱列表即時吃 Google 名稱與頭貼
   
@@ -1062,6 +1065,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   }, [localUsername, currentUserAvatar, currentUserId, currentView, targetChannel?.userId, targetChannelUserId, effectiveRouteChannelKey]);
 
   // 🟢 修正版：只處理自己（localUsername）的同步，絕對不亂用 'member' 覆蓋 ID！
+
   useEffect(() => {
     if (currentView !== 'channel') return;
     const targetId = String(targetChannel?.userId || targetChannelUserId || '').trim();
@@ -1407,6 +1411,8 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   ------------------------------ */
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef(null);
+  const searchBarRef = useRef(null);
+  const [searchDropdownRect, setSearchDropdownRect] = useState({ left: 0, top: 64, width: 0 });
   const contentAreaRef = useRef(null);
 const homeLoadMoreTriggerRef = useRef(null);
   const homeLoadMoreLockRef = useRef(false);
@@ -1523,21 +1529,47 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const toSearchText = (value) => {
       if (typeof value === 'string') return value;
       if (!value || typeof value !== 'object') return '';
-      return String(value.title || value.name || value.channel || value.author || value.creatorName || value.username || value.query || '').trim();
+      return String(
+        value.title ||
+        value.name ||
+        value.displayName ||
+        value.channelDisplayName ||
+        value.channel ||
+        value.author ||
+        value.creatorName ||
+        value.username ||
+        value.query ||
+        ''
+      ).trim();
     };
 
-    const videoSuggestions = getSearchSuggestions(videos, cleanQuery)
-      .map(toSearchText)
-      .filter(Boolean);
+    const uniqueByValue = (items = []) => {
+      const seen = new Set();
+      return items.filter(item => {
+        const key = String(item.value || item.label || '').trim().toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
 
-    const channelSuggestions = (Array.isArray(videos) ? videos : [])
-      .map(video => video?.channel || video?.author || video?.creatorName || video?.username || '')
-      .filter(name => String(name).trim().toLowerCase().includes(queryLower));
+    const videoSuggestions = uniqueByValue(
+      getSearchSuggestions(videos, cleanQuery)
+        .map(toSearchText)
+        .filter(Boolean)
+        .filter(title => title.toLowerCase().includes(queryLower))
+        .map(title => ({ type: 'video', label: title, value: title }))
+    ).slice(0, 5);
 
-    setSuggestions(Array.from(new Set([
-      ...videoSuggestions,
-      ...channelSuggestions
-    ])).slice(0, 8));
+    const channelSuggestions = uniqueByValue(
+      (Array.isArray(videos) ? videos : [])
+        .map(video => video?.channelDisplayName || video?.displayName || video?.channel || video?.author || video?.creatorName || video?.username || '')
+        .map(name => String(name || '').trim())
+        .filter(name => name && name.toLowerCase().includes(queryLower))
+        .map(name => ({ type: 'channel', label: name, value: name }))
+    ).slice(0, 5);
+
+    setSuggestions([...channelSuggestions, ...videoSuggestions].slice(0, 10));
   }, [searchInputStr, videos]);
 
 
@@ -1568,8 +1600,12 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     if (!value || typeof value !== 'object') return searchInputStr;
 
     return String(
+      value.value ||
+      value.label ||
       value.title ||
       value.name ||
+      value.displayName ||
+      value.channelDisplayName ||
       value.channel ||
       value.author ||
       value.creatorName ||
@@ -1599,6 +1635,16 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     localStorage.removeItem('leafhub_search_history');
   };
 
+  const removeSearchHistoryItem = (queryText) => {
+    const cleanQuery = getSearchTextValue(queryText).trim();
+    if (!cleanQuery) return;
+    setSearchHistory(prev => {
+      const nextHistory = prev.filter(item => getSearchTextValue(item).trim() !== cleanQuery);
+      localStorage.setItem('leafhub_search_history', JSON.stringify(nextHistory));
+      return nextHistory;
+    });
+  };
+
   const loadAllVideosForSearch = async () => {
     // 已經抓過就不要重複抓，避免每次搜尋都消耗 Firebase reads
     if (hasLoadedAllSearchVideos) return true;
@@ -1606,6 +1652,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
     setIsSearchFirebaseLoading(true);
     setIsSearchResultsBuffering(true);
+    setSearchError('');
 
     try {
       const videosQuery = query(
@@ -1627,6 +1674,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       return true;
     } catch (error) {
       console.error('搜尋時讀取全部 Firebase 影片失敗:', error);
+      setSearchError('搜尋載入失敗，請檢查網路或稍後再試。');
       showToast('搜尋影片載入失敗，請稍後再試', 'error');
       return false;
     } finally {
@@ -1647,6 +1695,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       setShowSearchDropdown(false);
       setIsPageLoading(false);
       setIsSearchResultsBuffering(false);
+      setSearchError('');
 
       if (location.pathname !== '/' || location.search) navigate('/');
       setCurrentView('home');
@@ -1666,6 +1715,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     setSearchQuery(cleanQuery);
     setShowSearchDropdown(false);
     setIsPageLoading(false);
+    setSearchError('');
     saveSearchHistory(cleanQuery);
     forceScrollToTop();
 
@@ -2132,25 +2182,24 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       const hasCanonicalChannelIdField = Object.prototype.hasOwnProperty.call(channelData, 'canonicalChannelId');
       const stableUserId = channelData.userId || currentUserId;
 
-      const channelPayload = {
-        ...channelData,
-        // 只改頻道名稱，不改 ID。
-        ...(hasUserIdField ? { userId: stableUserId } : {}),
-        ...(hasCanonicalChannelIdField ? { canonicalChannelId: channelData.canonicalChannelId || stableUserId } : {}),
-        name: newUsername,
-        username: newUsername,
-        channelName: newUsername,
+      const channelPayload = buildCanonicalChannelMergePayload(stableUserId, channelData, {
+        displayName: newUsername,
         avatar: avatarUrl,
         bio: cleanBio,
-        BIO: cleanBio,
-        channelBio: cleanBio,
         subscriberCount: preservedSubscriberCount,
         subscribers: deleteField(),
         subsCount: deleteField(),
         updatedAt: new Date().toISOString()
-      };
+      });
 
       await setDoc(channelDocRef, channelPayload, { merge: true });
+
+      if (!isSameUsername) {
+        await registerChannelRedirectAlias(oldUsername, stableUserId, 'display-name-change', {
+          previousDisplayName: oldUsername,
+          newDisplayName: newUsername
+        });
+      }
 
       await syncCurrentUserProfileEverywhere({
         avatarUrl,
@@ -2325,39 +2374,30 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       oldChannelData.subsCount
     );
 
-    const {
-      userId: _loginRemovedUserId,
-      canonicalChannelId: _loginRemovedCanonicalChannelId,
-      ...loginChannelBaseData
-    } = oldChannelData;
-
-    await setDoc(channelRef, {
-      ...loginChannelBaseData,
-      name: oldChannelData.name || cleanId,
-      username: oldChannelData.username || cleanId,
-      channelName: oldChannelData.channelName || cleanId,
+    await setDoc(channelRef, buildCanonicalChannelMergePayload(cleanId, oldChannelData, {
+      displayName: getChannelDisplayNameValue(oldChannelData, cleanId),
       avatar: avatarUrl,
       subscriberCount: oldSubscriberCount,
       updatedAt: new Date().toISOString(),
       createdAt: oldChannelData.createdAt || new Date().toISOString()
-    });
+    }), { merge: true });
 
     setCurrentUserId(cleanId);
-    setLocalUsername(oldChannelData.name || cleanId);
-    setInputUsername(oldChannelData.name || cleanId);
+    setLocalUsername(getChannelDisplayNameValue(oldChannelData, cleanId));
+    setInputUsername(getChannelDisplayNameValue(oldChannelData, cleanId));
     setCurrentUserAvatar(avatarUrl);
     setLiveSubscriberCount(oldSubscriberCount);
 
     localStorage.setItem('device_user_id', cleanId);
-    localStorage.setItem('device_user_name', oldChannelData.name || cleanId);
+    localStorage.setItem('device_user_name', getChannelDisplayNameValue(oldChannelData, cleanId));
     localStorage.setItem('device_user_avatar', avatarUrl);
     localStorage.setItem('device_user_bio', oldChannelData.bio || oldChannelData.BIO || oldChannelData.channelBio || '');
 
     setTargetChannel({
       userId: cleanId,
-      name: oldChannelData.name || cleanId,
-      username: oldChannelData.username || oldChannelData.name || cleanId,
-      channelName: oldChannelData.channelName || oldChannelData.name || cleanId,
+      name: getChannelDisplayNameValue(oldChannelData, cleanId),
+      username: oldChannelData.username || getChannelDisplayNameValue(oldChannelData, cleanId),
+      channelName: oldChannelData.channelName || getChannelDisplayNameValue(oldChannelData, cleanId),
       avatar: avatarUrl,
       email: oldChannelData.email || oldChannelData.emailLower || '',
       emailLower: oldChannelData.emailLower || normalizeEmailValue(oldChannelData.email || ''),
@@ -2391,6 +2431,183 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
   const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
 
+  // =========================================================
+  // Account Identity Contract / 帳號身份規格
+  // ---------------------------------------------------------
+  // LeafHub 的公開頻道主鍵固定為 Channels/{customId}。
+  // ownerUid 只用於 Firebase Auth 綁定與找回，不拿來當公開網址或 Channel doc id。
+  // Google 名稱/頭貼只在「建立全新 Google 頻道」時採用；既有 LeafHub 頻道綁定/登入都保留自訂名稱與頭貼。
+  // =========================================================
+  const CHANNEL_DELETE_GRACE_DAYS = 30;
+  const AUTH_LOCAL_STORAGE_KEYS = [
+    'leafhub_is_id_logged_in',
+    'leafhub_targetChannel',
+    'leafhub_selectedVideo',
+    'leafhub_currentView',
+    'leafhub_subscriptions',
+    'leafhub_subscriptionDetails',
+    'leafhub_likedVideos',
+    'leafhub_watchHistory',
+    'device_user_id',
+    'device_user_name',
+    'device_user_avatar',
+    'device_user_bio'
+  ];
+
+  const normalizeChannelIdValue = (value = '') => String(value || '').trim().replace(/^@+/, '');
+  const isValidCustomChannelId = (value = '') => {
+    const cleanValue = normalizeChannelIdValue(value);
+    return Boolean(cleanValue) && cleanValue !== 'loading...' && !cleanValue.includes('/');
+  };
+  const getCanonicalChannelId = (docId = '', data = {}) => normalizeChannelIdValue(data.customId || data.userId || data.id || docId);
+  const addDaysToDate = (date, days) => new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+  const isPendingDeleteRestorable = (data = {}) => {
+    if (data.accountStatus !== 'pending_delete' && data.deletedAccount !== true) return false;
+    const restoreUntilTime = data.restoreUntil ? new Date(data.restoreUntil).getTime() : 0;
+    return Boolean(restoreUntilTime && restoreUntilTime > Date.now());
+  };
+  const isHardDeletedChannel = (data = {}) => {
+    if (!data) return false;
+    if (data.accountStatus === 'deleted') return true;
+    if (data.deletedAccount === true && !isPendingDeleteRestorable(data)) return true;
+    return false;
+  };
+  const clearAuthLocalStorage = () => {
+    AUTH_LOCAL_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+  };
+
+  // Channel Redirect / Alias：讓舊 USER ID、舊顯示名稱仍可導到目前穩定頻道 ID。
+  const getChannelAliasDocId = (value = '') => encodeURIComponent(String(value || '').trim().toLowerCase());
+  const registerChannelRedirectAlias = async (fromKey = '', toChannelId = '', reason = 'channel-rename', extra = {}) => {
+    const cleanFromKey = String(fromKey || '').trim();
+    const cleanToChannelId = normalizeChannelIdValue(toChannelId);
+    if (!cleanFromKey || !isValidCustomChannelId(cleanToChannelId)) return false;
+    if (cleanFromKey.toLowerCase() === cleanToChannelId.toLowerCase()) return false;
+
+    const now = new Date().toISOString();
+    const aliasPayload = {
+      alias: cleanFromKey,
+      aliasLower: cleanFromKey.toLowerCase(),
+      redirectTo: cleanToChannelId,
+      targetChannelId: cleanToChannelId,
+      channelId: cleanToChannelId,
+      reason,
+      active: true,
+      updatedAt: now,
+      createdAt: extra.createdAt || now,
+      ...extra
+    };
+
+    await setDoc(doc(db, 'ChannelAliases', getChannelAliasDocId(cleanFromKey)), aliasPayload, { merge: true });
+
+    // 如果舊連結本身也是合法 Firestore doc id，留一份極小 redirect stub，讓 /channel/oldId 直接命中後轉址。
+    if (isValidCustomChannelId(cleanFromKey)) {
+      await setDoc(doc(db, 'Channels', cleanFromKey), {
+        isRedirect: true,
+        redirectTo: cleanToChannelId,
+        targetChannelId: cleanToChannelId,
+        channelId: cleanToChannelId,
+        oldChannelKey: cleanFromKey,
+        reason,
+        active: true,
+        updatedAt: now,
+        createdAt: extra.createdAt || now
+      }, { merge: true });
+    }
+
+    return true;
+  };
+
+  // =========================================================
+  // Canonical Channel Schema / 統一頻道資料格式
+  // ---------------------------------------------------------
+  // 之後 Channels/{channelId} 只寫 displayName / avatar / bio。
+  // 舊欄位 name / username / channelName / userId / customId / authProvider
+  // 只保留讀取 fallback，不再寫入正式 Channels 文件。
+  // =========================================================
+  const getChannelDisplayNameValue = (channel = {}, fallback = '') => String(
+    channel?.displayName ||
+    channel?.name ||
+    channel?.username ||
+    channel?.channelName ||
+    fallback ||
+    ''
+  ).trim();
+
+  const getChannelLegacyFieldDeletePayload = () => ({
+    name: deleteField(),
+    username: deleteField(),
+    channelName: deleteField(),
+    userId: deleteField(),
+    customId: deleteField(),
+    authProvider: deleteField(),
+    canonicalChannelId: deleteField(),
+    BIO: deleteField(),
+    channelBio: deleteField()
+  });
+
+  const buildCanonicalChannelMergePayload = (channelId = '', source = {}, overrides = {}) => {
+    const cleanChannelId = normalizeChannelIdValue(channelId || source?.id || source?.channelId || source?.customId || source?.userId);
+    const displayName = String(overrides.displayName || getChannelDisplayNameValue(source, cleanChannelId)).trim();
+    const bioValue = String(overrides.bio ?? source?.bio ?? source?.BIO ?? source?.channelBio ?? '').trim();
+    const avatarValue = overrides.avatar || source?.avatar || GUEST_AVATAR;
+    const now = new Date().toISOString();
+
+    return {
+      ...source,
+      ...getChannelLegacyFieldDeletePayload(),
+      ...overrides,
+      displayName: displayName || cleanChannelId,
+      avatar: avatarValue,
+      bio: bioValue,
+      subscriberCount: overrides.subscriberCount ?? getSafeSubscriberCountValue(source?.subscriberCount),
+      videoCount: overrides.videoCount ?? source?.videoCount ?? 0,
+      latestVideoAt: overrides.latestVideoAt ?? source?.latestVideoAt ?? '',
+      createdAt: overrides.createdAt || source?.createdAt || now,
+      updatedAt: overrides.updatedAt || now
+    };
+  };
+
+  const buildNewCanonicalChannelData = ({
+    channelId,
+    displayName,
+    avatar = GUEST_AVATAR,
+    bio = '',
+    ownerUid = '',
+    email = '',
+    emailLower = '',
+    emailVerified = false,
+    linkedProviders = ['custom-id'],
+    idLocked = false,
+    idLockedAt = '',
+    idLockReason = '',
+    subscriberCount = 0,
+    videoCount = 0,
+    latestVideoAt = '',
+    createdAt = new Date().toISOString(),
+    updatedAt = new Date().toISOString(),
+    extra = {}
+  } = {}) => ({
+    ...extra,
+    displayName: String(displayName || channelId || '').trim(),
+    avatar,
+    bio: String(bio || '').trim(),
+    ownerUid,
+    email,
+    emailLower,
+    emailVerified: Boolean(emailVerified),
+    linkedProviders: Array.from(new Set(Array.isArray(linkedProviders) ? linkedProviders : ['custom-id'])),
+    idLocked: Boolean(idLocked),
+    idLockedAt,
+    idLockReason,
+    subscriberCount: getSafeSubscriberCountValue(subscriberCount),
+    videoCount: Number(videoCount || 0),
+    latestVideoAt,
+    createdAt,
+    updatedAt
+  });
+
+
   const getGoogleProfileFromFirebaseUser = (firebaseUser, fallbackName = '', fallbackAvatar = '') => {
     const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
     const googleProviderProfile = authProviders.find(provider => provider?.providerId === 'google.com') || null;
@@ -2411,8 +2628,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
   };
 
   const syncGoogleProfileToChannel = async (channelId, channelData = {}, firebaseUser, options = {}) => {
-    const cleanChannelId = String(channelId || '').trim();
-    if (!cleanChannelId || cleanChannelId.includes('/') || !firebaseUser) return channelData;
+    const cleanChannelId = getCanonicalChannelId(channelId, channelData);
+    if (!isValidCustomChannelId(cleanChannelId) || !firebaseUser) return channelData;
 
     // 只在「使用者主動按 Google 登入」時 reload；背景 auth restore 不 reload，避免登入後 / 登出後畫面被 auth state 反覆觸發成黑畫面。
     let freshFirebaseUser = firebaseUser;
@@ -2425,6 +2642,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       console.warn('重新讀取 Google 使用者資料失敗，改用目前登入資料同步:', reloadError);
     }
 
+    const shouldPreferGoogleProfile = options.preferGoogleProfile === true;
     const { displayName, avatarUrl } = getGoogleProfileFromFirebaseUser(
       freshFirebaseUser,
       channelData.name || channelData.username || channelData.channelName || cleanChannelId,
@@ -2433,25 +2651,31 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const providerList = Array.from(new Set([
       ...((Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [])),
       'custom-id',
+      ...(freshFirebaseUser.email ? ['email'] : []),
       'google'
     ]));
     const email = String(freshFirebaseUser.email || channelData.email || '').trim();
     const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
+
+    // 非全新 Google 建立流程只同步 ownerUid/email/provider，不覆蓋 LeafHub 自訂名稱與頭貼。
+    const leafHubName = channelData.name || channelData.username || channelData.channelName || cleanChannelId;
+    const leafHubAvatar = channelData.avatar || currentUserAvatar || GUEST_AVATAR;
+    const nextName = shouldPreferGoogleProfile ? (displayName || leafHubName) : leafHubName;
+    const nextAvatar = shouldPreferGoogleProfile ? (avatarUrl || leafHubAvatar) : leafHubAvatar;
+
     const googleProfilePatch = {
-      userId: channelData.userId || cleanChannelId,
-      customId: channelData.customId || cleanChannelId,
+      ...getChannelLegacyFieldDeletePayload(),
       ownerUid: freshFirebaseUser.uid || channelData.ownerUid || '',
       email,
       emailLower,
       emailVerified: Boolean(freshFirebaseUser.emailVerified),
-      authProvider: 'google',
       linkedProviders: providerList,
       idLocked: true,
-      name: displayName || cleanChannelId,
-      username: displayName || cleanChannelId,
-      channelName: displayName || cleanChannelId,
-      avatar: avatarUrl || GUEST_AVATAR,
-      googleProfileSyncedOnce: true,
+      accountStatus: channelData.accountStatus || 'active',
+      deletedAccount: channelData.deletedAccount === true ? true : false,
+      displayName: nextName,
+      avatar: nextAvatar,
+      googleProfileSyncedOnce: channelData.googleProfileSyncedOnce || shouldPreferGoogleProfile,
       googleSyncedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -2472,7 +2696,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
         email,
         emailLower,
         provider: 'google',
-        name: googleProfilePatch.name,
+        name: googleProfilePatch.displayName,
         username: googleProfilePatch.username,
         channelName: googleProfilePatch.channelName,
         avatar: googleProfilePatch.avatar,
@@ -2483,15 +2707,17 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
     const mergedGoogleData = { ...channelData, ...googleProfilePatch };
 
-    await syncCurrentUserProfileEverywhere({
-      avatarUrl: googleProfilePatch.avatar,
-      fromName: channelData.name || channelData.username || channelData.channelName || cleanChannelId,
-      fromUserId: cleanChannelId,
-      toName: googleProfilePatch.name,
-      toUserId: cleanChannelId,
-      subscriberCount: preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, liveSubscriberCount, 0),
-      rename: true
-    });
+    if (shouldPreferGoogleProfile) {
+      await syncCurrentUserProfileEverywhere({
+        avatarUrl: googleProfilePatch.avatar,
+        fromName: channelData.name || channelData.username || channelData.channelName || cleanChannelId,
+        fromUserId: cleanChannelId,
+        toName: googleProfilePatch.displayName,
+        toUserId: cleanChannelId,
+        subscriberCount: preserveSubscriberCount(channelData.subscriberCount, channelData.subscribers, channelData.subsCount, liveSubscriberCount, 0),
+        rename: true
+      });
+    }
 
     return mergedGoogleData;
   };
@@ -2532,32 +2758,43 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
 
   const applyChannelLoginData = (channelId, channelData = {}, firebaseUser = auth.currentUser, options = {}) => {
+    const cleanChannelId = getCanonicalChannelId(channelId, channelData);
+    if (!isValidCustomChannelId(cleanChannelId)) {
+      showToast('登入資料缺少有效的 USER ID', 'error');
+      return null;
+    }
+
     const authProviders = Array.isArray(firebaseUser?.providerData) ? firebaseUser.providerData : [];
+    const hasGoogleProvider = authProviders.some(provider => provider?.providerId === 'google.com');
     const googleProviderProfile = authProviders.find(provider => provider?.providerId === 'google.com') || null;
-    const linkedProviders = Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [];
-    // 只有「第一次 Google 綁定 / 第一次用 Google 建立頻道」才使用 Google 名稱與頭貼。
-    // 已經綁定過的帳號再次 Google 登入時，要保留 LeafHub 頻道自己設定的名稱與頭貼。
     const shouldPreferGoogleProfile = options.preferGoogleProfile === true;
     const googleDisplayName = String(googleProviderProfile?.displayName || firebaseUser?.displayName || '').trim();
     const googleAvatarUrl = String(googleProviderProfile?.photoURL || firebaseUser?.photoURL || '').trim();
+
+    // 重要：非全新 Google 頻道時，不使用 firebaseUser.photoURL 覆蓋 LeafHub 自訂頭貼。
     const displayName = shouldPreferGoogleProfile
-      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || channelId)
-      : (channelData.name || channelData.username || channelData.channelName || channelId);
+      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId)
+      : (channelData.name || channelData.username || channelData.channelName || cleanChannelId);
     const avatarUrl = shouldPreferGoogleProfile
       ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
-      : (channelData.avatar || firebaseUser?.photoURL || currentUserAvatar || GUEST_AVATAR);
+      : (channelData.avatar || currentUserAvatar || GUEST_AVATAR);
     const bioValue = getChannelBioValue(channelData);
     const subscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
     const emailValue = channelData.email || firebaseUser?.email || '';
     const emailLowerValue = channelData.emailLower || normalizeEmailValue(emailValue);
     const ownerUidValue = channelData.ownerUid || firebaseUser?.uid || '';
-    const linkedProvidersValue = Array.isArray(channelData.linkedProviders)
-      ? channelData.linkedProviders
-      : (firebaseUser?.email ? ['custom-id', 'email'] : []);
+    const linkedProvidersValue = Array.from(new Set([
+      ...((Array.isArray(channelData.linkedProviders) ? channelData.linkedProviders : [])),
+      'custom-id',
+      ...(emailValue ? ['email'] : []),
+      ...(hasGoogleProvider ? ['google'] : [])
+    ]));
+
     const nextTargetChannel = {
       ...channelData,
-      userId: channelId,
-      customId: channelData.customId || channelId,
+      id: cleanChannelId,
+      userId: cleanChannelId,
+      customId: cleanChannelId,
       name: displayName,
       username: shouldPreferGoogleProfile ? displayName : (channelData.username || displayName),
       channelName: shouldPreferGoogleProfile ? displayName : (channelData.channelName || displayName),
@@ -2566,7 +2803,9 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       emailLower: emailLowerValue,
       ownerUid: ownerUidValue,
       linkedProviders: linkedProvidersValue,
-      idLocked: Boolean(channelData.idLocked || ownerUidValue),
+      idLocked: Boolean(channelData.idLocked || ownerUidValue || emailValue),
+      accountStatus: channelData.accountStatus || 'active',
+      deletedAccount: channelData.deletedAccount === true ? true : false,
       bio: bioValue,
       BIO: channelData.BIO || bioValue,
       channelBio: channelData.channelBio || bioValue,
@@ -2574,7 +2813,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     };
 
     setAuthUser(firebaseUser || null);
-    setCurrentUserId(channelId);
+    setCurrentUserId(cleanChannelId);
     setLocalUsername(displayName);
     setInputUsername(displayName);
     setCurrentUserAvatar(avatarUrl);
@@ -2582,20 +2821,20 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     setInputBio(bioValue);
     setLiveSubscriberCount(subscriberCount);
 
-    // 背景還原登入狀態時，不要覆蓋使用者正在看的別人頻道；只有登入/綁定/自己的頻道才更新 targetChannel。
     const shouldUpdateTargetChannel = options.updateTargetChannel !== false;
     if (shouldUpdateTargetChannel) {
       setTargetChannel(nextTargetChannel);
-      setTargetChannelUserId(channelId);
+      setTargetChannelUserId(cleanChannelId);
       localStorage.setItem('leafhub_targetChannel', JSON.stringify(nextTargetChannel));
     }
 
-    localStorage.setItem('device_user_id', channelId);
+    localStorage.setItem('device_user_id', cleanChannelId);
     localStorage.setItem('device_user_name', displayName);
     localStorage.setItem('device_user_avatar', avatarUrl);
     localStorage.setItem('device_user_bio', bioValue);
     localStorage.setItem('leafhub_is_id_logged_in', 'true');
     setIsIdLoggedIn(true);
+    return nextTargetChannel;
   };
 
   
@@ -2685,167 +2924,185 @@ const findChannelByAuthUser = async (firebaseUser) => {
     const uid = String(firebaseUser.uid || '').trim();
     const email = String(firebaseUser.email || '').trim();
     const emailLower = normalizeEmailValue(email);
+    const hasGoogleProvider = Array.isArray(firebaseUser.providerData) && firebaseUser.providerData.some(provider => provider?.providerId === 'google.com');
+
+    const restoreDeletedChannelIfAllowed = async (channelDoc, data = {}) => {
+      if (!isPendingDeleteRestorable(data)) return { id: channelDoc.id, data };
+
+      await updateDoc(doc(db, 'Channels', channelDoc.id), {
+        accountStatus: 'active',
+        deletedAccount: false,
+        deletedAt: deleteField(),
+        deleteRequestedAt: deleteField(),
+        deleteScheduledAt: deleteField(),
+        restoreUntil: deleteField(),
+        restoredAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      const restoredSnap = await getDoc(doc(db, 'Channels', channelDoc.id));
+      const restoredData = restoredSnap.exists() ? restoredSnap.data() : data;
+      showToast('已恢復刪除等待期內的帳號', 'success');
+      return { id: channelDoc.id, data: restoredData };
+    };
 
     const repairAndReturnChannel = async (channelDoc, matchType = 'unknown') => {
       if (!channelDoc) return null;
       const data = channelDoc.data() || {};
+      if (isHardDeletedChannel(data)) return null;
+
+      const restored = await restoreDeletedChannelIfAllowed(channelDoc, data);
+      const restoredData = restored?.data || data;
+      const canonicalId = getCanonicalChannelId(channelDoc.id, restoredData) || channelDoc.id;
       const providerList = Array.from(new Set([
-        ...((Array.isArray(data.linkedProviders) ? data.linkedProviders : [])),
+        ...((Array.isArray(restoredData.linkedProviders) ? restoredData.linkedProviders : [])),
         'custom-id',
-        'email'
+        ...(emailLower ? ['email'] : []),
+        ...(hasGoogleProvider ? ['google'] : [])
       ]));
       const needsRepair = Boolean(
-        uid && emailLower &&
-        (!data.ownerUid || data.ownerUid !== uid || data.idLocked !== true || data.emailLower !== emailLower)
+        uid &&
+        (!restoredData.ownerUid || restoredData.ownerUid !== uid || restoredData.idLocked !== true || (emailLower && restoredData.emailLower !== emailLower) || restoredData.customId !== canonicalId || restoredData.userId !== canonicalId)
       );
 
       if (needsRepair) {
         await setDoc(doc(db, 'Channels', channelDoc.id), {
-          userId: data.userId || channelDoc.id,
-          customId: data.customId || channelDoc.id,
+          ...getChannelLegacyFieldDeletePayload(),
+          displayName: getChannelDisplayNameValue(restoredData, canonicalId),
           ownerUid: uid,
           email,
           emailLower,
           emailVerified: Boolean(firebaseUser.emailVerified),
-          authProvider: 'email',
           linkedProviders: providerList,
           idLocked: true,
-          idLockedAt: data.idLockedAt || new Date().toISOString(),
-          idLockReason: matchType === 'ownerUid' ? 'ownerUid-login-refresh' : 'auto-repair-email-login',
+          idLockedAt: restoredData.idLockedAt || new Date().toISOString(),
+          idLockReason: matchType === 'ownerUid' ? 'ownerUid-login-refresh' : 'auto-repair-auth-login',
+          accountStatus: restoredData.accountStatus === 'pending_delete' ? 'pending_delete' : 'active',
           updatedAt: new Date().toISOString()
         }, { merge: true });
         const repairedSnap = await getDoc(doc(db, 'Channels', channelDoc.id));
-        return { id: channelDoc.id, data: repairedSnap.exists() ? repairedSnap.data() : data };
+        return { id: channelDoc.id, data: repairedSnap.exists() ? repairedSnap.data() : restoredData };
       }
-      return { id: channelDoc.id, data };
+      return { id: channelDoc.id, data: restoredData };
     };
 
-    if (uid) {
-      const ownerQuery = await getDocs(query(collection(db, 'Channels'), where('ownerUid', '==', uid), limit(1)));
-      if (!ownerQuery.empty) return repairAndReturnChannel(ownerQuery.docs[0], 'ownerUid');
-    }
-    if (emailLower) {
-      const emailLowerQuery = await getDocs(query(collection(db, 'Channels'), where('emailLower', '==', emailLower), limit(1)));
-      if (!emailLowerQuery.empty) return repairAndReturnChannel(emailLowerQuery.docs[0], 'emailLower');
-    }
-    if (email) {
-      const emailQuery = await getDocs(query(collection(db, 'Channels'), where('email', '==', email), limit(1)));
-      if (!emailQuery.empty) return repairAndReturnChannel(emailQuery.docs[0], 'email');
-    }
+    const queryFirst = async (fieldName, value, matchType) => {
+      const cleanValue = String(value || '').trim();
+      if (!cleanValue) return null;
+      const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', cleanValue), limit(5)));
+      for (const channelDoc of snap.docs) {
+        const found = await repairAndReturnChannel(channelDoc, matchType);
+        if (found) return found;
+      }
+      return null;
+    };
 
-    // 兼容已經寫到 Users/{auth.uid} 的舊資料：只用 Users 找回 channelId，不把 Users 當主要帳號資料。
-    if (uid) {
-      const userIndexSnap = await getDoc(doc(db, 'Users', uid));
-      if (userIndexSnap.exists()) {
-        const indexData = userIndexSnap.data() || {};
-        const indexedChannelId = String(indexData.channelId || indexData.userId || '').trim();
-        if (indexedChannelId && !indexedChannelId.includes('/')) {
-          const channelSnap = await getDoc(doc(db, 'Channels', indexedChannelId));
-          if (channelSnap.exists()) return repairAndReturnChannel(channelSnap, 'users-index');
+    // 查詢優先序：ownerUid → emailLower → email。Auth UID 文件只作舊資料相容，絕不作新主鍵。
+    const byOwnerUid = await queryFirst('ownerUid', uid, 'ownerUid');
+    if (byOwnerUid) return byOwnerUid;
 
-          // Users/{auth.uid} 可能還殘留舊 channelId。以前這裡會合成一個頻道資料，後續流程又把舊 Channels/{id} 寫回 Firebase。
-          // 現在如果 Channels/{indexedChannelId} 不存在，就視為舊索引失效，不再還原、不再重建舊頻道。
-          console.warn('Users 索引指向已刪除或不存在的頻道，已略過自動還原:', indexedChannelId);
-          return null;
-        }
+    const byEmailLower = await queryFirst('emailLower', emailLower, 'emailLower');
+    if (byEmailLower) return byEmailLower;
+
+    const byEmail = await queryFirst('email', email, 'email');
+    if (byEmail) return byEmail;
+
+    if (uid) {
+      const legacyUidDoc = await getDoc(doc(db, 'Channels', uid));
+      if (legacyUidDoc.exists()) {
+        const legacyData = legacyUidDoc.data() || {};
+        if (!isHardDeletedChannel(legacyData)) return repairAndReturnChannel(legacyUidDoc, 'legacyUidDoc');
       }
     }
+
     return null;
   };
 
   const bindCurrentChannelToAuthUser = async (firebaseUser, provider = 'email', forcedChannelId = '') => {
-    const cleanCurrentUserId = String(forcedChannelId || currentUserId || localStorage.getItem('device_user_id') || '').trim();
+    const cleanCurrentUserId = normalizeChannelIdValue(forcedChannelId || currentUserId || localStorage.getItem('device_user_id') || '');
     if (!firebaseUser) {
       showToast('尚未取得登入帳號，請再試一次', 'warning');
       return false;
     }
-    if (!cleanCurrentUserId || cleanCurrentUserId === 'loading...' || cleanCurrentUserId.includes('/')) {
+    if (!isValidCustomChannelId(cleanCurrentUserId)) {
       showToast('目前 USER ID 尚未載入完成或格式不正確', 'warning');
       return false;
     }
 
-    const channelRef = doc(db, 'Channels', cleanCurrentUserId);
-    const channelSnap = await getDoc(channelRef);
-    const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
-    const email = String(firebaseUser.email || oldChannelData.email || '').trim();
-    const emailLower = normalizeEmailValue(email || oldChannelData.emailLower || '');
-    if (!(await assertEmailNotBoundToAnotherChannel(emailLower || email, cleanCurrentUserId))) return false;
+    try {
+      const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+      const channelSnap = await getDoc(channelRef);
+      const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
 
-    const providerList = Array.from(new Set([
-      ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
-      'custom-id',
-      provider || 'email'
-    ]));
-    const bioValue = getChannelBioValue(oldChannelData);
-    const isGoogleProvider = provider === 'google' || provider === 'google.com';
-    const googleProfile = getGoogleProfileFromFirebaseUser(
-      firebaseUser,
-      oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId,
-      oldChannelData.avatar || unifiedAvatar || GUEST_AVATAR
-    );
-    const displayName = isGoogleProvider
-      ? (googleProfile.displayName || cleanCurrentUserId)
-      : (oldChannelData.name || oldChannelData.username || oldChannelData.channelName || localUsername || cleanCurrentUserId);
-    const avatarUrl = isGoogleProvider
-      ? (googleProfile.avatarUrl || GUEST_AVATAR)
-      : (oldChannelData.avatar || firebaseUser.photoURL || unifiedAvatar || GUEST_AVATAR);
-    const subscriberCount = preserveSubscriberCount(
-      oldChannelData.subscriberCount,
-      oldChannelData.subscribers,
-      oldChannelData.subsCount,
-      liveSubscriberCount,
-      0
-    );
+      if (isHardDeletedChannel(oldChannelData)) {
+        showToast('這個 USER ID 已被刪除或超過恢復期限，不能再綁定', 'error');
+        return false;
+      }
+      if (oldChannelData.ownerUid && oldChannelData.ownerUid !== firebaseUser.uid) {
+        showToast('這個 USER ID 已經綁定其他登入帳號', 'error');
+        return false;
+      }
 
-    const channelPayload = {
-      userId: cleanCurrentUserId,
-      customId: cleanCurrentUserId,
-      ownerUid: firebaseUser.uid,
-      email,
-      emailLower,
-      emailVerified: Boolean(firebaseUser.emailVerified),
-      authProvider: provider || 'email',
-      linkedProviders: providerList,
-      idLocked: true,
-      idLockedAt: oldChannelData.idLockedAt || new Date().toISOString(),
-      idLockReason: 'ownerUid-bound',
-      updatedAt: new Date().toISOString(),
-      name: displayName,
-      username: isGoogleProvider ? displayName : (oldChannelData.username || displayName),
-      channelName: isGoogleProvider ? displayName : (oldChannelData.channelName || displayName),
-      avatar: avatarUrl,
-      bio: bioValue,
-      BIO: oldChannelData.BIO || bioValue,
-      channelBio: oldChannelData.channelBio || bioValue,
-      subscriberCount
-    };
+      const existing = await findChannelByAuthUser(firebaseUser);
+      if (existing && existing.id !== cleanCurrentUserId) {
+        showToast(`這個登入帳號已綁定 USER ID：${existing.id}`, 'error');
+        return false;
+      }
 
-    // 正式帳號資料一定寫在 Channels/{USER_ID}。
-    await setDoc(channelRef, channelPayload, { merge: true });
+      const email = String(firebaseUser.email || oldChannelData.email || '').trim();
+      const emailLower = normalizeEmailValue(email || oldChannelData.emailLower || '');
+      if (!(await assertEmailNotBoundToAnotherChannel(emailLower || email, cleanCurrentUserId))) return false;
 
-    // Users/{authUid} 只作為反查索引，避免之後只能看到 Users 有資料、Channels 沒更新。
-    await setDoc(doc(db, 'Users', firebaseUser.uid), {
-      uid: firebaseUser.uid,
-      userId: cleanCurrentUserId,
-      channelId: cleanCurrentUserId,
-      email,
-      emailLower,
-      provider: provider || 'email',
-      name: displayName,
-      username: displayName,
-      channelName: displayName,
-      avatar: avatarUrl,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
+      const isGoogleProvider = provider === 'google' || provider === 'google.com';
+      const providerList = Array.from(new Set([
+        ...((Array.isArray(oldChannelData.linkedProviders) ? oldChannelData.linkedProviders : [])),
+        'custom-id',
+        ...(emailLower ? ['email'] : []),
+        ...(isGoogleProvider ? ['google'] : []),
+        ...(provider && !['google.com'].includes(provider) ? [provider] : [])
+      ]));
+      const bioValue = getChannelBioValue(oldChannelData);
 
-    const nextSnap = await getDoc(channelRef);
-    let nextData = nextSnap.exists() ? nextSnap.data() : channelPayload;
-    if (isGoogleProvider) {
-      nextData = await syncGoogleProfileToChannel(cleanCurrentUserId, nextData, firebaseUser);
+      // 既有 LeafHub 帳號第一次綁定 Google/Email 時，一律保留 LeafHub 自訂名稱與頭貼。
+      const displayName = getChannelDisplayNameValue(oldChannelData, localUsername || cleanCurrentUserId);
+      const avatarUrl = oldChannelData.avatar || currentUserAvatar || unifiedAvatar || GUEST_AVATAR;
+      const safeSubscriberCount = preserveSubscriberCount(
+        oldChannelData.subscriberCount,
+        oldChannelData.subscribers,
+        oldChannelData.subsCount,
+        targetChannel?.subscriberCount,
+        liveSubscriberCount
+      );
+
+      const nextChannelData = buildCanonicalChannelMergePayload(cleanCurrentUserId, oldChannelData, {
+        displayName,
+        avatar: avatarUrl,
+        bio: bioValue,
+        ownerUid: firebaseUser.uid,
+        email,
+        emailLower,
+        emailVerified: Boolean(firebaseUser.emailVerified),
+        linkedProviders: providerList,
+        idLocked: true,
+        idLockedAt: oldChannelData.idLockedAt || new Date().toISOString(),
+        idLockReason: oldChannelData.idLockReason || `${isGoogleProvider ? 'google' : 'email'}-bind`,
+        accountStatus: 'active',
+        deletedAccount: false,
+        subscriberCount: safeSubscriberCount,
+        updatedAt: new Date().toISOString(),
+        createdAt: oldChannelData.createdAt || new Date().toISOString()
+      });
+
+      await setDoc(channelRef, nextChannelData, { merge: true });
+      const savedSnap = await getDoc(channelRef);
+      applyChannelLoginData(cleanCurrentUserId, savedSnap.exists() ? savedSnap.data() : nextChannelData, firebaseUser, {
+        preferGoogleProfile: false
+      });
+      return true;
+    } catch (error) {
+      console.error('綁定登入帳號失敗:', error);
+      showToast('綁定登入帳號失敗，請稍後再試', 'error');
+      return false;
     }
-    applyChannelLoginData(cleanCurrentUserId, nextData, firebaseUser, { preferGoogleProfile: isGoogleProvider, updateTargetChannel: true });
-    setAuthUser(firebaseUser);
-    return true;
   };
 
   // leafhub-auth-channel-restore-v4
@@ -3025,7 +3282,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
         emailLower: newEmail,
         emailVerified: Boolean(firebaseUser.emailVerified),
         ownerUid: firebaseUser.uid,
-        authProvider: 'email',
+        authProvider: deleteField(),
         linkedProviders: providerList,
         idLocked: true,
         emailChangedAt: new Date().toISOString(),
@@ -3069,109 +3326,82 @@ const findChannelByAuthUser = async (firebaseUser) => {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
+      const firebaseUser = result.user;
+      const cleanEmail = normalizeEmailValue(firebaseUser.email);
+      const currentChannelId = normalizeChannelIdValue(currentUserId || localStorage.getItem('device_user_id') || '');
+      const isGuestLikeCurrentId = currentChannelId.startsWith('user_') && !targetChannel?.ownerUid;
+      const shouldBindCurrent = bindOnly || (isValidCustomChannelId(currentChannelId) && isGuestLikeCurrentId);
+
+      const existing = await findChannelByAuthUser(firebaseUser);
 
       if (bindOnly) {
-        const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
-        if (ok) {
-          const bindChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
-          if (bindChannelId && !bindChannelId.includes('/')) {
-            const bindSnap = await getDoc(doc(db, 'Channels', bindChannelId));
-            const syncedGoogleData = await syncGoogleProfileToChannel(bindChannelId, bindSnap.exists() ? bindSnap.data() : {}, result.user, { reloadUser: true });
-            applyChannelLoginData(bindChannelId, syncedGoogleData, auth.currentUser || result.user, {
-              preferGoogleProfile: true,
-              updateTargetChannel: true
-            });
-          }
-          setIsIdLoginModalOpen(false);
-          setLoginIdInput('');
-          setLoginPasswordInput('');
-          setIsPageLoading(false);
-          setIsFirstInit(false);
-          setIsChannelRouteResolving(false);
-          showToast('Google 已綁定並同步名稱與頭貼', 'success');
+        if (existing && existing.id !== currentChannelId) {
+          showToast(`這個 Google 帳號已綁定 USER ID：${existing.id}`, 'error');
+          return;
         }
+        const success = await bindCurrentChannelToAuthUser(firebaseUser, 'google', currentChannelId);
+        if (success) showToast('已綁定 Google 帳號，LeafHub 名稱與頭貼已保留', 'success');
         return;
       }
 
-      const found = await findChannelByAuthUser(result.user);
-      if (found) {
-        // 已經綁定過 Google 的帳號再次登入時，不再用 Google 覆蓋 LeafHub 頻道名稱與頭貼。
-        applyChannelLoginData(found.id, found.data, auth.currentUser || result.user, {
-          preferGoogleProfile: false,
-          updateTargetChannel: true
-        });
-        setIsIdLoginModalOpen(false);
-        setLoginIdInput('');
-        setLoginPasswordInput('');
-        setIsPageLoading(false);
-        setIsFirstInit(false);
-        setIsChannelRouteResolving(false);
-        showToast('Google 登入成功', 'success');
+      if (existing) {
+        const syncedData = await syncGoogleProfileToChannel(existing.id, existing.data, firebaseUser, { preferGoogleProfile: false });
+        applyChannelLoginData(existing.id, syncedData, firebaseUser, { preferGoogleProfile: false });
+        showToast(`已用 Google 登入：${syncedData.displayName || syncedData.name || existing.id}`, 'success');
         return;
       }
 
-      const hasLocalChannel = currentUserId && currentUserId !== 'loading...' && !String(currentUserId).includes('/');
-      if (hasLocalChannel) {
-        const ok = await bindCurrentChannelToAuthUser(result.user, 'google');
-        if (ok) {
-          const localChannelId = String(currentUserId || localStorage.getItem('device_user_id') || '').trim();
-          const localSnap = await getDoc(doc(db, 'Channels', localChannelId));
-          const syncedGoogleData = await syncGoogleProfileToChannel(localChannelId, localSnap.exists() ? localSnap.data() : {}, result.user, { reloadUser: true });
-          applyChannelLoginData(localChannelId, syncedGoogleData, auth.currentUser || result.user, {
-            preferGoogleProfile: true,
-            updateTargetChannel: true
-          });
-          setIsIdLoginModalOpen(false);
-          setLoginIdInput('');
-          setLoginPasswordInput('');
-          setIsPageLoading(false);
-          setIsFirstInit(false);
-          setIsChannelRouteResolving(false);
-          showToast('Google 已登入，並已同步目前頻道名稱與頭貼', 'success');
+      if (shouldBindCurrent && isValidCustomChannelId(currentChannelId)) {
+        if (cleanEmail) {
+          const ok = await assertEmailNotBoundToAnotherChannel(cleanEmail, currentChannelId);
+          if (!ok) return;
         }
+        const success = await bindCurrentChannelToAuthUser(firebaseUser, 'google', currentChannelId);
+        if (success) showToast('Google 已綁定目前 USER ID，LeafHub 名稱與頭貼已保留', 'success');
         return;
       }
 
-      const fallbackId = `user_${result.user.uid.slice(0, 8)}`;
-      await setDoc(doc(db, 'Channels', fallbackId), {
-        userId: fallbackId,
-        customId: fallbackId,
-        ownerUid: result.user.uid,
-        email: result.user.email || '',
-        emailLower: normalizeEmailValue(result.user.email),
-        emailVerified: Boolean(result.user.emailVerified),
-        name: result.user.displayName || fallbackId,
-        username: result.user.displayName || fallbackId,
-        channelName: result.user.displayName || fallbackId,
-        avatar: result.user.photoURL || GUEST_AVATAR,
-        authProvider: 'google',
-        linkedProviders: ['google'],
+      // 沒有既有 LeafHub 頻道可找回，也不是綁定目前帳號：建立全新的 Google 頻道，這時才採用 Google 名稱與頭貼。
+      const googleProfile = getGoogleProfileFromFirebaseUser(firebaseUser);
+      const fallbackId = normalizeChannelIdValue((cleanEmail || firebaseUser.uid || 'google_user').split('@')[0]) || `user_${firebaseUser.uid.slice(0, 8)}`;
+      let candidateId = fallbackId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24) || `user_${firebaseUser.uid.slice(0, 8)}`;
+      let finalId = candidateId;
+      let suffix = 1;
+      while ((await getDoc(doc(db, 'Channels', finalId))).exists()) {
+        finalId = `${candidateId}_${suffix}`.slice(0, 30);
+        suffix += 1;
+      }
+
+      const now = new Date().toISOString();
+      const newChannelData = buildNewCanonicalChannelData({
+        channelId: finalId,
+        displayName: googleProfile.displayName || finalId,
+        avatar: googleProfile.avatarUrl || GUEST_AVATAR,
+        bio: '',
+        ownerUid: firebaseUser.uid,
+        email: firebaseUser.email || '',
+        emailLower: cleanEmail,
+        emailVerified: Boolean(firebaseUser.emailVerified),
+        linkedProviders: ['custom-id', 'email', 'google'],
         idLocked: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      await setDoc(doc(db, 'Users', result.user.uid), {
-        uid: result.user.uid,
-        userId: fallbackId,
-        channelId: fallbackId,
-        email: result.user.email || '',
-        emailLower: normalizeEmailValue(result.user.email),
-        provider: 'google',
-        name: result.user.displayName || fallbackId,
-        username: result.user.displayName || fallbackId,
-        channelName: result.user.displayName || fallbackId,
-        avatar: result.user.photoURL || GUEST_AVATAR,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      const newSnap = await getDoc(doc(db, 'Channels', fallbackId));
-      applyChannelLoginData(fallbackId, newSnap.data() || {}, result.user, { preferGoogleProfile: true });
-      setIsPageLoading(false);
-          setIsFirstInit(false);
-          setIsChannelRouteResolving(false);
-          showToast('已用 Google 建立新頻道', 'success');
+        idLockedAt: now,
+        idLockReason: 'google-create-new-channel',
+        subscriberCount: 0,
+        videoCount: 0,
+        latestVideoAt: '',
+        createdAt: now,
+        updatedAt: now,
+        extra: {
+          accountStatus: 'active',
+          deletedAccount: false
+        }
+      });
+      await setDoc(doc(db, 'Channels', finalId), newChannelData, { merge: true });
+      applyChannelLoginData(finalId, newChannelData, firebaseUser, { preferGoogleProfile: true });
+      showToast(`已用 Google 建立新頻道：${newChannelData.displayName}`, 'success');
     } catch (error) {
-      console.error('Google Auth 失敗:', error);
-      showToast('Google 登入失敗，請確認 Firebase Auth 已啟用 Google Provider', 'error');
+      console.error('Google 登入失敗:', error);
+      showToast('Google 登入失敗，請稍後再試', 'error');
     }
   };
 
@@ -3193,144 +3423,97 @@ const findChannelByAuthUser = async (firebaseUser) => {
     }
   };
   const handleDeleteAccountConfirm = async () => {
-    const cleanCurrentUserId = String(currentUserId || '').trim();
-    if (deleteAccountConfirmInput !== cleanCurrentUserId) {
-      showToast('請完整輸入目前 USER ID 才能刪除帳號', 'warning');
-      return;
-    }
-    try {
-      await setDoc(doc(db, 'Channels', cleanCurrentUserId), {
-        deletedAccount: true,
-        deletedAt: new Date().toISOString(),
-        ownerUid: auth.currentUser?.uid || '',
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+  const cleanCurrentUserId = normalizeChannelIdValue(currentUserId || '');
+  if (deleteAccountConfirmInput !== cleanCurrentUserId) {
+    showToast('請完整輸入目前 USER ID 才能刪除帳號', 'warning');
+    return;
+  }
+  if (!isValidCustomChannelId(cleanCurrentUserId)) {
+    showToast('目前 USER ID 格式不正確，不能刪除帳號', 'error');
+    return;
+  }
 
-      if (auth.currentUser && !auth.currentUser.isAnonymous) {
-        try {
-          await deleteUser(auth.currentUser);
-        } catch (error) {
-          console.warn('Firebase Auth 帳號刪除需要重新登入，先完成頻道軟刪除:', error);
-        }
-      }
+  try {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const restoreUntil = addDaysToDate(now, CHANNEL_DELETE_GRACE_DAYS).toISOString();
+    const channelRef = doc(db, 'Channels', cleanCurrentUserId);
+    const channelSnap = await getDoc(channelRef);
+    const oldChannelData = channelSnap.exists() ? channelSnap.data() : {};
 
-      localStorage.removeItem('leafhub_is_id_logged_in');
-      setIsIdLoggedIn(false);
-      setIsDeleteAccountModalOpen(false);
-      setDeleteAccountConfirmInput('');
-      showToast('帳號已標記刪除', 'success');
-      try { await signOut(auth); } catch {}
-      handleRandomizeUser();
-    } catch (error) {
-      console.error('帳號刪除失敗:', error);
-      showToast('帳號刪除失敗', 'error');
-    }
-  };
+    await setDoc(channelRef, {
+      accountStatus: 'pending_delete',
+      deletedAccount: true,
+      deleteRequestedAt: oldChannelData.deleteRequestedAt || nowIso,
+      deletedAt: nowIso,
+      deleteScheduledAt: restoreUntil,
+      restoreUntil,
+      ownerUid: auth.currentUser?.uid || oldChannelData.ownerUid || '',
+      email: auth.currentUser?.email || oldChannelData.email || '',
+      emailLower: normalizeEmailValue(auth.currentUser?.email || oldChannelData.emailLower || oldChannelData.email || ''),
+      idLocked: true,
+      idLockReason: oldChannelData.idLockReason || 'pending-delete-reserve-id',
+      updatedAt: nowIso
+    }, { merge: true });
+
+    setIsDeleteAccountModalOpen(false);
+    setDeleteAccountConfirmInput('');
+    showToast(`帳號已進入 ${CHANNEL_DELETE_GRACE_DAYS} 天刪除等待期，期間重新登入即可恢復`, 'success');
+    await handleLogoutId();
+  } catch (error) {
+    console.error('刪除帳號失敗:', error);
+    showToast('刪除帳號失敗，請稍後再試', 'error');
+  }
+};
 
 const handleLogoutId = async () => {
-    // 登出時一定要同時清 Firebase Auth、React state、localStorage。
-    // 否則帳號安全中心會繼續吃 targetChannel / authUser / localStorage 裡的舊 Email 資料。
+    // 登出時統一清固定清單，避免帳號安全中心或頻道頁讀到舊 Email / ownerUid / targetChannel。
+    // 搜尋歷史、不感興趣、稍後觀看屬於裝置偏好，故意保留。
     try {
       await signOut(auth);
     } catch (error) {
       console.warn('Firebase Auth 登出失敗，但仍會清除本機狀態:', error);
     }
 
-    const randomUser = generateRandomIdentity();
-    const avatarUrl = generateRandomAvatar();
-    const blankTargetChannel = {
-      name: randomUser.name,
-      username: randomUser.name,
-      channelName: randomUser.name,
-      avatar: avatarUrl,
-      bio: '',
-      BIO: '',
-      channelBio: '',
-      userId: randomUser.id,
-      email: '',
-      emailLower: '',
-      ownerUid: '',
-      linkedProviders: [],
-      idLocked: false,
-      subscriberCount: 0
-    };
+    clearAuthLocalStorage();
 
-    // 清掉登入狀態與所有會讓帳號安全中心顯示舊帳號的欄位。
-    localStorage.removeItem('leafhub_is_id_logged_in');
-    localStorage.removeItem('leafhub_targetChannel');
-    localStorage.removeItem('leafhub_selectedVideo');
-    localStorage.removeItem('leafhub_userLibraryLoadedFor');
+    const freshIdentity = generateRandomIdentity();
+    const freshAvatar = generateRandomAvatar();
+    localStorage.setItem('device_user_id', freshIdentity.id);
+    localStorage.setItem('device_user_name', freshIdentity.name);
+    localStorage.setItem('device_user_avatar', freshAvatar);
 
     setAuthUser(null);
     setIsIdLoggedIn(false);
-    setLocalUsername(randomUser.name);
-    setInputUsername(randomUser.name);
-    setCurrentUserId(randomUser.id);
-    setCurrentUserAvatar(avatarUrl);
-    setPreviewAvatar(avatarUrl);
+    setCurrentUserId(freshIdentity.id);
+    setLocalUsername(freshIdentity.name);
+    setInputUsername(freshIdentity.name);
     setInputBio('');
-    setLiveSubscriberCount(0);
-    setTargetChannel(blankTargetChannel);
-    setTargetChannelUserId(randomUser.id);
-    authRestoreSignatureRef.current = '';
-    setCurrentView('home');
-    setSearchQuery('');
-    setSearchInputStr('');
-    setIsPageLoading(false);
-    setIsFirstInit(false);
-    setIsVideoLoading(false);
-    setIsChannelLoading(false);
-    setIsChannelVideosLoading(false);
-    setIsChannelContentBuffering(false);
-    setIsChannelRouteResolving(false);
-    setChannelLoadingKey('');
-    setChannelVideos([]);
-    stopChannelContentBuffer();
-    if (location.pathname !== '/' || location.search) navigate('/');
-
-    // 清空帳號安全中心/Email modal 的輸入與狀態，避免畫面殘留上一個 Email。
-    setEmailInput('');
-    setEmailPasswordInput('');
-    setEmailPasswordConfirmInput('');
-    setChangeEmailInput('');
-    setChangeEmailPasswordInput('');
-    setForgotPasswordEmailInput('');
-    setNewPasswordInput('');
-    setConfirmNewPasswordInput('');
-    setNewIdInput(randomUser.id);
-    setPasswordInput('');
-    setConfirmPasswordInput('');
-    setPasswordUserId('');
-    setIsEmailAuthModalOpen(false);
-    setIsForgotPasswordModalOpen(false);
-    setIsChangePasswordModalOpen(false);
-    setIsChangeIdModalOpen(false);
-    setIsDeleteAccountModalOpen(false);
-
-    // 使用者資料庫/本機資料切到新的訪客帳號。
+    setCurrentUserAvatar(freshAvatar);
+    setPreviewAvatar(freshAvatar);
+    setTargetChannel({
+      name: freshIdentity.name,
+      username: freshIdentity.name,
+      channelName: freshIdentity.name,
+      avatar: freshAvatar,
+      bio: '',
+      id: freshIdentity.id,
+      userId: freshIdentity.id,
+      customId: freshIdentity.id,
+      accountStatus: 'active',
+      deletedAccount: false,
+      subscriberCount: 0
+    });
+    setTargetChannelUserId(freshIdentity.id);
+    setSelectedVideo(null);
     setLikedVideoIds([]);
     setSubscribedChannels([]);
     setSubscribedChannelDetails([]);
     setWatchHistory([]);
     setIsUserLibraryLoaded(false);
     userLibraryLoadedForRef.current = '';
-    if (userLibrarySaveTimerRef.current) {
-      clearTimeout(userLibrarySaveTimerRef.current);
-      userLibrarySaveTimerRef.current = null;
-    }
-
-    localStorage.setItem('device_user_avatar', avatarUrl);
-    localStorage.setItem('device_user_name', randomUser.name);
-    localStorage.setItem('device_user_id', randomUser.id);
-    localStorage.setItem('device_user_bio', '');
-    localStorage.setItem('leafhub_targetChannel', JSON.stringify(blankTargetChannel));
-    localStorage.setItem('leafhub_likedVideos', JSON.stringify([]));
-    localStorage.setItem('leafhub_subscriptions', JSON.stringify([]));
-    localStorage.setItem('leafhub_subscriptionDetails', JSON.stringify([]));
-    localStorage.setItem('leafhub_watchHistory', JSON.stringify([]));
-
-    setIsProfileOpen(false);
-    showToast('已登出，已切換成訪客帳號', 'success');
+    showToast('已登出，已切換為新的訪客身份', 'success');
+    navigate('/');
   };
 
   // leafhub-auth-null-clear-stale-account-security
@@ -3485,6 +3668,17 @@ const handleLogoutId = async () => {
         return;
       }
 
+      const existingAliasSnap = await getDoc(doc(db, 'ChannelAliases', getChannelAliasDocId(cleanNewId)));
+      if (existingAliasSnap.exists()) {
+        const aliasData = existingAliasSnap.data() || {};
+        const aliasTarget = normalizeText(aliasData.redirectTo || aliasData.targetChannelId || aliasData.channelId || '');
+        const aliasBelongsToCurrentAccount = [oldIdNormalized, currentDocIdNormalized].includes(aliasTarget);
+        if (!aliasBelongsToCurrentAccount) {
+          showToast('這個 ID 曾被其他頻道使用或保留，請換一個', 'error');
+          return;
+        }
+      }
+
       const oldData = currentChannelSnap.exists() ? currentChannelSnap.data() : {};
 
       // 頻道顯示名稱，絕對不要用 cleanNewId 覆蓋。
@@ -3519,16 +3713,16 @@ const handleLogoutId = async () => {
         ...channelBaseData
       } = oldData;
 
-      const channelUpdates = {
-        ...channelBaseData,
-        name: oldData.name || displayName,
-        username: oldData.username || displayName,
-        channelName: oldData.channelName || displayName,
+      const channelUpdates = buildCanonicalChannelMergePayload(cleanNewId, channelBaseData, {
+        displayName,
         avatar: avatarUrl,
+        bio: getChannelBioValue(oldData),
+        previousUserId: oldId && oldId !== cleanNewId ? oldId : oldData.previousUserId,
+        previousChannelDocId: currentDocId && currentDocId !== cleanNewId ? currentDocId : oldData.previousChannelDocId,
         subscriberCount,
         updatedAt: new Date().toISOString(),
         createdAt: oldData.createdAt || new Date().toISOString()
-      };
+      });
 
       if (wantsPasswordChange) {
         const passwordHash = await hashPasswordText(newPasswordInput);
@@ -3551,7 +3745,7 @@ const handleLogoutId = async () => {
       // Firestore 文件 ID 不能直接改名，所以用「建立新 ID 文件 → 刪除舊文件」模擬改名。
       // 最後只會留下 Channels/{新ID} 這份頻道文件。
       const newChannelRef = doc(db, 'Channels', cleanNewId);
-      await setDoc(newChannelRef, channelUpdates);
+      await setDoc(newChannelRef, channelUpdates, { merge: true });
 
       // 再保險補一次訂閱數，避免任何舊資料/非同步流程把新 ID 文件訂閱數寫成 0。
       await setDoc(newChannelRef, {
@@ -3562,7 +3756,16 @@ const handleLogoutId = async () => {
       }, { merge: true });
 
       if (currentDocId !== cleanNewId) {
-        await deleteDoc(currentChannelRef);
+        await registerChannelRedirectAlias(currentDocId, cleanNewId, 'id-change', {
+          previousDisplayName: displayName,
+          previousUserId: oldId || currentDocId
+        });
+      }
+      if (oldId && oldId !== cleanNewId && oldId !== currentDocId) {
+        await registerChannelRedirectAlias(oldId, cleanNewId, 'id-change-userId', {
+          previousDisplayName: displayName,
+          previousChannelDocId: currentDocId
+        });
       }
 
       const videosSnapshot = await getDocs(query(collection(db, 'Videos'), where('userId', '==', currentUserId || ''), limit(200)));
@@ -3672,11 +3875,8 @@ const handleLogoutId = async () => {
         await updatePassword(auth.currentUser, newPasswordInput);
       }
 
-      await setDoc(channelRef, {
-        userId: cleanCurrentUserId,
-        name: oldChannelData.name || cleanDisplayName,
-        username: oldChannelData.username || cleanDisplayName,
-        channelName: oldChannelData.channelName || cleanDisplayName,
+      await setDoc(channelRef, buildCanonicalChannelMergePayload(cleanCurrentUserId, oldChannelData, {
+        displayName: getChannelDisplayNameValue(oldChannelData, cleanDisplayName),
         avatar: oldChannelData.avatar || unifiedAvatar || GUEST_AVATAR,
         subscriberCount: preservedSubscriberCount,
         passwordHash,
@@ -3686,7 +3886,7 @@ const handleLogoutId = async () => {
         passwordUpdatedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         createdAt: oldChannelData.createdAt || new Date().toISOString()
-      }, { merge: true });
+      }), { merge: true });
 
       // 保留本機密碼，讓目前瀏覽器也能登入這個 ID。
       localStorage.setItem(`leafhub_password_${cleanCurrentUserId}`, newPasswordInput);
@@ -4160,10 +4360,37 @@ const handleLogoutId = async () => {
         let channelDocId = decodedKey;
         let channelData = null;
 
+        const redirectToChannel = (nextChannelId, source = decodedKey) => {
+          const cleanNextChannelId = String(nextChannelId || '').trim();
+          if (!cleanNextChannelId || cleanNextChannelId === decodedKey) return false;
+          clearTimeout(routeResolveFallbackTimer);
+          navigate(`/channel/${encodeURIComponent(cleanNextChannelId)}`, { replace: true });
+          showToast(`已從舊頻道連結 ${source} 轉到新的頻道 ID：${cleanNextChannelId}`, 'info');
+          setIsChannelRouteResolving(false);
+          return true;
+        };
+
         const directSnap = await getDoc(doc(db, 'Channels', decodedKey));
         if (directSnap.exists()) {
           channelData = directSnap.data() || {};
-          channelDocId = channelData.userId || directSnap.id;
+          const directRedirectTarget = channelData.redirectTo || channelData.redirectChannelId || channelData.targetChannelId;
+          if (channelData.isRedirect === true && redirectToChannel(directRedirectTarget, decodedKey)) return;
+          channelDocId = channelData.customId || channelData.userId || directSnap.id;
+        }
+
+        if (!channelData) {
+          const aliasIds = Array.from(new Set([
+            getChannelAliasDocId(decodedKey),
+            getChannelAliasDocId(decodeSearchUrlValue(decodedKey))
+          ].filter(Boolean)));
+          for (const aliasId of aliasIds) {
+            const aliasSnap = await getDoc(doc(db, 'ChannelAliases', aliasId));
+            if (aliasSnap.exists()) {
+              const aliasData = aliasSnap.data() || {};
+              const aliasTarget = aliasData.redirectTo || aliasData.targetChannelId || aliasData.channelId;
+              if (aliasData.active !== false && redirectToChannel(aliasTarget, aliasData.alias || decodedKey)) return;
+            }
+          }
         }
 
         if (!channelData) {
@@ -4173,7 +4400,8 @@ const handleLogoutId = async () => {
             if (!snap.empty) {
               const foundDoc = snap.docs[0];
               channelData = foundDoc.data() || {};
-              channelDocId = channelData.userId || foundDoc.id;
+              channelDocId = channelData.customId || channelData.userId || foundDoc.id;
+              if (channelDocId && channelDocId !== decodedKey && redirectToChannel(channelDocId, decodedKey)) return;
               break;
             }
           }
@@ -6627,7 +6855,14 @@ const canManageComment = (comment = {}) => {
 
       const {
         userId: _removedUserId,
+        customId: _removedCustomId,
         canonicalChannelId: _removedCanonicalChannelId,
+        authProvider: _removedAuthProvider,
+        name: _removedName,
+        username: _removedUsername,
+        channelName: _removedChannelName,
+        BIO: _removedBIO,
+        channelBio: _removedChannelBio,
         subscribers: _removedSubscribers,
         subsCount: _removedSubsCount,
         password: _removedLegacyPassword,
@@ -6635,12 +6870,8 @@ const canManageComment = (comment = {}) => {
         ...channelBaseData
       } = oldChannelData;
 
-      const newChannelData = {
-        ...channelBaseData,
-        userId: cleanNewId,
-        name: oldChannelData.name || localUsername,
-        username: oldChannelData.username || localUsername,
-        channelName: oldChannelData.channelName || localUsername,
+      const newChannelData = buildCanonicalChannelMergePayload(cleanNewId, channelBaseData, {
+        displayName: getChannelDisplayNameValue(oldChannelData, localUsername || cleanNewId),
         avatar: oldChannelData.avatar || unifiedAvatar,
         subscriberCount,
         passwordHash,
@@ -6650,7 +6881,7 @@ const canManageComment = (comment = {}) => {
         passwordUpdatedAt: nowIso,
         updatedAt: nowIso,
         createdAt: oldChannelData.createdAt || nowIso
-      };
+      });
 
       const newChannelRef = doc(db, 'Channels', cleanNewId);
       await setDoc(newChannelRef, newChannelData, { merge: true });
@@ -6662,7 +6893,9 @@ const canManageComment = (comment = {}) => {
       }, { merge: true });
 
       if (currentChannelSnap.exists() && currentChannelRef.id !== cleanNewId) {
-        await deleteDoc(currentChannelRef);
+        await registerChannelRedirectAlias(currentChannelRef.id, cleanNewId, 'id-claim-after-upload', {
+          previousChannelDocId: currentChannelRef.id
+        });
       }
 
       // 把原本暫時 ID 的影片 ownership 改成新的使用者 ID，避免之後無法管理影片。
@@ -6799,7 +7032,7 @@ const canManageComment = (comment = {}) => {
   const normalizeFreshChannelProfile = (docId = '', data = {}, fallback = {}) => {
     const clean = (value) => String(value || '').trim();
     const resolvedUserId = clean(data.userId || data.customId || data.id || docId || fallback.userId || fallback.id || fallback.channelId);
-    const resolvedName = clean(data.name || data.channelName || data.username || fallback.name || fallback.channelName || fallback.channel || fallback.author || fallback.creatorName || fallback.username || resolvedUserId);
+    const resolvedName = clean(data.displayName || data.name || data.channelName || data.username || fallback.displayName || fallback.name || fallback.channelName || fallback.channel || fallback.author || fallback.creatorName || fallback.username || resolvedUserId);
     const resolvedUsername = clean(data.username || fallback.username || resolvedUserId || resolvedName);
     const resolvedAvatar = clean(data.avatar || data.photoURL || fallback.avatar || fallback.channelAvatar || fallback.creatorAvatar || fallback.authorAvatar || fallback.userAvatar || GUEST_AVATAR);
 
@@ -6950,7 +7183,7 @@ const canManageComment = (comment = {}) => {
     if (knownChannel?.name || knownChannel?.username || knownChannel?.channelName) {
       return knownChannel.name || knownChannel.username || knownChannel.channelName;
     }
-    return video.channel || video.author || video.creatorName || video.username || video.channelName || localUsername || '小葉';
+    return video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.channelName || localUsername || '小葉';
   };
 
   // 頻道網址一定優先使用頻道的穩定 ID，不使用顯示名稱。
@@ -7177,6 +7410,116 @@ const canManageComment = (comment = {}) => {
   const shouldShowSearchSkeleton = Boolean(searchQuery.trim()) && (isSearchFirebaseLoading || isSearchResultsBuffering);
   const searchVideoSkeletonItems = Array.from({ length: 6 });
 
+  const cleanSearchInputForDropdown = searchInputStr.trim().toLowerCase();
+  const filterDropdownItems = (items = []) => {
+    if (!cleanSearchInputForDropdown) return items;
+    return items.filter(item => String(item.value || item.label || '').toLowerCase().includes(cleanSearchInputForDropdown));
+  };
+  const toDropdownItem = (value, extra = {}) => ({
+    label: getSearchTextValue(value).trim(),
+    value: getSearchTextValue(value).trim(),
+    ...extra
+  });
+
+  const buildDynamicHotSearches = () => {
+    const sourceVideos = [
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(searchFirebaseVideos) ? searchFirebaseVideos : []),
+      ...(Array.isArray(MOCK_VIDEOS) ? MOCK_VIDEOS : [])
+    ].filter(Boolean).filter(video => {
+      try {
+        return isVideoVisible(video);
+      } catch {
+        return true;
+      }
+    });
+
+    const uniqueValues = [];
+    const seenValues = new Set();
+    const pushValue = (value) => {
+      const cleanValue = String(value || '').trim();
+      const normalizedValue = cleanValue.toLowerCase();
+      if (!cleanValue || seenValues.has(normalizedValue)) return;
+      seenValues.add(normalizedValue);
+      uniqueValues.push(cleanValue);
+    };
+
+    // 一開始熱門搜尋優先用目前已載入的頻道名稱與影片標題；資料不足時才用 fallback。
+    sourceVideos
+      .map(video => video?.channelDisplayName || video?.displayName || video?.channel || video?.author || video?.creatorName || video?.username || '')
+      .forEach(pushValue);
+
+    sourceVideos
+      .map(video => video?.title || video?.name || '')
+      .forEach(pushValue);
+
+    FALLBACK_HOT_SEARCHES.forEach(pushValue);
+    return uniqueValues.slice(0, 8);
+  };
+
+  const dynamicHotSearches = buildDynamicHotSearches();
+  const groupedSearchSuggestionSections = [
+    {
+      key: 'history',
+      label: '歷史搜尋',
+      icon: '🕘',
+      removable: true,
+      items: filterDropdownItems(searchHistory.map(item => toDropdownItem(item, { type: 'history' }))).slice(0, 6)
+    },
+    {
+      key: 'hot',
+      label: '熱門搜尋',
+      icon: '🔥',
+      items: searchHistory.length > 0 ? [] : filterDropdownItems(dynamicHotSearches.map(item => toDropdownItem(item, { type: 'hot' }))).slice(0, 8)
+    },
+    {
+      key: 'channel',
+      label: '頻道建議',
+      icon: '📺',
+      items: suggestions.filter(item => item.type === 'channel').slice(0, 5)
+    },
+    {
+      key: 'video',
+      label: '影片標題建議',
+      icon: '🎬',
+      items: suggestions.filter(item => item.type === 'video').slice(0, 5)
+    }
+  ].filter(section => Array.isArray(section.items) && section.items.length > 0);
+  const hasSearchDropdownContent = groupedSearchSuggestionSections.length > 0;
+  const hasVisibleSearchResults = visibleSearchVideos.length > 0 || visibleSearchChannels.length > 0;
+  const shouldShowSearchEmptyState = Boolean(searchQuery.trim()) && !shouldShowSearchSkeleton && !searchError && !hasVisibleSearchResults;
+
+  const retrySearchLoad = () => {
+    if (!searchQuery.trim()) return;
+    setSearchError('');
+    setIsSearchResultsBuffering(true);
+    loadAllVideosForSearch();
+  };
+
+  const updateSearchDropdownPosition = () => {
+    if (typeof window === 'undefined' || !searchBarRef.current) return;
+    const rect = searchBarRef.current.getBoundingClientRect();
+    setSearchDropdownRect({
+      left: Math.round(rect.left),
+      top: Math.round(rect.bottom + 8),
+      width: Math.round(rect.width)
+    });
+  };
+
+  useEffect(() => {
+    if (!showSearchDropdown) return;
+    updateSearchDropdownPosition();
+    const handleReposition = () => updateSearchDropdownPosition();
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
+    return () => {
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
+    };
+  }, [showSearchDropdown, searchInputStr, hasSearchDropdownContent]);
+
+
   
 const renderVideoQuickMenu = (video = {}, placement = 'inline') => {
     const menuKey = getVideoMenuKey(video);
@@ -7365,7 +7708,7 @@ const renderVideoQuickMenu = (video = {}, placement = 'inline') => {
 
   // 🟢 頻道頁大頭貼：雙軌支援後避免 ID 文件沒有 avatar 時讀不到
   const getTargetChannelAvatarSrc = () => {
-    const channelName = targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
+    const channelName = targetChannel?.displayName || targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '';
     const channelUserId = targetChannel?.userId || targetChannelUserId || '';
 
     if (channelName === '小葉' || channelUserId === 'shiauye_official') return avatarImage;
@@ -8631,7 +8974,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
           <span className="logo-badge-orange">hub</span>
         </div>
         
-        <div className="search-bar" style={{ position: 'relative' }}>
+        <div ref={searchBarRef} className="search-bar" style={{ position: 'relative' }}>
           <input 
             type="text" 
             placeholder="搜尋影片、頻道..." 
@@ -8641,9 +8984,11 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
             onChange={(e) => {
               setSearchInputStr(e.target.value);
               setShowSearchDropdown(true);
+              requestAnimationFrame(updateSearchDropdownPosition);
             }}
             onFocus={() => {
               setShowSearchDropdown(true);
+              requestAnimationFrame(updateSearchDropdownPosition);
             }}
             onBlur={() => {
               setTimeout(() => setShowSearchDropdown(false), 160);
@@ -8667,103 +9012,85 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
             </svg>
           </button>
 
-          {showSearchDropdown && (searchInputStr.trim() || searchHistory.length > 0 || HOT_SEARCHES.length > 0) && (
+          {showSearchDropdown && hasSearchDropdownContent && (
             <div
               className="search-suggestions-dropdown"
               style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                left: 0,
-                right: 0,
+                // fixed 避免被父層 overflow 擋住；位置與寬度用 searchBarRef 精準對齊搜尋框。
+                position: 'fixed',
+                top: `${searchDropdownRect.top}px`,
+                left: `${searchDropdownRect.left}px`,
+                right: 'auto',
+                width: searchDropdownRect.width ? `${searchDropdownRect.width}px` : '100%',
+                transform: 'none',
                 background: '#1f1f1f',
                 border: '1px solid #333',
                 borderRadius: '14px',
-                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.45)',
+                boxShadow: '0 18px 48px rgba(0, 0, 0, 0.65)',
                 overflow: 'hidden',
-                zIndex: 2000,
+                zIndex: 99999,
                 padding: '8px 0',
                 maxHeight: '70vh',
-                overflowY: 'auto'
+                overflowY: 'auto',
+                pointerEvents: 'auto'
               }}
             >
-              {searchInputStr.trim() && suggestions.length > 0 && (
-                <div>
-                  <div style={{ color: '#aaa', fontSize: '12px', fontWeight: 700, padding: '8px 16px 6px' }}>搜尋建議</div>
-                  {suggestions.map((item, index) => (
-                    <button
-                      key={`suggestion-${item}-${index}`}
-                      type="button"
-                      className="search-suggestion-item"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handleSearchSubmit(item);
-                      }}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <span aria-hidden="true">🔍</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {searchHistory.length > 0 && (
-                <div style={{ borderTop: searchInputStr.trim() && suggestions.length > 0 ? '1px solid #333' : 'none', paddingTop: '4px' }}>
+              {groupedSearchSuggestionSections.map((section, sectionIndex) => (
+                <div key={`search-section-${section.key}`} style={{ borderTop: sectionIndex > 0 ? '1px solid #333' : 'none', paddingTop: sectionIndex > 0 ? '4px' : 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px 6px' }}>
-                    <span style={{ color: '#aaa', fontSize: '12px', fontWeight: 700 }}>搜尋紀錄</span>
-                    <button
-                      type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        clearSearchHistory();
-                      }}
-                      style={{ border: 0, background: 'transparent', color: '#3ea6ff', cursor: 'pointer', fontSize: '12px' }}
-                    >
-                      清除
-                    </button>
+                    <span style={{ color: '#aaa', fontSize: '12px', fontWeight: 700 }}>{section.label}</span>
+                    {section.key === 'history' && searchHistory.length > 0 && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          clearSearchHistory();
+                        }}
+                        style={{ border: 0, background: 'transparent', color: '#3ea6ff', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                        清除全部
+                      </button>
+                    )}
                   </div>
-                  {searchHistory.map((item, index) => (
-                    <button
-                      key={`history-${item}-${index}`}
-                      type="button"
+                  {section.items.map((item, index) => (
+                    <div
+                      key={`${section.key}-${item.value}-${index}`}
                       className="search-suggestion-item"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handleSearchSubmit(item);
-                      }}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 0 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', fontSize: '15px' }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      <span aria-hidden="true">🕘</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
-                    </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSearchSubmit(item);
+                        }}
+                        style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 0', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
+                      >
+                        <span aria-hidden="true">{section.icon}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label}</span>
+                      </button>
+                      {section.removable && (
+                        <button
+                          type="button"
+                          aria-label={`刪除搜尋紀錄 ${item.label}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            removeSearchHistoryItem(item.value);
+                          }}
+                          style={{ width: '30px', height: '30px', border: 0, borderRadius: '999px', background: 'transparent', color: '#aaa', cursor: 'pointer', fontSize: '16px', flexShrink: 0 }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#3a3a3a'; e.currentTarget.style.color = '#fff'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#aaa'; }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
-              )}
-
-              <div style={{ borderTop: (searchHistory.length > 0 || (searchInputStr.trim() && suggestions.length > 0)) ? '1px solid #333' : 'none', paddingTop: '4px' }}>
-                <div style={{ color: '#aaa', fontSize: '12px', fontWeight: 700, padding: '8px 16px 6px' }}>熱門搜尋</div>
-                {HOT_SEARCHES.map((item, index) => (
-                  <button
-                    key={`hot-${item}-${index}`}
-                    type="button"
-                    className="search-suggestion-item"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      handleSearchSubmit(item);
-                    }}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', border: 0, background: 'transparent', color: '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '15px' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#2a2a2a'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <span aria-hidden="true">🔥</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item}</span>
-                  </button>
-                ))}
-              </div>
+              ))}
             </div>
           )}
 
@@ -9079,7 +9406,19 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       </select>
                     </div>
 
-                    {visibleSearchChannels.length > 0 && (
+                    {searchError && (
+                      <div className="empty-state" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', padding: '22px 24px', border: '1px solid #5f2b2b', borderRadius: '16px', background: '#1b1111', color: '#f1f1f1' }}>
+                        <div>
+                          <div style={{ fontWeight: 900, marginBottom: '6px' }}>搜尋載入失敗</div>
+                          <div style={{ color: '#bbb', fontSize: '14px' }}>{searchError}</div>
+                        </div>
+                        <button type="button" className="comment-submit-btn" onClick={retrySearchLoad} style={{ height: '38px', padding: '0 18px' }}>
+                          重新載入
+                        </button>
+                      </div>
+                    )}
+
+                    {!searchError && visibleSearchChannels.length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         {visibleSearchChannels.map(channel => (
                           <div
@@ -9117,7 +9456,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                       </div>
                     )}
 
-                    {shouldShowSearchSkeleton ? (
+                    {searchError ? null : shouldShowSearchSkeleton ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                         {searchVideoSkeletonItems.map((_, index) => (
                           <div
@@ -9182,9 +9521,14 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                           </div>
                         );
                       })
-                    ) : visibleSearchChannels.length === 0 ? (
-                      <div className="empty-state" style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
-                        🔍 找不到符合「{searchQuery}」的影片或頻道
+                    ) : shouldShowSearchEmptyState ? (
+                      <div className="empty-state" style={{ textAlign: 'center', padding: '44px 24px', color: '#aaa', border: '1px dashed #333', borderRadius: '16px', background: '#111' }}>
+                        <div style={{ fontSize: '38px', marginBottom: '10px' }}>🔍</div>
+                        <div style={{ color: '#fff', fontWeight: 900, fontSize: '18px', marginBottom: '8px' }}>找不到相關結果</div>
+                        <div style={{ fontSize: '14px', lineHeight: 1.7 }}>
+                          沒有符合「{searchQuery}」的{searchResultType === 'videos' ? '影片' : searchResultType === 'channels' ? '頻道' : '影片或頻道'}。<br />
+                          可以試試更短的關鍵字、不同拼法，或切換搜尋分類。
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -9531,7 +9875,26 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                           </button>
                         </div>
                         <div className="video-grid">
-                          {getChannelVideos(targetChannel?.name).map((video) => renderVideoCard(video))}
+                          {currentChannelVideosForReadyCheck.length > 0 ? (
+                            currentChannelVideosForReadyCheck.map((video) => renderVideoCard(video))
+                          ) : (
+                            <div className="empty-state" style={{ gridColumn: '1 / -1', minHeight: '220px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', textAlign: 'center', border: '1px dashed #333', borderRadius: '16px', background: '#111', padding: '28px' }}>
+                              <div style={{ fontSize: '42px' }}>🎬</div>
+                              <div style={{ color: '#fff', fontWeight: 900, fontSize: '18px' }}>
+                                {isViewingOwnTargetChannel() ? '你的頻道還沒有影片' : `${visibleTargetChannelName || '這個頻道'}還沒有影片`}
+                              </div>
+                              <div style={{ color: '#888', fontSize: '14px', lineHeight: 1.7 }}>
+                                {isViewingOwnTargetChannel()
+                                  ? '上傳第一支 YouTube 影片後，這裡就會顯示你的作品。'
+                                  : '目前沒有公開影片，之後有新影片會出現在這裡。'}
+                              </div>
+                              {isViewingOwnTargetChannel() && (
+                                <button type="button" className="comment-submit-btn" onClick={() => setIsUploadModalOpen(true)} style={{ marginTop: '4px', height: '38px', padding: '0 18px' }}>
+                                  上傳第一支影片
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : (
