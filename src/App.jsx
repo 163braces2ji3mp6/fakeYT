@@ -1,7 +1,7 @@
 /* ==============================
   01. Imports / 樣式與 Firebase 依賴
 ============================== */
-import { Component, useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { flushSync } from 'react-dom';
 import './App.css'
 import { 
@@ -423,65 +423,10 @@ const sortComments = (commentList, sortType = 'likes') => {
 /* =========================================================
   07. Main App Component / 主元件
 ========================================================= */
-const toSafeRenderableText = (value, fallback = '') => {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (value instanceof Error) return value.message || fallback;
-  if (typeof value === 'object') {
-    if (typeof value.message === 'string') return value.message;
-    if (typeof value.code === 'string') return value.code;
-    if (typeof value.methodName === 'string') return value.methodName;
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return fallback || '操作失敗，請稍後再試';
-    }
-  }
-  return String(value || fallback);
-};
-
-class LeafHubErrorBoundary extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, errorText: '' };
-  }
-
-  static getDerivedStateFromError(error) {
-    return {
-      hasError: true,
-      errorText: toSafeRenderableText(error, '畫面發生錯誤')
-    };
-  }
-
-  componentDidCatch(error, info) {
-    console.error('LeafHub render error:', error, info);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ minHeight: '100vh', background: '#0f0f0f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
-          <div style={{ maxWidth: '520px', border: '1px solid #333', borderRadius: '16px', padding: '24px', background: '#181818' }}>
-            <div style={{ fontSize: '28px', marginBottom: '12px' }}>⚠️</div>
-            <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>畫面載入失敗</h2>
-            <p style={{ color: '#bbb', lineHeight: 1.7, margin: '0 0 18px' }}>{this.state.errorText}</p>
-            <button type="button" onClick={() => window.location.reload()} style={{ border: 0, borderRadius: '999px', padding: '10px 18px', background: '#ff7a00', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
-              重新整理
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 export default function App() {
   return (
-    <LeafHubErrorBoundary>
-      <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
-        <Routes>
+    <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
+      <Routes>
         <Route path="/" element={<LeafHubApp />} />
         <Route path="/subscriptions" element={<LeafHubApp />} />
         <Route path="/history" element={<LeafHubApp />} />
@@ -491,9 +436,8 @@ export default function App() {
         <Route path="/channel/:channelKey" element={<LeafHubApp />} />
         <Route path="/watch/:videoId" element={<LeafHubApp />} />
         <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </BrowserRouter>
-    </LeafHubErrorBoundary>
+      </Routes>
+    </BrowserRouter>
   );
 }
 
@@ -788,8 +732,8 @@ const toastTimeoutRef = useRef(null);
 
     setToast({
       show: true,
-      message: toSafeRenderableText(message, '操作完成'),
-      type: typeof type === 'string' ? type : 'info'
+      message,
+      type
     });
 
     toastTimeoutRef.current = setTimeout(() => {
@@ -3469,14 +3413,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
       showToast(`已用 Google 建立新頻道：${newChannelData.displayName}`, 'success');
     } catch (error) {
       console.error('Google 登入失敗:', error);
-      const googleAuthErrorMessage = error?.code === 'auth/popup-closed-by-user'
-        ? 'Google 登入視窗已關閉'
-        : error?.code === 'auth/popup-blocked'
-          ? '瀏覽器封鎖了 Google 登入視窗，請允許彈出視窗後再試'
-          : error?.code === 'auth/cancelled-popup-request'
-            ? 'Google 登入請求已取消，請再試一次'
-            : 'Google 登入失敗，請稍後再試';
-      showToast(googleAuthErrorMessage, 'error');
+      showToast('Google 登入失敗，請稍後再試', 'error');
     }
   };
 
@@ -10344,7 +10281,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                 {toast.type === 'info' && 'ℹ'}
               </span>
                     
-              <span>{toSafeRenderableText(toast.message)}</span>
+              <span>{toast.message}</span>
             </div>
           )}
         </main>
