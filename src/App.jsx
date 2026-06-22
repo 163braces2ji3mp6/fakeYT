@@ -1,7 +1,7 @@
 /* ==============================
   01. Imports / 樣式與 Firebase 依賴
 ============================== */
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { Component, useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { flushSync } from 'react-dom';
 import './App.css'
 import { 
@@ -423,10 +423,65 @@ const sortComments = (commentList, sortType = 'likes') => {
 /* =========================================================
   07. Main App Component / 主元件
 ========================================================= */
+const toSafeRenderableText = (value, fallback = '') => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value instanceof Error) return value.message || fallback;
+  if (typeof value === 'object') {
+    if (typeof value.message === 'string') return value.message;
+    if (typeof value.code === 'string') return value.code;
+    if (typeof value.methodName === 'string') return value.methodName;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback || '操作失敗，請稍後再試';
+    }
+  }
+  return String(value || fallback);
+};
+
+class LeafHubErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, errorText: '' };
+  }
+
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorText: toSafeRenderableText(error, '畫面發生錯誤')
+    };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('LeafHub render error:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', background: '#0f0f0f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+          <div style={{ maxWidth: '520px', border: '1px solid #333', borderRadius: '16px', padding: '24px', background: '#181818' }}>
+            <div style={{ fontSize: '28px', marginBottom: '12px' }}>⚠️</div>
+            <h2 style={{ margin: '0 0 8px', fontSize: '20px' }}>畫面載入失敗</h2>
+            <p style={{ color: '#bbb', lineHeight: 1.7, margin: '0 0 18px' }}>{this.state.errorText}</p>
+            <button type="button" onClick={() => window.location.reload()} style={{ border: 0, borderRadius: '999px', padding: '10px 18px', background: '#ff7a00', color: '#fff', fontWeight: 800, cursor: 'pointer' }}>
+              重新整理
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
-      <Routes>
+    <LeafHubErrorBoundary>
+      <BrowserRouter basename={import.meta.env.BASE_URL || '/'}>
+        <Routes>
         <Route path="/" element={<LeafHubApp />} />
         <Route path="/subscriptions" element={<LeafHubApp />} />
         <Route path="/history" element={<LeafHubApp />} />
@@ -436,8 +491,9 @@ export default function App() {
         <Route path="/channel/:channelKey" element={<LeafHubApp />} />
         <Route path="/watch/:videoId" element={<LeafHubApp />} />
         <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </BrowserRouter>
+        </Routes>
+      </BrowserRouter>
+    </LeafHubErrorBoundary>
   );
 }
 
@@ -732,8 +788,8 @@ const toastTimeoutRef = useRef(null);
 
     setToast({
       show: true,
-      message,
-      type
+      message: toSafeRenderableText(message, '操作完成'),
+      type: typeof type === 'string' ? type : 'info'
     });
 
     toastTimeoutRef.current = setTimeout(() => {
@@ -854,6 +910,14 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   // 🟢 找到這個 useEffect 並替換它
   useEffect(() => {
     const initUserIdentity = async () => {
+      // 若上次是 Email/Google 正式登入，先保持 loading，等 Channels 文件還原。
+      // 這能避免畫面先顯示 Firebase Auth/Google 的 displayName/photoURL，再跳回 LeafHub 自訂頻道名稱/頭貼。
+      const hasStoredFormalAuth = Boolean(
+        localStorage.getItem('firebase_auth_uid') &&
+        localStorage.getItem('leafhub_is_id_logged_in') === 'true'
+      );
+      if (hasStoredFormalAuth) return;
+
       let savedName = localStorage.getItem('device_user_name');
       let savedId = localStorage.getItem('device_user_id');
       let savedAvatar = localStorage.getItem('device_user_avatar');
@@ -2658,8 +2722,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
 
     // 非全新 Google 建立流程只同步 ownerUid/email/provider，不覆蓋 LeafHub 自訂名稱與頭貼。
-    const leafHubName = channelData.name || channelData.username || channelData.channelName || cleanChannelId;
-    const leafHubAvatar = channelData.avatar || currentUserAvatar || GUEST_AVATAR;
+    const leafHubName = getChannelDisplayNameValue(channelData, cleanChannelId);
+    const leafHubAvatar = channelData.avatar || GUEST_AVATAR;
     const nextName = shouldPreferGoogleProfile ? (displayName || leafHubName) : leafHubName;
     const nextAvatar = shouldPreferGoogleProfile ? (avatarUrl || leafHubAvatar) : leafHubAvatar;
 
@@ -2771,13 +2835,16 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const googleDisplayName = String(googleProviderProfile?.displayName || firebaseUser?.displayName || '').trim();
     const googleAvatarUrl = String(googleProviderProfile?.photoURL || firebaseUser?.photoURL || '').trim();
 
-    // 重要：非全新 Google 頻道時，不使用 firebaseUser.photoURL 覆蓋 LeafHub 自訂頭貼。
+    // 重要：只有「全新 Google 建立頻道」才吃 Google 名稱/頭貼。
+    // 既有 LeafHub 頻道一律以 Channels 文件為準，避免 refresh 時先閃 Google displayName/photoURL。
+    const leafHubDisplayName = getChannelDisplayNameValue(channelData, cleanChannelId);
+    const leafHubAvatar = channelData.avatar || GUEST_AVATAR;
     const displayName = shouldPreferGoogleProfile
-      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId)
-      : (channelData.name || channelData.username || channelData.channelName || cleanChannelId);
+      ? (googleDisplayName || leafHubDisplayName)
+      : leafHubDisplayName;
     const avatarUrl = shouldPreferGoogleProfile
-      ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
-      : (channelData.avatar || currentUserAvatar || GUEST_AVATAR);
+      ? (googleAvatarUrl || leafHubAvatar)
+      : leafHubAvatar;
     const bioValue = getChannelBioValue(channelData);
     const subscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
     const emailValue = channelData.email || firebaseUser?.email || '';
@@ -2795,6 +2862,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       id: cleanChannelId,
       userId: cleanChannelId,
       customId: cleanChannelId,
+      displayName,
       name: displayName,
       username: shouldPreferGoogleProfile ? displayName : (channelData.username || displayName),
       channelName: shouldPreferGoogleProfile ? displayName : (channelData.channelName || displayName),
@@ -3401,7 +3469,14 @@ const findChannelByAuthUser = async (firebaseUser) => {
       showToast(`已用 Google 建立新頻道：${newChannelData.displayName}`, 'success');
     } catch (error) {
       console.error('Google 登入失敗:', error);
-      showToast('Google 登入失敗，請稍後再試', 'error');
+      const googleAuthErrorMessage = error?.code === 'auth/popup-closed-by-user'
+        ? 'Google 登入視窗已關閉'
+        : error?.code === 'auth/popup-blocked'
+          ? '瀏覽器封鎖了 Google 登入視窗，請允許彈出視窗後再試'
+          : error?.code === 'auth/cancelled-popup-request'
+            ? 'Google 登入請求已取消，請再試一次'
+            : 'Google 登入失敗，請稍後再試';
+      showToast(googleAuthErrorMessage, 'error');
     }
   };
 
@@ -3996,7 +4071,7 @@ const handleLogoutId = async () => {
     const restoreSignedInChannel = async (firebaseUser) => {
       const found = await findChannelByAuthUser(firebaseUser);
       if (found) {
-        applyChannelLoginData(found.id, found.data, firebaseUser);
+        applyChannelLoginData(found.id, found.data, firebaseUser, { preferGoogleProfile: false });
         return true;
       }
       return false;
@@ -7183,7 +7258,7 @@ const canManageComment = (comment = {}) => {
     if (knownChannel?.name || knownChannel?.username || knownChannel?.channelName) {
       return knownChannel.name || knownChannel.username || knownChannel.channelName;
     }
-    return video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.channelName || localUsername || '小葉';
+    return video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.channelName || video.userId || video.channelId || '未知頻道';
   };
 
   // 頻道網址一定優先使用頻道的穩定 ID，不使用顯示名稱。
@@ -7215,10 +7290,8 @@ const canManageComment = (comment = {}) => {
 
     if (isShiauyeVideo) return avatarImage;
 
-    const isOwnVideo =
-      isSameText(video.userId, currentUserId) ||
-      isSameText(displayName, localUsername);
-    if (isOwnVideo) return unifiedAvatar;
+    const isOwnVideoById = isSameText(video.userId, currentUserId) || isSameText(video.channelId, currentUserId);
+    if (isOwnVideoById && currentUserAvatar && currentUserAvatar !== GUEST_AVATAR) return currentUserAvatar;
 
     return video.channelAvatar || video.creatorAvatar || video.authorAvatar || video.userAvatar || video.avatar || GUEST_AVATAR;
   };
@@ -7445,7 +7518,6 @@ const canManageComment = (comment = {}) => {
       uniqueValues.push(cleanValue);
     };
 
-    // 一開始熱門搜尋優先用目前已載入的頻道名稱與影片標題；資料不足時才用 fallback。
     sourceVideos
       .map(video => video?.channelDisplayName || video?.displayName || video?.channel || video?.author || video?.creatorName || video?.username || '')
       .forEach(pushValue);
@@ -10272,7 +10344,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                 {toast.type === 'info' && 'ℹ'}
               </span>
                     
-              <span>{toast.message}</span>
+              <span>{toSafeRenderableText(toast.message)}</span>
             </div>
           )}
         </main>
