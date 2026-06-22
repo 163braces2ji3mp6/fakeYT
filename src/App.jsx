@@ -1083,7 +1083,7 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
     const looksLikeUserId = decodedKey.startsWith('user_') || decodedKey === 'shiauye_official';
     const ownId = String(currentUserId || '').trim();
     const currentTargetId = String(targetChannel?.userId || targetChannel?.id || targetChannelUserId || '').trim();
-    const currentTargetName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const currentTargetName = String(targetChannel?.channelName || targetChannel?.displayName || targetChannel?.name || targetChannel?.username || '').trim();
     const currentLooksOwn = ownId && ownId !== 'loading...' && currentTargetId === ownId && decodedKey !== ownId;
     const currentLooksWrongRoute = currentTargetId && currentTargetId !== decodedKey && looksLikeUserId;
     const currentEmpty = !currentTargetId && !currentTargetName;
@@ -1118,14 +1118,19 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
 
     const isOwnTarget = Boolean(targetId && ownId && ownId !== 'loading...' && targetId === ownId);
     if (currentView === 'channel' && isOwnTarget) {
-      setTargetChannel(prev => ({
-        ...prev,
-        userId: ownId || prev.userId,
-        name: localUsername,
-        username: localUsername,
-        channelName: localUsername,
-        avatar: unifiedAvatar
-      }));
+      setTargetChannel(prev => {
+        const preservedName = getChannelDisplayNameValue(prev, localUsername);
+        const preservedAvatar = prev?.avatar && prev.avatar !== GUEST_AVATAR ? prev.avatar : unifiedAvatar;
+        return {
+          ...prev,
+          userId: ownId || prev.userId,
+          displayName: preservedName,
+          name: preservedName,
+          username: prev?.username || preservedName,
+          channelName: prev?.channelName || preservedName,
+          avatar: preservedAvatar
+        };
+      });
     }
   }, [localUsername, currentUserAvatar, currentUserId, currentView, targetChannel?.userId, targetChannelUserId, effectiveRouteChannelKey]);
 
@@ -2591,10 +2596,12 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
   // 只保留讀取 fallback，不再寫入正式 Channels 文件。
   // =========================================================
   const getChannelDisplayNameValue = (channel = {}, fallback = '') => String(
+    // 頻道顯示名稱一律優先吃 Firestore Channels 的 channelName / displayName。
+    // name / username 只當舊資料 fallback，避免 Google Auth displayName 或影片欄位覆蓋頻道名稱。
+    channel?.channelName ||
     channel?.displayName ||
     channel?.name ||
     channel?.username ||
-    channel?.channelName ||
     fallback ||
     ''
   ).trim();
@@ -2891,6 +2898,10 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     setLiveSubscriberCount(subscriberCount);
 
     const shouldUpdateTargetChannel = options.updateTargetChannel !== false;
+    if (typeof putChannelProfileIntoCache === 'function') {
+      putChannelProfileIntoCache(nextTargetChannel);
+    }
+
     if (shouldUpdateTargetChannel) {
       setTargetChannel(nextTargetChannel);
       setTargetChannelUserId(cleanChannelId);
@@ -4641,13 +4652,15 @@ const handleLogoutId = async () => {
         : {};
 
       const displayNameCandidates = [
-        safeName,
-        cachedProfile.name,
-        cachedProfile.username,
         cachedProfile.channelName,
+        cachedProfile.displayName,
+        cachedProfile.name,
+        safeName,
+        cachedProfile.username,
+        providedChannelProfile?.channelName,
+        providedChannelProfile?.displayName,
         providedChannelProfile?.name,
-        providedChannelProfile?.username,
-        providedChannelProfile?.channelName
+        providedChannelProfile?.username
       ].map(clean).filter(Boolean);
       const displayName = displayNameCandidates.find(value => !isGeneratedUserId(value)) || safeName || cachedProfile.name || providedChannelProfile?.name || routeKey;
 
@@ -4838,7 +4851,7 @@ const handleLogoutId = async () => {
     if (currentView !== 'channel') return;
 
     const routeKey = effectiveRouteChannelKey ? decodeURIComponent(effectiveRouteChannelKey) : '';
-    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const channelName = String(targetChannel?.channelName || targetChannel?.displayName || targetChannel?.name || targetChannel?.username || '').trim();
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
     const requestId = channelNavigationRequestRef.current;
     // loading key 必須跟 beginChannelLoading 使用同一個穩定值；
@@ -5942,7 +5955,7 @@ const handleVideoClick = async (video) => {
   };
 
   const isViewingOwnChannel = () => {
-    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const channelName = String(targetChannel?.channelName || targetChannel?.displayName || targetChannel?.name || targetChannel?.username || '').trim();
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
 
     return (
@@ -7122,19 +7135,34 @@ const canManageComment = (comment = {}) => {
   const normalizeFreshChannelProfile = (docId = '', data = {}, fallback = {}) => {
     const clean = (value) => String(value || '').trim();
     const resolvedUserId = clean(data.userId || data.customId || data.id || docId || fallback.userId || fallback.id || fallback.channelId);
-    const resolvedName = clean(data.displayName || data.name || data.channelName || data.username || fallback.displayName || fallback.name || fallback.channelName || fallback.channel || fallback.author || fallback.creatorName || fallback.username || resolvedUserId);
+    const resolvedName = clean(
+      data.channelName ||
+      data.displayName ||
+      data.name ||
+      data.username ||
+      fallback.channelName ||
+      fallback.displayName ||
+      fallback.name ||
+      fallback.channel ||
+      fallback.author ||
+      fallback.creatorName ||
+      fallback.username ||
+      resolvedUserId
+    );
     const resolvedUsername = clean(data.username || fallback.username || resolvedUserId || resolvedName);
-    const resolvedAvatar = clean(data.avatar || data.photoURL || fallback.avatar || fallback.channelAvatar || fallback.creatorAvatar || fallback.authorAvatar || fallback.userAvatar || GUEST_AVATAR);
+    const resolvedAvatar = clean(data.avatar || fallback.avatar || fallback.channelAvatar || fallback.creatorAvatar || fallback.authorAvatar || fallback.userAvatar || GUEST_AVATAR);
 
     return {
       ...fallback,
       ...data,
+      __fromChannels: true,
       id: resolvedUserId || docId,
       userId: resolvedUserId || docId,
       customId: clean(data.customId || fallback.customId || resolvedUserId || docId),
+      displayName: resolvedName,
       name: resolvedName,
       username: resolvedUsername,
-      channelName: clean(data.channelName || fallback.channelName || resolvedName),
+      channelName: clean(data.channelName || data.displayName || fallback.channelName || resolvedName),
       avatar: resolvedAvatar || GUEST_AVATAR,
       subscriberCount: getSafeSubscriberCountValue(data.subscriberCount)
     };
@@ -7168,28 +7196,6 @@ const canManageComment = (comment = {}) => {
   const resolveFreshChannelProfile = async (source = {}) => {
     const clean = (value) => String(value || '').trim();
 
-    // 先吃本機快取，避免訂閱頁每次進入都重新打 Channels 查詢。
-    const cachedKeys = Array.from(new Set([
-      source.userId,
-      source.id,
-      source.customId,
-      source.channelId,
-      source.ownerId,
-      source.uid,
-      source.creatorId,
-      source.authorId,
-      source.username,
-      source.name,
-      source.channelName,
-      source.channel,
-      source.author,
-      source.creatorName
-    ].map(clean).filter(Boolean)));
-    for (const cacheKey of cachedKeys) {
-      const cachedProfile = channelProfileCache?.[cacheKey] || searchChannelProfiles?.[cacheKey];
-      if (cachedProfile?.userId || cachedProfile?.name || cachedProfile?.avatar) return cachedProfile;
-    }
-
     const idCandidates = Array.from(new Set([
       source.userId,
       source.id,
@@ -7201,6 +7207,7 @@ const canManageComment = (comment = {}) => {
       source.authorId
     ].map(clean).filter(value => value && !value.includes('/'))));
 
+    // 第一優先：直接用穩定 ID 讀 Firestore Channels。不要先吃快取，避免快取裡殘留 Google 名稱/頭貼。
     for (const candidateId of idCandidates) {
       const snap = await getDoc(doc(db, 'Channels', candidateId));
       if (snap.exists()) {
@@ -7217,16 +7224,18 @@ const canManageComment = (comment = {}) => {
     }
 
     const nameCandidates = Array.from(new Set([
+      source.channelName,
+      source.displayName,
       source.name,
       source.channel,
       source.author,
       source.creatorName,
-      source.channelName,
       source.username
     ].map(clean).filter(Boolean)));
 
+    // 第二優先：用 Firestore Channels 欄位查。順序 channelName/displayName/name/username。
     for (const name of nameCandidates) {
-      for (const fieldName of ['username', 'name', 'channelName']) {
+      for (const fieldName of ['channelName', 'displayName', 'name', 'username']) {
         const snap = await getDocs(query(collection(db, 'Channels'), where(fieldName, '==', name), limit(1)));
         if (!snap.empty) {
           const foundDoc = snap.docs[0];
@@ -7235,18 +7244,32 @@ const canManageComment = (comment = {}) => {
       }
     }
 
+    // 最後才吃快取；快取只當 fallback，不允許覆蓋 Firestore Channels。
+    const cachedKeys = Array.from(new Set([
+      ...idCandidates,
+      ...nameCandidates
+    ].map(clean).filter(Boolean)));
+    for (const cacheKey of cachedKeys) {
+      const cachedProfile = channelProfileCache?.[cacheKey] || searchChannelProfiles?.[cacheKey];
+      if (cachedProfile?.userId || cachedProfile?.displayName || cachedProfile?.channelName || cachedProfile?.name || cachedProfile?.avatar) {
+        return cachedProfile.__fromChannels ? cachedProfile : normalizeFreshChannelProfile(cachedProfile.userId || cachedProfile.id || cacheKey, cachedProfile, source);
+      }
+    }
+
     return null;
   };
 
   const getKnownChannelProfileForVideo = (video = {}) => {
-    const videoUserId = String(video.userId || video.uid || video.ownerId || video.channelId || '').trim();
-    const videoName = String(video.channel || video.author || video.creatorName || video.username || video.channelName || '').trim();
+    const clean = (value) => String(value || '').trim();
+    const profileName = (channel = {}) => clean(channel.channelName || channel.displayName || channel.name || channel.username || channel.channel || channel.author || channel.creatorName);
+    const videoUserId = clean(video.userId || video.uid || video.ownerId || video.channelId || video.customId || video.creatorId || video.authorId);
+    const videoName = clean(video.channelName || video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username);
 
     const cachedCandidates = [
-      channelProfileCache?.[videoUserId],
-      channelProfileCache?.[videoName],
-      searchChannelProfiles?.[videoUserId],
-      searchChannelProfiles?.[videoName]
+      videoUserId ? channelProfileCache?.[videoUserId] : null,
+      videoUserId ? searchChannelProfiles?.[videoUserId] : null,
+      !videoUserId && videoName ? channelProfileCache?.[videoName] : null,
+      !videoUserId && videoName ? searchChannelProfiles?.[videoName] : null
     ].filter(Boolean);
 
     const candidates = [
@@ -7257,23 +7280,30 @@ const canManageComment = (comment = {}) => {
       selectedVideo
     ];
 
-    return candidates.find(channel => {
+    const matched = candidates.find(channel => {
       if (!channel) return false;
-      const channelUserId = String(channel.userId || channel.id || channel.channelId || '').trim();
-      const channelName = String(channel.name || channel.username || channel.channelName || channel.channel || channel.author || channel.creatorName || '').trim();
-      return Boolean(
-        (videoUserId && channelUserId && videoUserId === channelUserId) ||
-        (videoName && channelName && videoName === channelName)
-      );
-    }) || null;
+      const channelUserId = clean(channel.userId || channel.id || channel.customId || channel.channelId);
+      const channelName = profileName(channel);
+      if (videoUserId) return Boolean(channelUserId && videoUserId === channelUserId);
+      return Boolean(videoName && channelName && videoName === channelName);
+    });
+
+    if (!matched) return null;
+    const displayName = profileName(matched);
+    return {
+      ...matched,
+      displayName,
+      name: displayName || matched.name,
+      channelName: displayName || matched.channelName
+    };
   };
 
   const getVideoDisplayName = (video = {}) => {
     const knownChannel = getKnownChannelProfileForVideo(video);
-    if (knownChannel?.name || knownChannel?.username || knownChannel?.channelName) {
-      return knownChannel.name || knownChannel.username || knownChannel.channelName;
+    if (knownChannel?.displayName || knownChannel?.channelName || knownChannel?.name || knownChannel?.username) {
+      return knownChannel.displayName || knownChannel.channelName || knownChannel.name || knownChannel.username;
     }
-    return video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.channelName || video.userId || video.channelId || '未知頻道';
+    return video.channelName || video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.userId || video.channelId || '未知頻道';
   };
 
   // 頻道網址一定優先使用頻道的穩定 ID，不使用顯示名稱。
@@ -7310,6 +7340,54 @@ const canManageComment = (comment = {}) => {
 
     return video.channelAvatar || video.creatorAvatar || video.authorAvatar || video.userAvatar || video.avatar || GUEST_AVATAR;
   };
+
+
+  // 影片卡片一載入就用 Videos.userId/channelId 去補抓 Channels，避免首頁先顯示影片文件裡殘留的 Google 名稱/頭貼。
+  useEffect(() => {
+    const sourceVideosForProfiles = [
+      ...(Array.isArray(videos) ? videos : []),
+      ...(Array.isArray(rawFirebaseVideos) ? rawFirebaseVideos : []),
+      ...(Array.isArray(searchFirebaseVideos) ? searchFirebaseVideos : []),
+      ...(Array.isArray(channelVideos) ? channelVideos : []),
+      ...(selectedVideo ? [selectedVideo] : [])
+    ].filter(Boolean);
+
+    const uniqueProfileSources = [];
+    const seenProfileKeys = new Set();
+    sourceVideosForProfiles.forEach(video => {
+      const key = String(video.userId || video.channelId || video.ownerId || video.uid || '').trim();
+      if (!key || key.includes('/') || seenProfileKeys.has(key)) return;
+      seenProfileKeys.add(key);
+      uniqueProfileSources.push(video);
+    });
+
+    if (uniqueProfileSources.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      for (const source of uniqueProfileSources.slice(0, 30)) {
+        try {
+          const freshProfile = await resolveFreshChannelProfile(source);
+          if (cancelled || !freshProfile) continue;
+          putChannelProfileIntoCache(freshProfile);
+        } catch (error) {
+          console.warn('影片頻道資料補抓失敗:', source, error);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    videos.map(video => video?.id || video?.userId || video?.channelId || '').join('|'),
+    rawFirebaseVideos.map(video => video?.id || video?.userId || video?.channelId || '').join('|'),
+    searchFirebaseVideos.map(video => video?.id || video?.userId || video?.channelId || '').join('|'),
+    channelVideos.map(video => video?.id || video?.userId || video?.channelId || '').join('|'),
+    selectedVideo?.id,
+    selectedVideo?.userId,
+    selectedVideo?.channelId
+  ]);
 
   useEffect(() => {
     if (currentView !== 'watch' || !selectedVideo) return;
@@ -8447,7 +8525,7 @@ return [];
 
   const isViewingOwnTargetChannel = () => {
     const channelUserId = String(targetChannel?.userId || targetChannelUserId || '').trim();
-    const channelName = String(targetChannel?.name || targetChannel?.username || targetChannel?.channelName || '').trim();
+    const channelName = String(targetChannel?.channelName || targetChannel?.displayName || targetChannel?.name || targetChannel?.username || '').trim();
     const ownUserId = String(currentUserId || '').trim();
     const ownName = String(localUsername || '').trim();
 
@@ -8903,9 +8981,10 @@ const allDisplayedComments = sortComments([...optimisticComments, ...comments], 
     userId: targetChannel?.userId || targetChannelUserId
   });
 const visibleTargetChannelName = String(
+  targetChannel?.channelName ||
+  targetChannel?.displayName ||
   targetChannel?.name ||
   targetChannel?.username ||
-  targetChannel?.channelName ||
   targetChannel?.userId ||
   targetChannelUserId ||
   ''
