@@ -818,8 +818,7 @@ const toastTimeoutRef = useRef(null);
   const activeChannelSubscriptionKeyRef = useRef('');
   const subscriptionVideosRequestRef = useRef(0);
   const subscriptionProfileRefreshSignatureRef = useRef('');
-const authRestoreSignatureRef = useRef('');
-const googleAuthInProgressRef = useRef(false); 
+const authRestoreSignatureRef = useRef(''); 
   const [currentView, setCurrentView] = useState(() => {
     if (routeVideoId) return 'watch';
     if (effectiveRouteChannelKey) return 'channel';
@@ -3132,16 +3131,8 @@ const findChannelByAuthUser = async (firebaseUser) => {
       const bioValue = getChannelBioValue(oldChannelData);
 
       // 既有 LeafHub 帳號第一次綁定 Google/Email 時，一律保留 LeafHub 自訂名稱與頭貼。
-      // 順序：Firestore Channels -> localStorage -> 目前 React state -> USER ID。
-      // 不使用 firebaseUser.displayName / firebaseUser.photoURL，避免 Google 登入刷掉 LeafHub 名稱。
-      const storedLeafHubName = String(localStorage.getItem('device_user_name') || '').trim();
-      const stateLeafHubName = String(localUsername || '').trim();
-      const preservedNameFallback = [storedLeafHubName, stateLeafHubName, cleanCurrentUserId]
-        .find(value => value && value !== '載入中...' && value !== 'loading...') || cleanCurrentUserId;
-      const displayName = getChannelDisplayNameValue(oldChannelData, preservedNameFallback);
-
-      const storedLeafHubAvatar = String(localStorage.getItem('device_user_avatar') || '').trim();
-      const avatarUrl = oldChannelData.avatar || storedLeafHubAvatar || currentUserAvatar || unifiedAvatar || GUEST_AVATAR;
+      const displayName = getChannelDisplayNameValue(oldChannelData, localUsername || cleanCurrentUserId);
+      const avatarUrl = oldChannelData.avatar || currentUserAvatar || unifiedAvatar || GUEST_AVATAR;
       const safeSubscriberCount = preserveSubscriberCount(
         oldChannelData.subscriberCount,
         oldChannelData.subscribers,
@@ -3400,19 +3391,16 @@ const findChannelByAuthUser = async (firebaseUser) => {
 
   const handleGoogleAuth = async ({ bindOnly = false } = {}) => {
     try {
-      googleAuthInProgressRef.current = true;
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
       const firebaseUser = result.user;
       const cleanEmail = normalizeEmailValue(firebaseUser.email);
       const currentChannelId = normalizeChannelIdValue(currentUserId || localStorage.getItem('device_user_id') || '');
-      const hasUsableCurrentChannel = isValidCustomChannelId(currentChannelId) && currentChannelId !== 'loading...';
+      const isGuestLikeCurrentId = currentChannelId.startsWith('user_') && !targetChannel?.ownerUid;
+      const shouldBindCurrent = bindOnly || (isValidCustomChannelId(currentChannelId) && isGuestLikeCurrentId);
 
       const existing = await findChannelByAuthUser(firebaseUser);
-      // Google 登入預設綁目前 LeafHub 頻道，不直接建立 Google 名稱的新頻道。
-      // 只有這個 Google 帳號已經綁到別的 USER ID 時，才登入那個既有頻道。
-      const shouldBindCurrent = bindOnly || (hasUsableCurrentChannel && (!existing || existing.id === currentChannelId));
 
       if (bindOnly) {
         if (existing && existing.id !== currentChannelId) {
@@ -3427,7 +3415,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
       if (existing) {
         const syncedData = await syncGoogleProfileToChannel(existing.id, existing.data, firebaseUser, { preferGoogleProfile: false });
         applyChannelLoginData(existing.id, syncedData, firebaseUser, { preferGoogleProfile: false });
-        showToast(`已用 Google 登入：${getChannelDisplayNameValue(syncedData, existing.id)}`, 'success');
+        showToast(`已用 Google 登入：${syncedData.displayName || syncedData.name || existing.id}`, 'success');
         return;
       }
 
@@ -3441,7 +3429,7 @@ const findChannelByAuthUser = async (firebaseUser) => {
         return;
       }
 
-      // 只有完全沒有目前 LeafHub USER ID 可綁定時，才建立全新的 Google 頻道，這時才採用 Google 名稱與頭貼。
+      // 沒有既有 LeafHub 頻道可找回，也不是綁定目前帳號：建立全新的 Google 頻道，這時才採用 Google 名稱與頭貼。
       const googleProfile = getGoogleProfileFromFirebaseUser(firebaseUser);
       const fallbackId = normalizeChannelIdValue((cleanEmail || firebaseUser.uid || 'google_user').split('@')[0]) || `user_${firebaseUser.uid.slice(0, 8)}`;
       let candidateId = fallbackId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 24) || `user_${firebaseUser.uid.slice(0, 8)}`;
@@ -3489,8 +3477,6 @@ const findChannelByAuthUser = async (firebaseUser) => {
             ? 'Google 登入請求已取消，請再試一次'
             : 'Google 登入失敗，請稍後再試';
       showToast(googleAuthErrorMessage, 'error');
-    } finally {
-      googleAuthInProgressRef.current = false;
     }
   };
 
@@ -4095,7 +4081,6 @@ const handleLogoutId = async () => {
       if (user) {
         setAuthUser(user);
         localStorage.setItem('firebase_auth_uid', user.uid);
-        if (googleAuthInProgressRef.current) return;
         // 已登入正式 Email/Google 帳號時，絕對不要再套用本機隨機訪客身份。
         if (!user.isAnonymous && (user.email || user.providerData?.length)) {
           const restored = await restoreSignedInChannel(user);
