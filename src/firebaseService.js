@@ -241,9 +241,14 @@ export async function uploadVideoToFirebase(videoData) {
       subscriberCount: videoData.subscriberCount
     });
 
-    // 🟢 有 userId 才寫 Channels/{userId}；沒有 userId 不再新建 Channels/{channelName}
+    // 🟢 有 userId 才嘗試同步 Channels/{userId}；但這不是影片本體寫入。
+    // 如果目前 Firebase Auth uid 跟 Channels.ownerUid 不一致，rules 會擋 Channels 更新；不能因此讓 Videos 上傳失敗。
     if (channelPayload.userId) {
-      await upsertChannelByUserId(channelPayload);
+      try {
+        await upsertChannelByUserId(channelPayload);
+      } catch (channelError) {
+        console.warn("🚀 [Service] Channels 同步失敗，但繼續上傳影片：", channelError);
+      }
     }
 
     console.log("🚀 [Service] 正在寫入大寫 Videos 集合...");

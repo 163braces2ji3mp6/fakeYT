@@ -854,14 +854,6 @@ const [isLoadingMoreSubscriptionVideos, setIsLoadingMoreSubscriptionVideos] = us
   // 🟢 找到這個 useEffect 並替換它
   useEffect(() => {
     const initUserIdentity = async () => {
-      // 若上次是 Email/Google 正式登入，先保持 loading，等 Channels 文件還原。
-      // 這能避免畫面先顯示 Firebase Auth/Google 的 displayName/photoURL，再跳回 LeafHub 自訂頻道名稱/頭貼。
-      const hasStoredFormalAuth = Boolean(
-        localStorage.getItem('firebase_auth_uid') &&
-        localStorage.getItem('leafhub_is_id_logged_in') === 'true'
-      );
-      if (hasStoredFormalAuth) return;
-
       let savedName = localStorage.getItem('device_user_name');
       let savedId = localStorage.getItem('device_user_id');
       let savedAvatar = localStorage.getItem('device_user_avatar');
@@ -2666,8 +2658,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
 
     // 非全新 Google 建立流程只同步 ownerUid/email/provider，不覆蓋 LeafHub 自訂名稱與頭貼。
-    const leafHubName = getChannelDisplayNameValue(channelData, cleanChannelId);
-    const leafHubAvatar = channelData.avatar || GUEST_AVATAR;
+    const leafHubName = channelData.name || channelData.username || channelData.channelName || cleanChannelId;
+    const leafHubAvatar = channelData.avatar || currentUserAvatar || GUEST_AVATAR;
     const nextName = shouldPreferGoogleProfile ? (displayName || leafHubName) : leafHubName;
     const nextAvatar = shouldPreferGoogleProfile ? (avatarUrl || leafHubAvatar) : leafHubAvatar;
 
@@ -2779,16 +2771,13 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const googleDisplayName = String(googleProviderProfile?.displayName || firebaseUser?.displayName || '').trim();
     const googleAvatarUrl = String(googleProviderProfile?.photoURL || firebaseUser?.photoURL || '').trim();
 
-    // 重要：只有「全新 Google 建立頻道」才吃 Google 名稱/頭貼。
-    // 既有 LeafHub 頻道一律以 Channels 文件為準，避免 refresh 時先閃 Google displayName/photoURL。
-    const leafHubDisplayName = getChannelDisplayNameValue(channelData, cleanChannelId);
-    const leafHubAvatar = channelData.avatar || GUEST_AVATAR;
+    // 重要：非全新 Google 頻道時，不使用 firebaseUser.photoURL 覆蓋 LeafHub 自訂頭貼。
     const displayName = shouldPreferGoogleProfile
-      ? (googleDisplayName || leafHubDisplayName)
-      : leafHubDisplayName;
+      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId)
+      : (channelData.name || channelData.username || channelData.channelName || cleanChannelId);
     const avatarUrl = shouldPreferGoogleProfile
-      ? (googleAvatarUrl || leafHubAvatar)
-      : leafHubAvatar;
+      ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
+      : (channelData.avatar || currentUserAvatar || GUEST_AVATAR);
     const bioValue = getChannelBioValue(channelData);
     const subscriberCount = getSafeSubscriberCountValue(channelData.subscriberCount);
     const emailValue = channelData.email || firebaseUser?.email || '';
@@ -2806,7 +2795,6 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       id: cleanChannelId,
       userId: cleanChannelId,
       customId: cleanChannelId,
-      displayName,
       name: displayName,
       username: shouldPreferGoogleProfile ? displayName : (channelData.username || displayName),
       channelName: shouldPreferGoogleProfile ? displayName : (channelData.channelName || displayName),
@@ -4008,7 +3996,7 @@ const handleLogoutId = async () => {
     const restoreSignedInChannel = async (firebaseUser) => {
       const found = await findChannelByAuthUser(firebaseUser);
       if (found) {
-        applyChannelLoginData(found.id, found.data, firebaseUser, { preferGoogleProfile: false });
+        applyChannelLoginData(found.id, found.data, firebaseUser);
         return true;
       }
       return false;
@@ -5879,12 +5867,20 @@ const handleVideoClick = async (video) => {
   const canManageVideo = (video = {}) => {
     const currentId = String(currentUserId || '').trim();
     const currentName = String(localUsername || '').trim();
+    const currentAuthUid = String(auth.currentUser?.uid || authUser?.uid || '').trim();
     const displayName = String(getVideoDisplayName(video) || '').trim();
-    const candidates = [
-      video?.userId,
+
+    const ownerCandidates = [
+      video?.ownerUid,
       video?.uid,
+      video?.authUid
+    ].map(value => String(value || '').trim()).filter(Boolean);
+
+    const channelCandidates = [
+      video?.userId,
       video?.ownerId,
       video?.channelId,
+      video?.customId,
       video?.channel,
       video?.author,
       video?.creatorName,
@@ -5893,9 +5889,10 @@ const handleVideoClick = async (video) => {
       displayName
     ].map(value => String(value || '').trim()).filter(Boolean);
 
+    if (currentAuthUid && ownerCandidates.includes(currentAuthUid)) return true;
     if (!currentId || currentId === 'loading...') return false;
 
-    return candidates.some(value =>
+    return channelCandidates.some(value =>
       value === currentId ||
       (currentName && value === currentName)
     );
@@ -6039,6 +6036,20 @@ const handleVideoClick = async (video) => {
       const isMockVideo = Array.isArray(MOCK_VIDEOS) && MOCK_VIDEOS.some(video => String(video.id) === String(videoId));
 
       if (!isMockVideo) {
+        const currentAuthUid = auth.currentUser?.uid || authUser?.uid || '';
+        const missingOwnerUid = !videoToDelete.ownerUid || !videoToDelete.uid || !videoToDelete.authUid;
+        if (currentAuthUid && missingOwnerUid) {
+          try {
+            await updateDoc(doc(db, 'Videos', videoId), {
+              ownerUid: currentAuthUid,
+              uid: currentAuthUid,
+              authUid: currentAuthUid,
+              updatedAt: new Date().toISOString()
+            });
+          } catch (claimError) {
+            console.warn('舊影片 owner 欄位補寫失敗，仍會嘗試刪除：', claimError);
+          }
+        }
         await deleteDoc(doc(db, 'Videos', videoId));
       }
 
@@ -6690,6 +6701,10 @@ const canManageComment = (comment = {}) => {
         channelName: localUsername,
         author: localUsername,
         userId: currentUserId,
+        channelId: currentUserId,
+        ownerUid: auth.currentUser?.uid || authUser?.uid || '',
+        uid: auth.currentUser?.uid || authUser?.uid || '',
+        authUid: auth.currentUser?.uid || authUser?.uid || '',
         views: 0,
         likeCount: 0,
         commentCount: 0,
@@ -6716,17 +6731,22 @@ const canManageComment = (comment = {}) => {
       await uploadVideoToFirebase(dataToUpload);
 
       // 計數欄位直接存 Channels 文件，避免每次進頻道都重新掃 Videos 算影片數。
+      // 這個同步不是上傳影片本體；如果 Firestore rules 暫時不允許更新 Channels，不能把已成功的影片上傳判定成失敗。
       if (currentUserId) {
-        await setDoc(doc(db, 'Channels', currentUserId), {
-          userId: currentUserId,
-          name: localUsername,
-          username: localUsername,
-          channelName: localUsername,
-          avatar: unifiedAvatar,
-          videoCount: increment(1),
-          latestVideoAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
+        try {
+          await setDoc(doc(db, 'Channels', currentUserId), {
+            userId: currentUserId,
+            name: localUsername,
+            username: localUsername,
+            channelName: localUsername,
+            avatar: unifiedAvatar,
+            videoCount: increment(1),
+            latestVideoAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (channelUpdateError) {
+          console.warn('影片已上傳，但頻道統計同步失敗：', channelUpdateError);
+        }
       }
 
       // 上傳成功後先回首頁並顯示 buffer；等 Firebase snapshot 真的抓到新影片後才顯示列表。
@@ -6753,7 +6773,15 @@ const canManageComment = (comment = {}) => {
       setIsAnalyzing(false);
     }
     
-    if (auth.currentUser?.isAnonymous) {
+    const shouldAskSetPasswordAfterUpload = Boolean(
+      auth.currentUser?.isAnonymous &&
+      !isIdLoggedIn &&
+      !targetChannel?.ownerUid &&
+      !targetChannel?.idLocked &&
+      String(currentUserId || '').startsWith('user_')
+    );
+
+    if (shouldAskSetPasswordAfterUpload) {
       setIsSetPasswordModalOpen(true);
     }
 
@@ -7191,11 +7219,28 @@ const canManageComment = (comment = {}) => {
   };
 
   const getVideoDisplayName = (video = {}) => {
-    const knownChannel = getKnownChannelProfileForVideo(video);
-    if (knownChannel?.name || knownChannel?.username || knownChannel?.channelName) {
-      return knownChannel.name || knownChannel.username || knownChannel.channelName;
-    }
-    return video.channelDisplayName || video.displayName || video.channel || video.author || video.creatorName || video.username || video.channelName || video.userId || video.channelId || '未知頻道';
+    const channelId = String(video?.userId || video?.channelId || video?.ownerId || video?.uid || '').trim();
+    const nameKey = String(video?.channelName || video?.channel || video?.author || video?.creatorName || video?.username || '').trim();
+    const cachedById = channelId ? (channelProfileCache?.[channelId] || searchChannelProfiles?.[channelId]) : null;
+    const cachedByName = nameKey ? (channelProfileCache?.[nameKey] || searchChannelProfiles?.[nameKey]) : null;
+    const knownChannel = getKnownChannelProfileForVideo(video) || cachedById || cachedByName;
+
+    return (
+      knownChannel?.channelName ||
+      knownChannel?.displayName ||
+      knownChannel?.name ||
+      knownChannel?.username ||
+      video.channelDisplayName ||
+      video.displayName ||
+      video.channelName ||
+      video.channel ||
+      video.author ||
+      video.creatorName ||
+      video.username ||
+      video.userId ||
+      video.channelId ||
+      '未知頻道'
+    );
   };
 
   // 頻道網址一定優先使用頻道的穩定 ID，不使用顯示名稱。
@@ -7215,10 +7260,13 @@ const canManageComment = (comment = {}) => {
   };
 
   const getVideoAvatarSrc = (video = {}) => {
-    const knownChannel = getKnownChannelProfileForVideo(video);
+    const channelId = String(video?.userId || video?.channelId || video?.ownerId || video?.uid || '').trim();
+    const nameKey = String(video?.channelName || video?.channel || video?.author || video?.creatorName || video?.username || '').trim();
+    const cachedById = channelId ? (channelProfileCache?.[channelId] || searchChannelProfiles?.[channelId]) : null;
+    const cachedByName = nameKey ? (channelProfileCache?.[nameKey] || searchChannelProfiles?.[nameKey]) : null;
+    const knownChannel = getKnownChannelProfileForVideo(video) || cachedById || cachedByName;
     if (knownChannel?.avatar && knownChannel.avatar !== GUEST_AVATAR) return knownChannel.avatar;
 
-    const displayName = getVideoDisplayName(video);
     const isShiauyeVideo =
       isSameText(video.author, '小葉') ||
       isSameText(video.channel, '小葉') ||
@@ -7455,6 +7503,7 @@ const canManageComment = (comment = {}) => {
       uniqueValues.push(cleanValue);
     };
 
+    // 一開始熱門搜尋優先用目前已載入的頻道名稱與影片標題；資料不足時才用 fallback。
     sourceVideos
       .map(video => video?.channelDisplayName || video?.displayName || video?.channel || video?.author || video?.creatorName || video?.username || '')
       .forEach(pushValue);
