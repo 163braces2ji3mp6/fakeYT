@@ -5,5 +5,5 @@ import react from '@vitejs/plugin-react'
 // 所以 base 必須是 repo 名稱 /fakeYT/。
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  base: '/fakeYT/',
 })
