@@ -93,7 +93,7 @@ const isCurrentUserAsset = (item = {}) => {
 };
 // 🟢 【統一的頭貼管理函數】改一個地方，所有地方同步更新
 const getUnifiedAvatar = (channelId, fallbackAvatar) => {
-  if (String(channelId || '').trim().replace(/^@+/, '') === SHIAUYE_CHANNEL_ID) return avatarImage;
+  // 頭貼以 Channels.avatar 為準；小葉也不要再被本機 avatarImage 強制覆蓋。
   return fallbackAvatar || GUEST_AVATAR;
 };
 
@@ -7283,9 +7283,23 @@ const putChannelProfileIntoCache = (profile = {}) => {
     ].map(clean).find(value => value && !isIdLikeName(value));
 
     const displayName = isOfficialShiauye ? '小葉' : (displayCandidate || '');
-    const avatar = isOfficialShiauye
-      ? avatarImage
-      : pickAvatar(profile.avatar, profile.photoURL, profile.userAvatar, profile.channelAvatar, profile.creatorAvatar, profile.authorAvatar, fallback.avatar, fallback.photoURL, fallback.userAvatar, fallback.channelAvatar, fallback.creatorAvatar, fallback.authorAvatar);
+    const avatar = pickAvatar(
+      // Channels 文件 / 最新快取優先
+      profile.avatar,
+      profile.photoURL,
+      profile.userAvatar,
+      profile.channelAvatar,
+      profile.creatorAvatar,
+      profile.authorAvatar,
+      fallback.avatar,
+      fallback.photoURL,
+      fallback.userAvatar,
+      fallback.channelAvatar,
+      fallback.creatorAvatar,
+      fallback.authorAvatar,
+      // 小葉只有在 Channels 沒有 avatar 時，才使用本機圖片當最後備援
+      isOfficialShiauye ? avatarImage : ''
+    );
 
     return {
       ...fallback,
@@ -7317,7 +7331,9 @@ const putChannelProfileIntoCache = (profile = {}) => {
     const stableChannelId = channelCandidates[0] || '';
 
     if (stableChannelId === SHIAUYE_CHANNEL_ID) {
+      const officialChannelFromCache = channelProfileCache?.[SHIAUYE_CHANNEL_ID] || searchChannelProfiles?.[SHIAUYE_CHANNEL_ID] || null;
       return normalizeResolvedChannelProfile({
+        ...(officialChannelFromCache || {}),
         ...source,
         id: SHIAUYE_CHANNEL_ID,
         userId: SHIAUYE_CHANNEL_ID,
@@ -7325,9 +7341,10 @@ const putChannelProfileIntoCache = (profile = {}) => {
         displayName: '小葉',
         channelName: '小葉',
         name: '小葉',
-        avatar: avatarImage,
+        // 小葉頭貼讀 Channels.avatar；不要在這裡硬塞 avatarImage。
+        avatar: officialChannelFromCache?.avatar || source.avatar || source.channelAvatar || source.creatorAvatar || source.authorAvatar || source.userAvatar || '',
         sourceType: 'official-channel'
-      }, source);
+      }, officialChannelFromCache || source);
     }
 
     const currentAuthUid = cleanId(auth.currentUser?.uid || authUser?.uid || '');
@@ -10294,7 +10311,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                             // 💡 2. 點擊頭貼跳轉：如果是小葉，強制把正確的 avatarImage 頭貼參數帶過去頻道頁
                             onClick={(e) => handleChannelNavigation(
                               selectedVideo.channel || '小葉', 
-                              (selectedVideo.channel === '小葉' || selectedVideo.userId === SHIAUYE_CHANNEL_ID || selectedVideo.channelId === SHIAUYE_CHANNEL_ID) ? avatarImage : (selectedVideo.avatar || GUEST_AVATAR), 
+                              getVideoAvatarSrc(selectedVideo), 
                               e,
                               getVideoChannelRouteId(selectedVideo)
                             )} 
@@ -10305,7 +10322,7 @@ const accountIdStatusColor = hasOwnerUidLocked || hasReservedLockedId
                               className="channel-name-large channel-name-clickable" 
                               onClick={(e) => handleChannelNavigation(
                                 selectedVideo.channel || '小葉', 
-                                (selectedVideo.channel === '小葉' || selectedVideo.userId === SHIAUYE_CHANNEL_ID || selectedVideo.channelId === SHIAUYE_CHANNEL_ID) ? avatarImage : (selectedVideo.avatar || GUEST_AVATAR), 
+                                getVideoAvatarSrc(selectedVideo), 
                                 e,
                                 getVideoChannelRouteId(selectedVideo)
                               )} 
