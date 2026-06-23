@@ -2447,7 +2447,29 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
   
 
 
-  const normalizeEmailValue = (value = '') => String(value || '').trim().toLowerCase();
+  const getSafeTextValue = (value = '') => {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return String(value).trim();
+    }
+    // 防止物件被 String() 成 [object Object]，造成 USER ID 變 OBJECT OBJECT 或畫面黑掉。
+    if (typeof value === 'object') {
+      return String(
+        value.userId ||
+        value.channelId ||
+        value.customId ||
+        value.id ||
+        value.uid ||
+        value.displayName ||
+        value.name ||
+        value.email ||
+        ''
+      ).trim();
+    }
+    return '';
+  };
+
+  const normalizeEmailValue = (value = '') => getSafeTextValue(value).toLowerCase();
 
   // =========================================================
   // Account Identity Contract / 帳號身份規格
@@ -2472,12 +2494,22 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     'device_user_bio'
   ];
 
-  const normalizeChannelIdValue = (value = '') => String(value || '').trim().replace(/^@+/, '');
+  const normalizeChannelIdValue = (value = '') => {
+    const rawValue = getSafeTextValue(value).replace(/^@+/, '');
+    if (!rawValue || rawValue === '[object Object]') return '';
+    return rawValue;
+  };
   const isValidCustomChannelId = (value = '') => {
     const cleanValue = normalizeChannelIdValue(value);
-    return Boolean(cleanValue) && cleanValue !== 'loading...' && !cleanValue.includes('/');
+    return Boolean(cleanValue) && cleanValue !== 'loading...' && !cleanValue.includes('/') && cleanValue !== '[object Object]';
   };
-  const getCanonicalChannelId = (docId = '', data = {}) => normalizeChannelIdValue(data.customId || data.userId || data.id || docId);
+  const getCanonicalChannelId = (docId = '', data = {}) => normalizeChannelIdValue(
+    data?.customId ||
+    data?.userId ||
+    data?.channelId ||
+    data?.id ||
+    docId
+  );
   const addDaysToDate = (date, days) => new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
   const isPendingDeleteRestorable = (data = {}) => {
     if (data.accountStatus !== 'pending_delete' && data.deletedAccount !== true) return false;
@@ -2632,13 +2664,13 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const displayName = String(
       googleProviderProfile?.displayName ||
       firebaseUser?.displayName ||
-      fallbackName ||
+      getSafeTextValue(fallbackName) ||
       ''
     ).trim();
     const avatarUrl = String(
       googleProviderProfile?.photoURL ||
       firebaseUser?.photoURL ||
-      fallbackAvatar ||
+      getSafeTextValue(fallbackAvatar) ||
       GUEST_AVATAR
     ).trim();
 
@@ -2663,7 +2695,7 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const shouldPreferGoogleProfile = options.preferGoogleProfile === true;
     const { displayName, avatarUrl } = getGoogleProfileFromFirebaseUser(
       freshFirebaseUser,
-      channelData.name || channelData.username || channelData.channelName || cleanChannelId,
+      channelData.displayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId,
       channelData.avatar
     );
     const providerList = Array.from(new Set([
@@ -2675,8 +2707,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
     const email = String(freshFirebaseUser.email || channelData.email || '').trim();
     const emailLower = normalizeEmailValue(email || channelData.emailLower || '');
 
-    // 非全新 Google 建立流程只同步 ownerUid/email/provider，不覆蓋 LeafHub 自訂名稱與頭貼。
-    const leafHubName = channelData.name || channelData.username || channelData.channelName || cleanChannelId;
+    // Google 登入/建立時可選擇同步 Google 名稱與頭貼；一般 Email/ID 登入仍保留 LeafHub 自訂資料。
+    const leafHubName = channelData.displayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId;
     const leafHubAvatar = channelData.avatar || currentUserAvatar || GUEST_AVATAR;
     const nextName = shouldPreferGoogleProfile ? (displayName || leafHubName) : leafHubName;
     const nextAvatar = shouldPreferGoogleProfile ? (avatarUrl || leafHubAvatar) : leafHubAvatar;
@@ -2715,8 +2747,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
         emailLower,
         provider: 'google',
         name: googleProfilePatch.displayName,
-        username: googleProfilePatch.username,
-        channelName: googleProfilePatch.channelName,
+        displayName: googleProfilePatch.displayName,
+        channelName: googleProfilePatch.displayName,
         avatar: googleProfilePatch.avatar,
         googleSyncedAt: googleProfilePatch.googleSyncedAt,
         updatedAt: new Date().toISOString()
@@ -2791,8 +2823,8 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
 
     // 重要：非全新 Google 頻道時，不使用 firebaseUser.photoURL 覆蓋 LeafHub 自訂頭貼。
     const displayName = shouldPreferGoogleProfile
-      ? (googleDisplayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId)
-      : (channelData.name || channelData.username || channelData.channelName || cleanChannelId);
+      ? (googleDisplayName || channelData.displayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId)
+      : (channelData.displayName || channelData.name || channelData.username || channelData.channelName || cleanChannelId);
     const avatarUrl = shouldPreferGoogleProfile
       ? (googleAvatarUrl || channelData.avatar || currentUserAvatar || GUEST_AVATAR)
       : (channelData.avatar || currentUserAvatar || GUEST_AVATAR);
@@ -2814,8 +2846,9 @@ const [changeEmailPasswordInput, setChangeEmailPasswordInput] = useState('');
       userId: cleanChannelId,
       customId: cleanChannelId,
       name: displayName,
-      username: shouldPreferGoogleProfile ? displayName : (channelData.username || displayName),
-      channelName: shouldPreferGoogleProfile ? displayName : (channelData.channelName || displayName),
+      displayName,
+      username: channelData.username || displayName,
+      channelName: channelData.channelName || displayName,
       avatar: avatarUrl,
       email: emailValue,
       emailLower: emailLowerValue,
@@ -3363,9 +3396,13 @@ const findChannelByAuthUser = async (firebaseUser) => {
       }
 
       if (existing) {
-        const syncedData = await syncGoogleProfileToChannel(existing.id, existing.data, firebaseUser, { preferGoogleProfile: false });
-        applyChannelLoginData(existing.id, syncedData, firebaseUser, { preferGoogleProfile: false });
-        showToast(`已用 Google 登入：${syncedData.displayName || syncedData.name || existing.id}`, 'success');
+        // 使用 Google 登入時，名稱與頭貼要跟 Google 同步。
+        const syncedData = await syncGoogleProfileToChannel(existing.id, existing.data, firebaseUser, {
+          preferGoogleProfile: true,
+          reloadUser: true
+        });
+        applyChannelLoginData(existing.id, syncedData, firebaseUser, { preferGoogleProfile: true });
+        showToast(`已用 Google 登入：${syncedData.displayName || existing.id}`, 'success');
         return;
       }
 
@@ -3375,7 +3412,16 @@ const findChannelByAuthUser = async (firebaseUser) => {
           if (!ok) return;
         }
         const success = await bindCurrentChannelToAuthUser(firebaseUser, 'google', currentChannelId);
-        if (success) showToast('Google 已綁定目前 USER ID，LeafHub 名稱與頭貼已保留', 'success');
+        if (success) {
+          const channelSnap = await getDoc(doc(db, 'Channels', currentChannelId));
+          const channelData = channelSnap.exists() ? channelSnap.data() : {};
+          const syncedData = await syncGoogleProfileToChannel(currentChannelId, channelData, firebaseUser, {
+            preferGoogleProfile: true,
+            reloadUser: true
+          });
+          applyChannelLoginData(currentChannelId, syncedData, firebaseUser, { preferGoogleProfile: true });
+          showToast('Google 已綁定並同步名稱與頭貼', 'success');
+        }
         return;
       }
 
@@ -3996,7 +4042,7 @@ const handleLogoutId = async () => {
       let savedAvatar = localStorage.getItem('device_user_avatar');
       const isManualIdLogin = localStorage.getItem('leafhub_is_id_logged_in') === 'true';
       const looksLikeFirebaseUid = savedId && /^[A-Za-z0-9]{20,}$/.test(savedId) && !String(savedId).startsWith('user_');
-      if (!savedId || savedId === 'loading...' || (looksLikeFirebaseUid && !isManualIdLogin)) {
+      if (!savedId || savedId === 'loading...' || savedId === '[object Object]' || (looksLikeFirebaseUid && !isManualIdLogin)) {
         const randomUser = generateRandomIdentity();
         savedId = randomUser.id;
         savedName = randomUser.name;
